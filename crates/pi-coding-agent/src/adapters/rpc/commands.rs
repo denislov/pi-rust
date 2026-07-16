@@ -9,6 +9,7 @@ use crate::app::cli::error::CliError;
 use crate::app::cli::prompt_options::PromptRunOptions;
 use crate::app::session::{open_forked_runtime_session, open_new_runtime_session};
 use crate::authorization::ToolAuthorizationDecision;
+use crate::operations::prompt::context::QueuedPromptInput;
 use crate::protocol::types::{
     RpcCommand, RpcDetachLifecycleEvent, RpcDetachResponse, RpcDetachStatus, RpcHelloResponse,
     RpcResponse, RpcSelfHealingEditModelRepair, RpcSelfHealingEditReplacement,
@@ -197,18 +198,6 @@ impl RpcState {
                 message,
                 images,
             } => {
-                if has_images(&images) {
-                    write_rpc_response(
-                        writer,
-                        RpcResponse::error(
-                            id,
-                            "steer",
-                            "image prompt payloads are not supported in Rust M5 RPC mode",
-                        ),
-                    )
-                    .await?;
-                    return Ok(());
-                }
                 if let Some(foreground) = self.foreground.as_ref() {
                     if foreground.operation_kind != OperationKind::Prompt {
                         write_rpc_response(
@@ -233,12 +222,25 @@ impl RpcState {
                         .await?;
                         return Ok(());
                     };
-                    match control.steer(
-                        CodingAgentControlId(
-                            id.clone().unwrap_or_else(|| format!("rpc-steer-{message}")),
-                        ),
-                        message,
+                    let control_id = CodingAgentControlId(
+                        id.clone().unwrap_or_else(|| format!("rpc-steer-{message}")),
+                    );
+                    let result = match crate::adapters::rpc::prompt::rpc_control_content(
+                        message.clone(),
+                        images,
                     ) {
+                        Ok(Some(content)) => control.steer_content(control_id, content),
+                        Ok(None) => control.steer(control_id, message),
+                        Err(error) => {
+                            write_rpc_response(
+                                writer,
+                                RpcResponse::error(id, "steer", error.to_string()),
+                            )
+                            .await?;
+                            return Ok(());
+                        }
+                    };
+                    match result {
                         Ok(_) => {
                             write_rpc_response(writer, RpcResponse::success(id, "steer", None))
                                 .await?
@@ -253,7 +255,22 @@ impl RpcState {
                     }
                     return Ok(());
                 }
-                self.enqueue_steer(message);
+                let input = match crate::adapters::rpc::prompt::rpc_control_content(
+                    message.clone(),
+                    images,
+                ) {
+                    Ok(Some(content)) => QueuedPromptInput::Content(content),
+                    Ok(None) => QueuedPromptInput::Text(message),
+                    Err(error) => {
+                        write_rpc_response(
+                            writer,
+                            RpcResponse::error(id, "steer", error.to_string()),
+                        )
+                        .await?;
+                        return Ok(());
+                    }
+                };
+                self.enqueue_steer(input);
                 write_rpc_response(writer, RpcResponse::success(id, "steer", None)).await?;
                 self.emit_queue_update(writer).await
             }
@@ -262,18 +279,6 @@ impl RpcState {
                 message,
                 images,
             } => {
-                if has_images(&images) {
-                    write_rpc_response(
-                        writer,
-                        RpcResponse::error(
-                            id,
-                            "follow_up",
-                            "image prompt payloads are not supported in Rust M5 RPC mode",
-                        ),
-                    )
-                    .await?;
-                    return Ok(());
-                }
                 if let Some(foreground) = self.foreground.as_ref() {
                     if foreground.operation_kind != OperationKind::Prompt {
                         write_rpc_response(
@@ -298,13 +303,26 @@ impl RpcState {
                         .await?;
                         return Ok(());
                     };
-                    match control.follow_up(
-                        CodingAgentControlId(
-                            id.clone()
-                                .unwrap_or_else(|| format!("rpc-follow-up-{message}")),
-                        ),
-                        message,
+                    let control_id = CodingAgentControlId(
+                        id.clone()
+                            .unwrap_or_else(|| format!("rpc-follow-up-{message}")),
+                    );
+                    let result = match crate::adapters::rpc::prompt::rpc_control_content(
+                        message.clone(),
+                        images,
                     ) {
+                        Ok(Some(content)) => control.follow_up_content(control_id, content),
+                        Ok(None) => control.follow_up(control_id, message),
+                        Err(error) => {
+                            write_rpc_response(
+                                writer,
+                                RpcResponse::error(id, "follow_up", error.to_string()),
+                            )
+                            .await?;
+                            return Ok(());
+                        }
+                    };
+                    match result {
                         Ok(_) => {
                             write_rpc_response(writer, RpcResponse::success(id, "follow_up", None))
                                 .await?
@@ -319,7 +337,22 @@ impl RpcState {
                     }
                     return Ok(());
                 }
-                self.enqueue_follow_up(message);
+                let input = match crate::adapters::rpc::prompt::rpc_control_content(
+                    message.clone(),
+                    images,
+                ) {
+                    Ok(Some(content)) => QueuedPromptInput::Content(content),
+                    Ok(None) => QueuedPromptInput::Text(message),
+                    Err(error) => {
+                        write_rpc_response(
+                            writer,
+                            RpcResponse::error(id, "follow_up", error.to_string()),
+                        )
+                        .await?;
+                        return Ok(());
+                    }
+                };
+                self.enqueue_follow_up(input);
                 write_rpc_response(writer, RpcResponse::success(id, "follow_up", None)).await?;
                 self.emit_queue_update(writer).await
             }

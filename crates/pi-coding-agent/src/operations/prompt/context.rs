@@ -66,6 +66,31 @@ pub struct PromptTurnOptions {
     session_target: Option<ResolvedSessionTarget>,
     session_name: Option<String>,
     runtime: Option<RuntimeSnapshot>,
+    queued_steering: Vec<QueuedPromptInput>,
+    queued_follow_up: Vec<QueuedPromptInput>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum QueuedPromptInput {
+    Text(String),
+    Content(Vec<ContentBlock>),
+}
+
+impl QueuedPromptInput {
+    pub(crate) fn display_text(&self) -> String {
+        match self {
+            Self::Text(text) => text.clone(),
+            Self::Content(content) => content
+                .iter()
+                .filter_map(|block| match block {
+                    ContentBlock::Text { text, .. } => Some(text.clone()),
+                    ContentBlock::Image { mime_type, .. } => Some(format!("[image:{mime_type}]")),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        }
+    }
 }
 
 impl PromptTurnOptions {
@@ -76,6 +101,8 @@ impl PromptTurnOptions {
             session_target: None,
             session_name: None,
             runtime: None,
+            queued_steering: Vec::new(),
+            queued_follow_up: Vec::new(),
         }
     }
 
@@ -110,6 +137,24 @@ impl PromptTurnOptions {
         self.session_name.as_deref()
     }
 
+    pub(crate) fn with_queued_inputs(
+        mut self,
+        steering: Vec<QueuedPromptInput>,
+        follow_up: Vec<QueuedPromptInput>,
+    ) -> Self {
+        self.queued_steering = steering;
+        self.queued_follow_up = follow_up;
+        self
+    }
+
+    pub(crate) fn queued_steering(&self) -> &[QueuedPromptInput] {
+        &self.queued_steering
+    }
+
+    pub(crate) fn queued_follow_up(&self) -> &[QueuedPromptInput] {
+        &self.queued_follow_up
+    }
+
     pub fn from_prompt_run_options(options: PromptRunOptions) -> Self {
         let invocation = options.invocation.clone();
         let session_target = options.session_target.clone();
@@ -121,6 +166,8 @@ impl PromptTurnOptions {
             session_target,
             session_name,
             runtime: Some(runtime),
+            queued_steering: Vec::new(),
+            queued_follow_up: Vec::new(),
         }
     }
 
@@ -177,6 +224,8 @@ impl From<&ResolvedPromptRequest> for PromptTurnOptions {
             session_target: request.context.session_target.clone(),
             session_name: request.context.session_name.clone(),
             runtime: None,
+            queued_steering: Vec::new(),
+            queued_follow_up: Vec::new(),
         }
     }
 }

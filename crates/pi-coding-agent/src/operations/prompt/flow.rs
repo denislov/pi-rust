@@ -6,7 +6,7 @@ use pi_agent_core::api::agent::{AgentEvent, AgentMessage, AgentStream};
 use pi_agent_core::api::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome};
 
 use super::CodingSessionError;
-use super::context::{CodingDiagnostic, PromptTurnContext};
+use super::context::{CodingDiagnostic, PromptTurnContext, QueuedPromptInput};
 use crate::app::bootstrap::PromptInvocation;
 use crate::plugins::PromptHookPoint;
 use crate::runtime::control::PromptControlCommand;
@@ -277,6 +277,18 @@ fn build_agent_runtime(ctx: &mut PromptTurnContext) -> Result<Action, String> {
     if let Some(replay) = ctx.replay() {
         service.hydrate_agent_runtime(&build.agent, &runtime, replay);
     }
+    for input in ctx.options().queued_steering() {
+        match input {
+            QueuedPromptInput::Text(text) => build.agent.steer(text.clone()),
+            QueuedPromptInput::Content(content) => build.agent.steer_content(content.clone()),
+        }
+    }
+    for input in ctx.options().queued_follow_up() {
+        match input {
+            QueuedPromptInput::Text(text) => build.agent.follow_up(text.clone()),
+            QueuedPromptInput::Content(content) => build.agent.follow_up_content(content.clone()),
+        }
+    }
     ctx.set_agent(build.agent);
     default_action()
 }
@@ -390,7 +402,9 @@ fn apply_prompt_control_command(
             agent.abort();
         }
         PromptControlCommand::Steer { text } => agent.steer(text),
+        PromptControlCommand::SteerContent { content } => agent.steer_content(content),
         PromptControlCommand::FollowUp { text } => agent.follow_up(text),
+        PromptControlCommand::FollowUpContent { content } => agent.follow_up_content(content),
     }
 }
 

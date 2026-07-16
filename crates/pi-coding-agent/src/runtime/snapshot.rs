@@ -75,6 +75,33 @@ pub(crate) struct DraftRecord {
     pub(crate) id: String,
     pub(crate) kind: crate::runtime::client::state::ClientDraftKind,
     pub(crate) text: String,
+    pub(crate) fingerprint: String,
+}
+
+#[derive(Debug, Clone)]
+enum PromptControlPayload {
+    Text(String),
+    Content(Vec<pi_ai::api::conversation::ContentBlock>),
+}
+
+impl PromptControlPayload {
+    fn is_empty(&self) -> bool {
+        match self {
+            Self::Text(text) => text.trim().is_empty(),
+            Self::Content(content) => content.is_empty(),
+        }
+    }
+
+    fn signature(&self) -> String {
+        match self {
+            Self::Text(text) => format!("text:{text}"),
+            Self::Content(content) => format!(
+                "content:{}",
+                serde_json::to_string(content)
+                    .expect("prompt control content blocks must serialize")
+            ),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -409,7 +436,47 @@ impl SnapshotCoordinator {
         crate::runtime::client::projection::CodingAgentControlReceipt,
         crate::runtime::client::projection::CodingAgentControlRejection,
     > {
-        if control_id.0.trim().is_empty() || text.trim().is_empty() {
+        self.enqueue_control_payload(
+            handle,
+            operation_id,
+            control_id,
+            kind,
+            PromptControlPayload::Text(text),
+        )
+    }
+
+    pub(crate) fn enqueue_content_control(
+        &self,
+        handle: &ClientHandle,
+        operation_id: &str,
+        control_id: crate::runtime::client::projection::CodingAgentControlId,
+        kind: crate::runtime::client::projection::CodingAgentControlKind,
+        content: Vec<pi_ai::api::conversation::ContentBlock>,
+    ) -> Result<
+        crate::runtime::client::projection::CodingAgentControlReceipt,
+        crate::runtime::client::projection::CodingAgentControlRejection,
+    > {
+        self.enqueue_control_payload(
+            handle,
+            operation_id,
+            control_id,
+            kind,
+            PromptControlPayload::Content(content),
+        )
+    }
+
+    fn enqueue_control_payload(
+        &self,
+        handle: &ClientHandle,
+        operation_id: &str,
+        control_id: crate::runtime::client::projection::CodingAgentControlId,
+        kind: crate::runtime::client::projection::CodingAgentControlKind,
+        payload: PromptControlPayload,
+    ) -> Result<
+        crate::runtime::client::projection::CodingAgentControlReceipt,
+        crate::runtime::client::projection::CodingAgentControlRejection,
+    > {
+        if control_id.0.trim().is_empty() || payload.is_empty() {
             return Err(crate::runtime::client::projection::CodingAgentControlRejection {
                 control_id,
                 operation_id: operation_id.into(),
@@ -441,7 +508,7 @@ impl SnapshotCoordinator {
             }
         };
         let key = format!("{}:{}", operation_id, control_id.0);
-        let signature = format!("{:?}:{}", kind, text);
+        let signature = format!("{:?}:{}", kind, payload.signature());
         if let Some(stored) = record.control_receipts.get(&key) {
             if stored != &signature {
                 return Err(crate::runtime::client::projection::CodingAgentControlRejection {
@@ -463,7 +530,7 @@ impl SnapshotCoordinator {
         if record.control_receipts.len() >= MAX_RECEIPTS {
             return Err(crate::runtime::client::projection::CodingAgentControlRejection { control_id, operation_id: operation_id.into(), kind, reason: crate::runtime::client::projection::CodingAgentControlRejectionReason::QueueCapacityExceeded });
         }
-        if let Err(reason) = self.dispatch_control(handle, operation_id, kind, text) {
+        if let Err(reason) = self.dispatch_control(handle, operation_id, kind, payload) {
             return Err(
                 crate::runtime::client::projection::CodingAgentControlRejection {
                     control_id,
@@ -503,7 +570,7 @@ impl SnapshotCoordinator {
         handle: &ClientHandle,
         operation_id: &str,
         kind: crate::runtime::client::projection::CodingAgentControlKind,
-        text: String,
+        payload: PromptControlPayload,
     ) -> Result<(), crate::runtime::client::projection::CodingAgentControlRejectionReason> {
         let mut prompt_binding = self.prompt_control.lock().unwrap();
         if let Some(active) = prompt_binding.as_mut() {
@@ -517,16 +584,33 @@ impl SnapshotCoordinator {
                     crate::runtime::client::projection::CodingAgentControlRejectionReason::TargetMismatch,
                 );
             }
-            return match kind {
-                crate::runtime::client::projection::CodingAgentControlKind::Abort => {
-                    active.sender.abort(text)
-                }
-                crate::runtime::client::projection::CodingAgentControlKind::Steer => {
-                    active.sender.steer(text)
-                }
-                crate::runtime::client::projection::CodingAgentControlKind::FollowUp => {
-                    active.sender.follow_up(text)
-                }
+            return match (kind, payload) {
+                (
+                    crate::runtime::client::projection::CodingAgentControlKind::Abort,
+                    PromptControlPayload::Text(reason),
+                ) => active.sender.abort(reason),
+                (
+                    crate::runtime::client::projection::CodingAgentControlKind::Steer,
+                    PromptControlPayload::Text(text),
+                ) => active.sender.steer(text),
+                (
+                    crate::runtime::client::projection::CodingAgentControlKind::Steer,
+                    PromptControlPayload::Content(content),
+                ) => active.sender.steer_content(content),
+                (
+                    crate::runtime::client::projection::CodingAgentControlKind::FollowUp,
+                    PromptControlPayload::Text(text),
+                ) => active.sender.follow_up(text),
+                (
+                    crate::runtime::client::projection::CodingAgentControlKind::FollowUp,
+                    PromptControlPayload::Content(content),
+                ) => active.sender.follow_up_content(content),
+                (
+                    crate::runtime::client::projection::CodingAgentControlKind::Abort,
+                    PromptControlPayload::Content(_),
+                ) => Err(crate::runtime::facade::CodingSessionError::Input {
+                    message: "abort control does not accept structured content".into(),
+                }),
             }
             .map_err(|error| match error {
                 crate::runtime::facade::CodingSessionError::Busy { .. } => {
@@ -896,12 +980,14 @@ impl SnapshotCoordinator {
         &self,
         handle: &ClientHandle,
         draft_id: &str,
-        text: &str,
-    ) -> Result<(), ClientRegistryError> {
+        fingerprint: &str,
+    ) -> Result<DraftRecord, ClientRegistryError> {
         let mut state = self.state.lock().unwrap();
         let record = Self::record(&mut state, handle)?;
         match &record.prompt_draft {
-            Some(draft) if draft.id == draft_id && draft.text == text => Ok(()),
+            Some(draft) if draft.id == draft_id && draft.fingerprint == fingerprint => {
+                Ok(draft.clone())
+            }
             _ => Err(ClientRegistryError::InvalidInput),
         }
     }
@@ -1218,6 +1304,17 @@ impl SnapshotCoordinator {
         Ok(())
     }
 
+    pub(crate) fn clear_control_drafts(
+        &self,
+        handle: &ClientHandle,
+    ) -> Result<(), ClientRegistryError> {
+        let mut state = self.state.lock().unwrap();
+        let record = Self::record(&mut state, handle)?;
+        record.steer_drafts.clear();
+        record.follow_up_drafts.clear();
+        Ok(())
+    }
+
     pub(crate) fn commit_submission_running(
         &self,
         handle: &ClientHandle,
@@ -1494,6 +1591,7 @@ mod tests {
             id: id.into(),
             kind,
             text: format!("{id}-text"),
+            fingerprint: format!("{id}-text"),
         }
     }
 

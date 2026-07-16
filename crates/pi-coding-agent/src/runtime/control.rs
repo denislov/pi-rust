@@ -74,11 +74,23 @@ impl OperationKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum PromptControlCommand {
-    Abort { reason: String },
-    Steer { text: String },
-    FollowUp { text: String },
+    Abort {
+        reason: String,
+    },
+    Steer {
+        text: String,
+    },
+    SteerContent {
+        content: Vec<pi_ai::api::conversation::ContentBlock>,
+    },
+    FollowUp {
+        text: String,
+    },
+    FollowUpContent {
+        content: Vec<pi_ai::api::conversation::ContentBlock>,
+    },
 }
 
 pub(crate) type PromptControlReceiver = mpsc::Receiver<PromptControlCommand>;
@@ -102,8 +114,22 @@ impl PromptControlHandle {
         self.send(PromptControlCommand::Steer { text: text.into() })
     }
 
+    pub(crate) fn steer_content(
+        &self,
+        content: Vec<pi_ai::api::conversation::ContentBlock>,
+    ) -> Result<(), CodingSessionError> {
+        self.send(PromptControlCommand::SteerContent { content })
+    }
+
     pub(crate) fn follow_up(&self, text: impl Into<String>) -> Result<(), CodingSessionError> {
         self.send(PromptControlCommand::FollowUp { text: text.into() })
+    }
+
+    pub(crate) fn follow_up_content(
+        &self,
+        content: Vec<pi_ai::api::conversation::ContentBlock>,
+    ) -> Result<(), CodingSessionError> {
+        self.send(PromptControlCommand::FollowUpContent { content })
     }
 
     fn send(&self, command: PromptControlCommand) -> Result<(), CodingSessionError> {

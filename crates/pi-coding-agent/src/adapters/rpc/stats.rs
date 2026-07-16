@@ -413,8 +413,13 @@ mod tests {
             .unwrap();
         state.client_connection = Some(connection);
         state.coding_session = Some(session);
-        state.steering = vec!["steer one".into(), "steer two".into()];
-        state.follow_up = vec!["follow up".into()];
+        state.steering = vec![
+            crate::operations::prompt::context::QueuedPromptInput::Text("steer one".into()),
+            crate::operations::prompt::context::QueuedPromptInput::Text("steer two".into()),
+        ];
+        state.follow_up = vec![crate::operations::prompt::context::QueuedPromptInput::Text(
+            "follow up".into(),
+        )];
 
         let value = serialized_session_state(&state);
 

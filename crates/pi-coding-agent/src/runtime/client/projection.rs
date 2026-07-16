@@ -340,6 +340,21 @@ impl CodingAgentPromptControl {
             .enqueue_control(&self.handle(), &self.operation_id, control_id, kind, text)
     }
 
+    fn submit_content(
+        &self,
+        control_id: CodingAgentControlId,
+        kind: CodingAgentControlKind,
+        content: Vec<pi_ai::api::conversation::ContentBlock>,
+    ) -> Result<CodingAgentControlReceipt, CodingAgentControlRejection> {
+        self.coordinator.enqueue_content_control(
+            &self.handle(),
+            &self.operation_id,
+            control_id,
+            kind,
+            content,
+        )
+    }
+
     pub fn abort(
         &self,
         control_id: CodingAgentControlId,
@@ -356,12 +371,28 @@ impl CodingAgentPromptControl {
         self.submit(control_id, CodingAgentControlKind::Steer, text.into())
     }
 
+    pub(crate) fn steer_content(
+        &self,
+        control_id: CodingAgentControlId,
+        content: Vec<pi_ai::api::conversation::ContentBlock>,
+    ) -> Result<CodingAgentControlReceipt, CodingAgentControlRejection> {
+        self.submit_content(control_id, CodingAgentControlKind::Steer, content)
+    }
+
     pub fn follow_up(
         &self,
         control_id: CodingAgentControlId,
         text: impl Into<String>,
     ) -> Result<CodingAgentControlReceipt, CodingAgentControlRejection> {
         self.submit(control_id, CodingAgentControlKind::FollowUp, text.into())
+    }
+
+    pub(crate) fn follow_up_content(
+        &self,
+        control_id: CodingAgentControlId,
+        content: Vec<pi_ai::api::conversation::ContentBlock>,
+    ) -> Result<CodingAgentControlReceipt, CodingAgentControlRejection> {
+        self.submit_content(control_id, CodingAgentControlKind::FollowUp, content)
     }
 
     pub fn steer_draft(
@@ -622,13 +653,39 @@ impl CodingAgentClientConnection {
         id: CodingAgentDraftId,
         text: impl Into<String>,
     ) -> Result<(), CodingSessionError> {
+        let text = text.into();
         self.coordinator
             .set_prompt_draft(
                 &self.handle(),
                 Some(DraftRecord {
                     id: id.0,
                     kind: ClientDraftKind::Prompt,
-                    text: text.into(),
+                    fingerprint: text.clone(),
+                    text,
+                }),
+            )
+            .map_err(|error| registry_error(&self.client_id, error))
+    }
+
+    pub(crate) fn set_prompt_operation_draft(
+        &self,
+        id: CodingAgentDraftId,
+        display_text: impl Into<String>,
+        operation: &crate::runtime::facade::CodingAgentOperation,
+    ) -> Result<(), CodingSessionError> {
+        let Some((_, fingerprint)) = operation.submission_fingerprint() else {
+            return Err(CodingSessionError::Input {
+                message: "prompt draft requires a fingerprintable prompt operation".into(),
+            });
+        };
+        self.coordinator
+            .set_prompt_draft(
+                &self.handle(),
+                Some(DraftRecord {
+                    id: id.0,
+                    kind: ClientDraftKind::Prompt,
+                    text: display_text.into(),
+                    fingerprint,
                 }),
             )
             .map_err(|error| registry_error(&self.client_id, error))
@@ -649,6 +706,7 @@ impl CodingAgentClientConnection {
                 DraftRecord {
                     id: draft.id.0,
                     kind,
+                    fingerprint: draft.text.clone(),
                     text: draft.text,
                 },
             )
@@ -669,6 +727,12 @@ impl CodingAgentClientConnection {
             })
     }
 
+    pub(crate) fn clear_control_drafts(&self) -> Result<(), CodingSessionError> {
+        self.coordinator
+            .clear_control_drafts(&self.handle())
+            .map_err(|error| registry_error(&self.client_id, error))
+    }
+
     /// Prepare admission provenance for `CodingAgentSession::run` or runtime-owned `submit`.
     pub fn prepare_submission(
         &self,
@@ -679,24 +743,23 @@ impl CodingAgentClientConnection {
         let handle = self.handle();
         let descriptor = operation.descriptor();
         let prompt_fingerprint = operation.submission_fingerprint();
-        let expected_prompt_draft =
-            if descriptor.submitted_kind == crate::runtime::control::OperationKind::Prompt {
-                let Some((_, text)) = prompt_fingerprint.as_ref() else {
-                    return Err(CodingSessionError::Input {
-                        message: "Prompt submission preparation requires a text invocation".into(),
-                    });
-                };
-                self.coordinator
-                    .validate_prompt_draft(&handle, &draft_id.0, text)
-                    .map_err(|error| registry_error(&self.client_id, error))?;
-                Some(DraftRecord {
-                    id: draft_id.0,
-                    kind: ClientDraftKind::Prompt,
-                    text: text.clone(),
-                })
-            } else {
-                None
+        let expected_prompt_draft = if descriptor.submitted_kind
+            == crate::runtime::control::OperationKind::Prompt
+        {
+            let Some((_, fingerprint)) = prompt_fingerprint.as_ref() else {
+                return Err(CodingSessionError::Input {
+                    message: "prompt submission preparation requires a fingerprintable invocation"
+                        .into(),
+                });
             };
+            Some(
+                self.coordinator
+                    .validate_prompt_draft(&handle, &draft_id.0, fingerprint)
+                    .map_err(|error| registry_error(&self.client_id, error))?,
+            )
+        } else {
+            None
+        };
         let shared = session.install_submission_lease(
             handle,
             descriptor,

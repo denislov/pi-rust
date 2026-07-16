@@ -47,6 +47,12 @@ fn large_context_faux_model(api: &str) -> Model {
     model
 }
 
+fn multimodal_faux_model(api: &str) -> Model {
+    let mut model = faux_model(api);
+    model.input = vec![ModelInput::Text, ModelInput::Image];
+    model
+}
+
 fn parse_lines(bytes: &[u8]) -> Vec<serde_json::Value> {
     String::from_utf8_lossy(bytes)
         .lines()
@@ -873,6 +879,143 @@ struct BlockingTwoTurnProvider {
     contexts: Arc<Mutex<Vec<Context>>>,
     first_started: Mutex<Option<oneshot::Sender<()>>>,
     release_first: Mutex<Option<oneshot::Receiver<()>>>,
+}
+
+struct RecordingProvider {
+    contexts: Arc<Mutex<Vec<Context>>>,
+}
+
+impl pi_ai::api::provider::ApiProvider for RecordingProvider {
+    fn stream(&self, model: &Model, ctx: Context, _opts: Option<StreamOptions>) -> EventStream {
+        self.contexts.lock().unwrap().push(ctx);
+        let model_id = model.id.clone();
+        Box::pin(async_stream::stream! {
+            let mut message = AssistantMessage::empty("recording", &model_id);
+            message.provider = Some("recording".into());
+            message.content.push(ContentBlock::Text {
+                text: "multimodal complete".into(),
+                text_signature: None,
+            });
+            yield AssistantMessageEvent::Done {
+                reason: StopReason::Stop,
+                message,
+            };
+        })
+    }
+}
+
+#[tokio::test]
+async fn rpc_multimodal_prompt_reaches_provider_and_durable_session_content() {
+    let temp = tempfile::tempdir().unwrap();
+    let cwd = temp.path().join("project");
+    let sessions = temp.path().join("sessions");
+    std::fs::create_dir_all(&cwd).unwrap();
+    let api = "pi-coding-rpc-multimodal-prompt";
+    let contexts = Arc::new(Mutex::new(Vec::new()));
+    let provider_guard = ProviderGuard::register(
+        api,
+        Arc::new(RecordingProvider {
+            contexts: contexts.clone(),
+        }),
+    );
+    let image_data = "aW1hZ2UtZml4dHVyZQ==";
+    let input = format!(
+        "{{\"id\":\"prompt-image\",\"type\":\"prompt\",\"message\":\"describe image\",\"images\":[{{\"type\":\"image\",\"data\":\"{image_data}\",\"mimeType\":\"image/png\"}}]}}\n\
+         {{\"id\":\"image-state\",\"type\":\"get_state\"}}\n"
+    );
+    let mut output = Vec::new();
+    let mut session = SessionRunOptions::enabled(cwd);
+    session.session_dir = Some(sessions.clone());
+
+    run_rpc_mode_for_io(
+        input.as_bytes(),
+        &mut output,
+        CliRunOptions {
+            model_override: Some(multimodal_faux_model(api)),
+            tools: Vec::new(),
+            register_builtins: false,
+            ai_client: Some(provider_guard.ai_client()),
+            session,
+        },
+    )
+    .await
+    .unwrap();
+
+    let values = parse_lines(&output);
+    let prompt = values
+        .iter()
+        .find(|value| value["id"] == "prompt-image")
+        .unwrap();
+    assert_eq!(prompt["success"], true, "{prompt}");
+    let state = values
+        .iter()
+        .find(|value| value["id"] == "image-state")
+        .unwrap();
+    let session_id = state["data"]["sessionId"].as_str().unwrap();
+
+    let contexts = contexts.lock().unwrap();
+    assert_eq!(contexts.len(), 1);
+    let user_content = contexts[0]
+        .messages
+        .iter()
+        .find_map(|message| match message {
+            Message::User { content } => Some(content),
+            _ => None,
+        })
+        .expect("provider request contains a user message");
+    assert!(
+        user_content.iter().any(
+            |block| matches!(block, ContentBlock::Text { text, .. } if text == "describe image")
+        )
+    );
+    assert!(user_content.iter().any(|block| matches!(
+        block,
+        ContentBlock::Image { data, mime_type }
+            if data == image_data && mime_type == "image/png"
+    )));
+    drop(contexts);
+
+    let events = std::fs::read_to_string(sessions.join(session_id).join("events.jsonl")).unwrap();
+    assert!(events.contains(image_data), "{events}");
+    assert!(events.contains("image/png"), "{events}");
+}
+
+#[tokio::test]
+async fn rpc_prompt_images_reject_non_image_content_before_provider_execution() {
+    let api = "pi-coding-rpc-invalid-image-content";
+    let contexts = Arc::new(Mutex::new(Vec::new()));
+    let provider_guard = ProviderGuard::register(
+        api,
+        Arc::new(RecordingProvider {
+            contexts: contexts.clone(),
+        }),
+    );
+    let input = b"{\"id\":\"invalid-image\",\"type\":\"prompt\",\"message\":\"hello\",\"images\":[{\"type\":\"text\",\"text\":\"not an image\"}]}\n";
+    let mut output = Vec::new();
+
+    run_rpc_mode_for_io(
+        &input[..],
+        &mut output,
+        CliRunOptions {
+            model_override: Some(multimodal_faux_model(api)),
+            tools: Vec::new(),
+            register_builtins: false,
+            ai_client: Some(provider_guard.ai_client()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    let response = &parse_lines(&output)[0];
+    assert_eq!(response["success"], false);
+    assert!(
+        response["error"]
+            .as_str()
+            .unwrap()
+            .contains("must contain only image content blocks")
+    );
+    assert!(contexts.lock().unwrap().is_empty());
 }
 
 impl BlockingTwoTurnProvider {
@@ -3097,7 +3240,7 @@ async fn rpc_follow_up_prompt_while_coding_prompt_running_sends_control() {
             input_reader,
             &mut output_writer,
             CliRunOptions {
-                model_override: Some(faux_model(api)),
+                model_override: Some(multimodal_faux_model(api)),
                 tools: Vec::new(),
                 register_builtins: false,
                 ai_client: Some(_provider_guard.ai_client()),
@@ -3119,7 +3262,7 @@ async fn rpc_follow_up_prompt_while_coding_prompt_running_sends_control() {
 
     input_writer
         .write_all(
-            b"{\"id\":\"f1\",\"type\":\"prompt\",\"message\":\"next\",\"streamingBehavior\":\"followUp\"}\n",
+            b"{\"id\":\"f1\",\"type\":\"prompt\",\"message\":\"next\",\"images\":[{\"type\":\"image\",\"data\":\"Zm9sbG93LXVw\",\"mimeType\":\"image/png\"}],\"streamingBehavior\":\"followUp\"}\n",
         )
         .await
         .unwrap();
@@ -3151,11 +3294,349 @@ async fn rpc_follow_up_prompt_while_coding_prompt_running_sends_control() {
                 if content.iter().any(|block| matches!(
                     block,
                     ContentBlock::Text { text, .. } if text == "next"
+                )) && content.iter().any(|block| matches!(
+                    block,
+                    ContentBlock::Image { data, mime_type }
+                        if data == "Zm9sbG93LXVw" && mime_type == "image/png"
                 ))
         )),
         "{:#?}",
         contexts[1].messages
     );
+}
+
+#[tokio::test]
+async fn rpc_direct_steer_and_follow_up_images_reach_later_provider_turns() {
+    let api = "pi-coding-rpc-direct-multimodal-controls";
+    let contexts = Arc::new(Mutex::new(Vec::new()));
+    let (started_tx, started_rx) = oneshot::channel();
+    let (release_tx, release_rx) = oneshot::channel();
+    let provider_guard = ProviderGuard::register(
+        api,
+        Arc::new(BlockingTwoTurnProvider::new(
+            contexts.clone(),
+            started_tx,
+            release_rx,
+        )),
+    );
+    let (mut input_writer, input_reader) = tokio::io::duplex(2048);
+    let (output_writer, output_reader) = tokio::io::duplex(16 * 1024);
+    let task = tokio::spawn(async move {
+        let mut output_writer = output_writer;
+        run_rpc_mode_for_io(
+            input_reader,
+            &mut output_writer,
+            CliRunOptions {
+                model_override: Some(multimodal_faux_model(api)),
+                tools: Vec::new(),
+                register_builtins: false,
+                ai_client: Some(provider_guard.ai_client()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    });
+    let mut lines = tokio::io::BufReader::new(output_reader).lines();
+
+    input_writer
+        .write_all(b"{\"id\":\"control-base\",\"type\":\"prompt\",\"message\":\"base\"}\n")
+        .await
+        .unwrap();
+    let _ = read_rpc_json_matching(&mut lines, "multimodal control prompt start", |value| {
+        value["type"] == "agent_start"
+    })
+    .await;
+    wait_for_rpc_provider_start(started_rx, "multimodal control provider start").await;
+
+    input_writer
+        .write_all(
+            b"{\"id\":\"steer-image\",\"type\":\"steer\",\"message\":\"steer image\",\"images\":[{\"type\":\"image\",\"data\":\"c3RlZXI=\",\"mimeType\":\"image/png\"}]}\n",
+        )
+        .await
+        .unwrap();
+    input_writer
+        .write_all(
+            b"{\"id\":\"follow-image\",\"type\":\"follow_up\",\"message\":\"follow image\",\"images\":[{\"type\":\"image\",\"data\":\"Zm9sbG93\",\"mimeType\":\"image/jpeg\"}]}\n",
+        )
+        .await
+        .unwrap();
+    for id in ["steer-image", "follow-image"] {
+        let response = read_rpc_json_matching(&mut lines, "multimodal control response", |value| {
+            value["id"] == id
+        })
+        .await;
+        assert_eq!(response["success"], true, "{response}");
+    }
+
+    release_tx.send(()).unwrap();
+    let _ = read_rpc_json_matching(&mut lines, "multimodal controls completion", |value| {
+        value["type"] == "agent_end"
+    })
+    .await;
+    drop(input_writer);
+    task.await.unwrap();
+
+    let contexts = contexts.lock().unwrap();
+    assert!(contexts.len() >= 2, "{contexts:#?}");
+    let later_messages = contexts[1..]
+        .iter()
+        .flat_map(|context| context.messages.iter())
+        .collect::<Vec<_>>();
+    assert!(
+        later_messages.iter().any(|message| matches!(
+            message,
+            Message::User { content }
+                if content.iter().any(|block| matches!(
+                    block,
+                    ContentBlock::Image { data, mime_type }
+                        if data == "c3RlZXI=" && mime_type == "image/png"
+                ))
+        )),
+        "{later_messages:#?}"
+    );
+    assert!(
+        later_messages.iter().any(|message| matches!(
+            message,
+            Message::User { content }
+                if content.iter().any(|block| matches!(
+                    block,
+                    ContentBlock::Image { data, mime_type }
+                        if data == "Zm9sbG93" && mime_type == "image/jpeg"
+                ))
+        )),
+        "{later_messages:#?}"
+    );
+}
+
+#[tokio::test]
+async fn rpc_idle_image_controls_are_queued_into_the_next_prompt() {
+    let api = "pi-coding-rpc-idle-multimodal-controls";
+    let contexts = Arc::new(Mutex::new(Vec::new()));
+    let (started_tx, started_rx) = oneshot::channel();
+    let (release_tx, release_rx) = oneshot::channel();
+    let provider_guard = ProviderGuard::register(
+        api,
+        Arc::new(BlockingTwoTurnProvider::new(
+            contexts.clone(),
+            started_tx,
+            release_rx,
+        )),
+    );
+    let (mut input_writer, input_reader) = tokio::io::duplex(4096);
+    let (output_writer, output_reader) = tokio::io::duplex(16 * 1024);
+    let task = tokio::spawn(async move {
+        let mut output_writer = output_writer;
+        run_rpc_mode_for_io(
+            input_reader,
+            &mut output_writer,
+            CliRunOptions {
+                model_override: Some(multimodal_faux_model(api)),
+                tools: Vec::new(),
+                register_builtins: false,
+                ai_client: Some(provider_guard.ai_client()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    });
+    let mut lines = tokio::io::BufReader::new(output_reader).lines();
+
+    input_writer
+        .write_all(
+            b"{\"id\":\"idle-steer-image\",\"type\":\"steer\",\"message\":\"steer\",\"images\":[{\"type\":\"image\",\"data\":\"c3RlZXI=\",\"mimeType\":\"image/png\"}]}\n",
+        )
+        .await
+        .unwrap();
+    let steer = read_rpc_json_matching(&mut lines, "idle steer response", |value| {
+        value["id"] == "idle-steer-image"
+    })
+    .await;
+    assert_eq!(steer["success"], true, "{steer}");
+    let steer_queue = read_rpc_json_matching(&mut lines, "idle steer queue", |value| {
+        value["type"] == "queue_update"
+    })
+    .await;
+    assert_eq!(steer_queue["steering"][0], "steer\n[image:image/png]");
+    assert!(!steer_queue.to_string().contains("c3RlZXI="));
+
+    input_writer
+        .write_all(
+            b"{\"id\":\"idle-follow-image\",\"type\":\"follow_up\",\"message\":\"follow\",\"images\":[{\"type\":\"image\",\"data\":\"Zm9sbG93\",\"mimeType\":\"image/jpeg\"}]}\n",
+        )
+        .await
+        .unwrap();
+    let follow = read_rpc_json_matching(&mut lines, "idle follow response", |value| {
+        value["id"] == "idle-follow-image"
+    })
+    .await;
+    assert_eq!(follow["success"], true, "{follow}");
+    let follow_queue = read_rpc_json_matching(&mut lines, "idle follow queue", |value| {
+        value["type"] == "queue_update"
+    })
+    .await;
+    assert_eq!(follow_queue["followUp"][0], "follow\n[image:image/jpeg]");
+    assert!(!follow_queue.to_string().contains("Zm9sbG93"));
+
+    input_writer
+        .write_all(b"{\"id\":\"queued-control-prompt\",\"type\":\"prompt\",\"message\":\"base\"}\n")
+        .await
+        .unwrap();
+    let _ = read_rpc_json_matching(&mut lines, "queued control prompt start", |value| {
+        value["type"] == "agent_start"
+    })
+    .await;
+    wait_for_rpc_provider_start(started_rx, "queued control provider start").await;
+    release_tx.send(()).unwrap();
+    let _ = read_rpc_json_matching(&mut lines, "queued control completion", |value| {
+        value["type"] == "agent_end"
+    })
+    .await;
+    input_writer
+        .write_all(b"{\"id\":\"queued-control-state\",\"type\":\"get_state\"}\n")
+        .await
+        .unwrap();
+    let state = read_rpc_json_matching(&mut lines, "queued control state", |value| {
+        value["id"] == "queued-control-state"
+    })
+    .await;
+    assert_eq!(state["data"]["pendingMessageCount"], 0, "{state}");
+    drop(input_writer);
+    task.await.unwrap();
+
+    let contexts = contexts.lock().unwrap();
+    assert!(contexts.len() >= 2, "{contexts:#?}");
+    assert!(contexts[0].messages.iter().any(|message| matches!(
+        message,
+        Message::User { content }
+            if content.iter().any(|block| matches!(
+                block,
+                ContentBlock::Image { data, mime_type }
+                    if data == "c3RlZXI=" && mime_type == "image/png"
+            ))
+    )));
+    assert!(
+        contexts[1..]
+            .iter()
+            .any(|context| context.messages.iter().any(|message| matches!(
+                message,
+                Message::User { content }
+                    if content.iter().any(|block| matches!(
+                        block,
+                        ContentBlock::Image { data, mime_type }
+                            if data == "Zm9sbG93" && mime_type == "image/jpeg"
+                    ))
+            )))
+    );
+}
+
+#[tokio::test]
+async fn rpc_queue_mode_setters_change_provider_queue_drain_behavior() {
+    let api = "pi-coding-rpc-queue-mode-behavior";
+    let contexts = Arc::new(Mutex::new(Vec::new()));
+    let (started_tx, started_rx) = oneshot::channel();
+    let (release_tx, release_rx) = oneshot::channel();
+    let provider_guard = ProviderGuard::register(
+        api,
+        Arc::new(BlockingTwoTurnProvider::new(
+            contexts.clone(),
+            started_tx,
+            release_rx,
+        )),
+    );
+    let (mut input_writer, input_reader) = tokio::io::duplex(4096);
+    let (output_writer, output_reader) = tokio::io::duplex(16 * 1024);
+    let task = tokio::spawn(async move {
+        let mut output_writer = output_writer;
+        run_rpc_mode_for_io(
+            input_reader,
+            &mut output_writer,
+            CliRunOptions {
+                model_override: Some(faux_model(api)),
+                tools: Vec::new(),
+                register_builtins: false,
+                ai_client: Some(provider_guard.ai_client()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    });
+    let mut lines = tokio::io::BufReader::new(output_reader).lines();
+
+    for command in [
+        "{\"id\":\"steering-all\",\"type\":\"set_steering_mode\",\"mode\":\"all\"}\n",
+        "{\"id\":\"follow-all\",\"type\":\"set_follow_up_mode\",\"mode\":\"all\"}\n",
+        "{\"id\":\"steer-one\",\"type\":\"steer\",\"message\":\"steer one\"}\n",
+        "{\"id\":\"steer-two\",\"type\":\"steer\",\"message\":\"steer two\"}\n",
+        "{\"id\":\"follow-one\",\"type\":\"follow_up\",\"message\":\"follow one\"}\n",
+        "{\"id\":\"follow-two\",\"type\":\"follow_up\",\"message\":\"follow two\"}\n",
+    ] {
+        input_writer.write_all(command.as_bytes()).await.unwrap();
+    }
+    for id in [
+        "steering-all",
+        "follow-all",
+        "steer-one",
+        "steer-two",
+        "follow-one",
+        "follow-two",
+    ] {
+        let response = read_rpc_json_matching(&mut lines, "queue mode setup response", |value| {
+            value["id"] == id
+        })
+        .await;
+        assert_eq!(response["success"], true, "{response}");
+    }
+
+    input_writer
+        .write_all(b"{\"id\":\"queue-mode-prompt\",\"type\":\"prompt\",\"message\":\"base\"}\n")
+        .await
+        .unwrap();
+    let _ = read_rpc_json_matching(&mut lines, "queue mode prompt start", |value| {
+        value["type"] == "agent_start"
+    })
+    .await;
+    wait_for_rpc_provider_start(started_rx, "queue mode provider start").await;
+    release_tx.send(()).unwrap();
+    let _ = read_rpc_json_matching(&mut lines, "queue mode completion", |value| {
+        value["type"] == "agent_end"
+    })
+    .await;
+    drop(input_writer);
+    task.await.unwrap();
+
+    let contexts = contexts.lock().unwrap();
+    assert_eq!(contexts.len(), 2, "{contexts:#?}");
+    for expected in ["steer one", "steer two"] {
+        assert!(
+            contexts[0].messages.iter().any(|message| matches!(
+                message,
+                Message::User { content }
+                    if content.iter().any(|block| matches!(
+                        block,
+                        ContentBlock::Text { text, .. } if text == expected
+                    ))
+            )),
+            "missing {expected:?} from first provider request: {:#?}",
+            contexts[0]
+        );
+    }
+    for expected in ["follow one", "follow two"] {
+        assert!(
+            contexts[1].messages.iter().any(|message| matches!(
+                message,
+                Message::User { content }
+                    if content.iter().any(|block| matches!(
+                        block,
+                        ContentBlock::Text { text, .. } if text == expected
+                    ))
+            )),
+            "missing {expected:?} from second provider request: {:#?}",
+            contexts[1]
+        );
+    }
 }
 
 #[tokio::test]

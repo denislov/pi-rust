@@ -12,6 +12,7 @@ use crate::app::bootstrap::SessionMode;
 use crate::app::cli::error::CliError;
 use crate::app::cli::prompt_options::PromptRunOptions;
 use crate::app::session::{open_new_runtime_session, runtime_session_root};
+use crate::operations::prompt::context::QueuedPromptInput;
 use crate::protocol::types::{
     ProtocolEvent, RpcResponse, RpcShutdownLifecycleEvent, RpcShutdownResponse, RpcShutdownStatus,
     StreamingBehavior,
@@ -153,6 +154,7 @@ impl RpcState {
             self.handle_streaming_prompt(
                 id,
                 message,
+                images,
                 streaming_behavior,
                 after_snapshot_cursor,
                 writer,
@@ -173,23 +175,11 @@ impl RpcState {
             }
         }
 
-        if has_images(&images) {
-            write_rpc_response(
-                writer,
-                RpcResponse::error(
-                    id,
-                    "prompt",
-                    "image prompt payloads are not supported in Rust M5 RPC mode",
-                ),
-            )
-            .await?;
-            return Ok(());
-        }
-
         if self.is_streaming() {
             self.handle_streaming_prompt(
                 id,
                 message,
+                images,
                 streaming_behavior,
                 after_snapshot_cursor,
                 writer,
@@ -198,7 +188,15 @@ impl RpcState {
             return Ok(());
         }
 
-        self.start_coding_session_prompt(id, message, idempotency_key, writer)
+        let invocation = match rpc_prompt_invocation(message.clone(), images) {
+            Ok(invocation) => invocation,
+            Err(error) => {
+                write_rpc_response(writer, RpcResponse::error(id, "prompt", error.to_string()))
+                    .await?;
+                return Ok(());
+            }
+        };
+        self.start_coding_session_prompt(id, message, invocation, idempotency_key, writer)
             .await
     }
 
@@ -206,6 +204,7 @@ impl RpcState {
         &mut self,
         id: Option<String>,
         message: String,
+        images: Option<Vec<pi_ai::api::conversation::ContentBlock>>,
         streaming_behavior: Option<StreamingBehavior>,
         after_snapshot_cursor: Option<CodingAgentSnapshotCursor>,
         writer: &mut W,
@@ -233,6 +232,18 @@ impl RpcState {
             };
 
             if streaming_behavior.is_none() {
+                if has_images(&images) {
+                    write_rpc_response(
+                        writer,
+                        RpcResponse::error(
+                            id,
+                            "prompt",
+                            "reconnect-only prompt requests cannot include image content",
+                        ),
+                    )
+                    .await?;
+                    return Ok(());
+                }
                 write_rpc_response(writer, RpcResponse::success(id, "prompt", None)).await?;
                 for event in replayed {
                     write_json_line(writer, &event).await?;
@@ -240,7 +251,7 @@ impl RpcState {
                 return Ok(());
             }
 
-            self.handle_streaming_prompt_control(id, message, streaming_behavior, writer)
+            self.handle_streaming_prompt_control(id, message, images, streaming_behavior, writer)
                 .await?;
             for event in replayed {
                 write_json_line(writer, &event).await?;
@@ -248,7 +259,7 @@ impl RpcState {
             return Ok(());
         }
 
-        self.handle_streaming_prompt_control(id, message, streaming_behavior, writer)
+        self.handle_streaming_prompt_control(id, message, images, streaming_behavior, writer)
             .await
     }
 
@@ -256,6 +267,7 @@ impl RpcState {
         &mut self,
         id: Option<String>,
         message: String,
+        images: Option<Vec<pi_ai::api::conversation::ContentBlock>>,
         streaming_behavior: Option<StreamingBehavior>,
         writer: &mut W,
     ) -> Result<(), CliError>
@@ -308,9 +320,23 @@ impl RpcState {
                 .unwrap_or_else(|| format!("rpc-prompt-control-{message}")),
         );
 
+        let content = match rpc_control_content(message.clone(), images) {
+            Ok(content) => content,
+            Err(error) => {
+                write_rpc_response(writer, RpcResponse::error(id, "prompt", error.to_string()))
+                    .await?;
+                return Ok(());
+            }
+        };
         let result = match streaming_behavior {
-            Some(StreamingBehavior::Steer) => control.steer(control_id, message),
-            Some(StreamingBehavior::FollowUp) => control.follow_up(control_id, message),
+            Some(StreamingBehavior::Steer) => match content {
+                Some(content) => control.steer_content(control_id, content),
+                None => control.steer(control_id, message),
+            },
+            Some(StreamingBehavior::FollowUp) => match content {
+                Some(content) => control.follow_up_content(control_id, content),
+                None => control.follow_up(control_id, message),
+            },
             None => {
                 write_rpc_response(
                     writer,
@@ -859,6 +885,7 @@ impl RpcState {
         &mut self,
         id: Option<String>,
         message: String,
+        invocation: PromptInvocation,
         idempotency_key: Option<OperationIdempotencyKey>,
         writer: &mut W,
     ) -> Result<(), CliError>
@@ -883,13 +910,19 @@ impl RpcState {
             tool_execution: None,
             resources: AgentResources::default(),
             settings: Some(self.effective_prompt_settings()),
-            invocation: PromptInvocation::Text(message.clone()),
+            invocation,
         })
         .with_mode(PromptTurnMode::Rpc);
+        let prompt_options =
+            prompt_options.with_queued_inputs(self.steering.clone(), self.follow_up.clone());
         let connection = self.ensure_client_connection(&session)?;
         let draft_id = CodingAgentDraftId("rpc-prompt".into());
-        connection.set_prompt_draft(draft_id.clone(), message.clone())?;
         let operation = CodingAgentOperation::Prompt(prompt_options);
+        connection.set_prompt_operation_draft(
+            draft_id.clone(),
+            prompt_draft_display(&message, &operation),
+            &operation,
+        )?;
         self.ensure_session_event_pump(&session);
         let event_flush = self
             .session_event_flush
@@ -936,26 +969,26 @@ impl RpcState {
         Ok(())
     }
 
-    pub(super) fn enqueue_steer(&mut self, message: String) {
+    pub(super) fn enqueue_steer(&mut self, input: QueuedPromptInput) {
         if let Some(connection) = &self.client_connection {
             let _ = connection.enqueue_control_draft(CodingAgentDraft {
                 id: CodingAgentDraftId(format!("rpc-steer-{}", self.steering.len())),
                 kind: CodingAgentDraftKind::Steer,
-                text: message.clone(),
+                text: input.display_text(),
             });
         }
-        self.steering.push(message);
+        self.steering.push(input);
     }
 
-    pub(super) fn enqueue_follow_up(&mut self, message: String) {
+    pub(super) fn enqueue_follow_up(&mut self, input: QueuedPromptInput) {
         if let Some(connection) = &self.client_connection {
             let _ = connection.enqueue_control_draft(CodingAgentDraft {
                 id: CodingAgentDraftId(format!("rpc-follow-up-{}", self.follow_up.len())),
                 kind: CodingAgentDraftKind::FollowUp,
-                text: message.clone(),
+                text: input.display_text(),
             });
         }
-        self.follow_up.push(message);
+        self.follow_up.push(input);
     }
 
     pub(super) async fn write_product_event<W>(
@@ -1000,6 +1033,7 @@ impl RpcState {
             ))
         })?;
 
+        let consumed_prompt_queue = matches!(&result.outcome, CodingOperationOutcome::Prompt(_));
         let outcome = match &result.outcome {
             CodingOperationOutcome::Prompt(outcome) => {
                 if let Ok(outcome) = outcome
@@ -1048,8 +1082,13 @@ impl RpcState {
             })?,
         };
         self.coding_session = Some(session);
-        self.steering.clear();
-        self.follow_up.clear();
+        if consumed_prompt_queue {
+            self.steering.clear();
+            self.follow_up.clear();
+            if let Some(connection) = &self.client_connection {
+                let _ = connection.clear_control_drafts();
+            }
+        }
         self.finish_pending_shutdown_if_idle(writer).await?;
         match outcome {
             Err(CliError::SessionFailure(message)) if message == "cancelled" => Ok(()),
@@ -1202,11 +1241,75 @@ impl RpcState {
         write_json_line(
             writer,
             &ProtocolEvent::QueueUpdate {
-                steering: self.steering.clone(),
-                follow_up: self.follow_up.clone(),
+                steering: self
+                    .steering
+                    .iter()
+                    .map(QueuedPromptInput::display_text)
+                    .collect(),
+                follow_up: self
+                    .follow_up
+                    .iter()
+                    .map(QueuedPromptInput::display_text)
+                    .collect(),
             },
         )
         .await
+    }
+}
+
+fn rpc_prompt_invocation(
+    message: String,
+    images: Option<Vec<pi_ai::api::conversation::ContentBlock>>,
+) -> Result<PromptInvocation, CodingSessionError> {
+    let Some(images) = images.filter(|images| !images.is_empty()) else {
+        return Ok(PromptInvocation::Text(message));
+    };
+    let mut content = Vec::with_capacity(images.len() + usize::from(!message.is_empty()));
+    if !message.is_empty() {
+        content.push(pi_ai::api::conversation::ContentBlock::Text {
+            text: message,
+            text_signature: None,
+        });
+    }
+    for image in images {
+        if !matches!(image, pi_ai::api::conversation::ContentBlock::Image { .. }) {
+            return Err(CodingSessionError::Input {
+                message: "RPC prompt images must contain only image content blocks".into(),
+            });
+        }
+        content.push(image);
+    }
+    Ok(PromptInvocation::Content(content))
+}
+
+pub(super) fn rpc_control_content(
+    message: String,
+    images: Option<Vec<pi_ai::api::conversation::ContentBlock>>,
+) -> Result<Option<Vec<pi_ai::api::conversation::ContentBlock>>, CodingSessionError> {
+    match rpc_prompt_invocation(message, images)? {
+        PromptInvocation::Text(_) => Ok(None),
+        PromptInvocation::Content(content) => Ok(Some(content)),
+        _ => unreachable!("RPC control input only constructs text or content invocations"),
+    }
+}
+
+fn prompt_draft_display(message: &str, operation: &CodingAgentOperation) -> String {
+    let CodingAgentOperation::Prompt(options) = operation else {
+        return message.to_owned();
+    };
+    match options.invocation() {
+        PromptInvocation::Content(content) => content
+            .iter()
+            .filter_map(|block| match block {
+                pi_ai::api::conversation::ContentBlock::Text { text, .. } => Some(text.clone()),
+                pi_ai::api::conversation::ContentBlock::Image { mime_type, .. } => {
+                    Some(format!("[image:{mime_type}]"))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => message.to_owned(),
     }
 }
 

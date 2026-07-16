@@ -474,6 +474,11 @@ impl CodingAgentOperation {
                 crate::app::bootstrap::PromptInvocation::Text(text) => {
                     Some(("prompt".into(), text.clone()))
                 }
+                crate::app::bootstrap::PromptInvocation::Content(content) => Some((
+                    "prompt_content".into(),
+                    serde_json::to_string(content)
+                        .expect("structured prompt content must serialize"),
+                )),
                 _ => None,
             },
             _ => None,

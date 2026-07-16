@@ -1223,6 +1223,33 @@ runtime = "lua"
         control
             .steer(CodingAgentControlId("steer-1".into()), "direct steer")
             .unwrap();
+        let image_control_id = CodingAgentControlId("steer-image-1".into());
+        let image_content = vec![ContentBlock::Image {
+            data: "c3RlZXI=".into(),
+            mime_type: "image/png".into(),
+        }];
+        let image_receipt = control
+            .steer_content(image_control_id.clone(), image_content.clone())
+            .unwrap();
+        assert_eq!(
+            control
+                .steer_content(image_control_id.clone(), image_content.clone())
+                .unwrap(),
+            image_receipt
+        );
+        assert_eq!(
+            control
+                .steer_content(
+                    image_control_id,
+                    vec![ContentBlock::Image {
+                        data: "ZGlmZmVyZW50".into(),
+                        mime_type: "image/png".into(),
+                    }],
+                )
+                .unwrap_err()
+                .reason,
+            CodingAgentControlRejectionReason::PayloadConflict
+        );
         control
             .steer_draft(CodingAgentDraftId("steer-draft".into()))
             .unwrap();
@@ -1239,6 +1266,9 @@ runtime = "lua"
                 PromptControlCommand::Steer {
                     text: "direct steer".into()
                 },
+                PromptControlCommand::SteerContent {
+                    content: image_content
+                },
                 PromptControlCommand::Steer {
                     text: "draft steer".into()
                 },
@@ -1248,6 +1278,50 @@ runtime = "lua"
             ]
         );
         assert!(connection.state().unwrap().drafts.is_empty());
+    }
+
+    #[tokio::test]
+    async fn structured_prompt_draft_uses_content_fingerprint_without_exposing_image_data() {
+        let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
+            .await
+            .unwrap();
+        let connection = session
+            .connect(CodingAgentClientId::new("structured-draft-client"))
+            .unwrap();
+        let draft_id = CodingAgentDraftId("structured-draft".into());
+        let image_data = "aW1hZ2UtZGF0YQ==";
+        let operation =
+            CodingAgentOperation::Prompt(PromptTurnOptions::new(PromptInvocation::Content(vec![
+                ContentBlock::Text {
+                    text: "describe image".into(),
+                    text_signature: None,
+                },
+                ContentBlock::Image {
+                    data: image_data.into(),
+                    mime_type: "image/png".into(),
+                },
+            ])));
+
+        connection
+            .set_prompt_operation_draft(
+                draft_id.clone(),
+                "describe image\n[image:image/png]",
+                &operation,
+            )
+            .unwrap();
+
+        let draft = connection.state().unwrap().drafts.remove(0);
+        assert_eq!(draft.id, draft_id);
+        assert_eq!(draft.text, "describe image\n[image:image/png]");
+        assert!(!draft.text.contains(image_data));
+
+        let lease = connection
+            .prepare_submission(&mut session, draft_id, &operation)
+            .unwrap();
+        assert_eq!(
+            *lease.shared.lock().unwrap(),
+            SubmissionLeaseLifecycle::Prepared
+        );
     }
 
     #[tokio::test]
@@ -1432,6 +1506,7 @@ runtime = "lua"
                     id: "prompt-draft".into(),
                     kind: ClientDraftKind::Prompt,
                     text: "preserve or consume atomically".into(),
+                    fingerprint: "preserve or consume atomically".into(),
                 }),
             )
             .unwrap();
@@ -1445,6 +1520,7 @@ runtime = "lua"
             id: "prompt-draft".into(),
             kind: ClientDraftKind::Prompt,
             text: "preserve or consume atomically".into(),
+            fingerprint: "preserve or consume atomically".into(),
         };
         service
             .commit_submission_running(
@@ -1540,6 +1616,7 @@ runtime = "lua"
                     id: "terminal-draft".into(),
                     kind: ClientDraftKind::Prompt,
                     text: "control prompt".into(),
+                    fingerprint: "control prompt".into(),
                 }),
             )
             .unwrap();
@@ -2046,6 +2123,7 @@ runtime = "lua"
                     id: "detach-draft".into(),
                     kind: ClientDraftKind::Prompt,
                     text: "detach keeps this exact draft".into(),
+                    fingerprint: "detach keeps this exact draft".into(),
                 }),
             )
             .unwrap();
@@ -2093,6 +2171,7 @@ runtime = "lua"
                     id: "shutdown-draft".into(),
                     kind: ClientDraftKind::Prompt,
                     text: "shutdown keeps this exact draft".into(),
+                    fingerprint: "shutdown keeps this exact draft".into(),
                 }),
             )
             .unwrap();
@@ -2140,6 +2219,7 @@ runtime = "lua"
                     id: "submission-first-draft".into(),
                     kind: ClientDraftKind::Prompt,
                     text: "submission consumes this exact draft".into(),
+                    fingerprint: "submission consumes this exact draft".into(),
                 }),
             )
             .unwrap();

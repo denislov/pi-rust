@@ -3,6 +3,7 @@ use crate::adapters::rpc::events::RpcCodingEventAdapter;
 use crate::app::bootstrap::CliRunOptions;
 use crate::app::cli::error::CliError;
 use crate::app::cli::request::{render_diagnostics, resolve_runtime_defaults};
+use crate::operations::prompt::context::QueuedPromptInput;
 use crate::protocol::types::{RpcDetachStatus, RpcNegotiatedProtocolState};
 use crate::protocol::version::{PRODUCT_EVENT_PROTOCOL_VERSION, UI_SNAPSHOT_PROTOCOL_VERSION};
 use crate::runtime::facade::{
@@ -56,8 +57,8 @@ pub(super) struct RpcState {
         Option<crate::runtime::facade::CodingAgentRuntimeShutdownHandle>,
     pub(super) pending_shutdown_response: Option<Option<String>>,
     pub(super) is_compacting: bool,
-    pub(super) steering: Vec<String>,
-    pub(super) follow_up: Vec<String>,
+    pub(super) steering: Vec<QueuedPromptInput>,
+    pub(super) follow_up: Vec<QueuedPromptInput>,
     pub(super) negotiated_protocol: RpcNegotiatedProtocolState,
     pub(super) idempotency_records: HashMap<OperationIdempotencyKey, RpcIdempotencyRecord>,
     pub(super) idempotency_order: VecDeque<OperationIdempotencyKey>,
@@ -255,21 +256,21 @@ impl RpcState {
         let connection = session
             .connect(CodingAgentClientId::new("rpc-primary"))
             .map_err(CliError::from)?;
-        for (index, text) in self.steering.iter().enumerate() {
+        for (index, input) in self.steering.iter().enumerate() {
             connection
                 .enqueue_control_draft(CodingAgentDraft {
                     id: CodingAgentDraftId(format!("rpc-steer-{index}")),
                     kind: CodingAgentDraftKind::Steer,
-                    text: text.clone(),
+                    text: input.display_text(),
                 })
                 .map_err(|reason| CliError::SessionFailure(format!("{reason:?}")))?;
         }
-        for (index, text) in self.follow_up.iter().enumerate() {
+        for (index, input) in self.follow_up.iter().enumerate() {
             connection
                 .enqueue_control_draft(CodingAgentDraft {
                     id: CodingAgentDraftId(format!("rpc-follow-up-{index}")),
                     kind: CodingAgentDraftKind::FollowUp,
-                    text: text.clone(),
+                    text: input.display_text(),
                 })
                 .map_err(|reason| CliError::SessionFailure(format!("{reason:?}")))?;
         }

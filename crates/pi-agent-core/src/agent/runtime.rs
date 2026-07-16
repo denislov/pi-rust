@@ -130,6 +130,22 @@ impl Agent {
             });
     }
 
+    pub fn steer_content(&self, content: Vec<pi_ai::api::conversation::ContentBlock>) {
+        let msg_count = self.state.read().unwrap().steering_queue.len();
+        self.state
+            .write()
+            .unwrap()
+            .steering_queue
+            .push_back(AgentMessage::Custom {
+                message_id: format!("steer_{}", msg_count),
+                custom_type: "input".into(),
+                content,
+                display: true,
+                details: None,
+                timestamp: 0,
+            });
+    }
+
     pub fn follow_up(&self, text: impl Into<String>) {
         let msg_count = self.state.read().unwrap().follow_up_queue.len();
         self.state
@@ -139,6 +155,22 @@ impl Agent {
             .push_back(AgentMessage::UserText {
                 message_id: format!("followup_{}", msg_count),
                 text: text.into(),
+            });
+    }
+
+    pub fn follow_up_content(&self, content: Vec<pi_ai::api::conversation::ContentBlock>) {
+        let msg_count = self.state.read().unwrap().follow_up_queue.len();
+        self.state
+            .write()
+            .unwrap()
+            .follow_up_queue
+            .push_back(AgentMessage::Custom {
+                message_id: format!("followup_{}", msg_count),
+                custom_type: "input".into(),
+                content,
+                display: true,
+                details: None,
+                timestamp: 0,
             });
     }
 
