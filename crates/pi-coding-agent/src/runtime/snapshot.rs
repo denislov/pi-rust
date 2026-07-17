@@ -2,6 +2,7 @@ use super::capability::CapabilityGeneration;
 use super::control::{OperationCancellationHandle, OperationKind, PromptControlHandle};
 use crate::events::{ProductEvent, ProductEventSequence, ProductEventTerminalStatus};
 use crate::protocol::version::UI_SNAPSHOT_PROTOCOL_VERSION;
+use crate::runtime::client::context::UiContextProjection;
 use crate::runtime::client::state::{
     ClientConnectionId, ClientDraft, UiSnapshot, UiSnapshotCursor,
 };
@@ -178,6 +179,7 @@ pub(crate) struct SnapshotState {
     pub(crate) recovery_revision: u64,
     pub(crate) shutdown_drain_boundary: Option<ProductEventSequence>,
     pub(crate) pending_authorizations: Vec<crate::authorization::ToolAuthorizationRequest>,
+    pub(crate) context_projection: UiContextProjection,
     shutdown_drain_eligibility: HashMap<ClientConnectionId, ClientGeneration>,
 }
 
@@ -197,6 +199,7 @@ impl Default for SnapshotState {
             recovery_revision: 0,
             shutdown_drain_boundary: None,
             pending_authorizations: Vec::new(),
+            context_projection: UiContextProjection::default(),
             shutdown_drain_eligibility: HashMap::new(),
         }
     }
@@ -948,6 +951,16 @@ impl SnapshotCoordinator {
         self.state.lock().unwrap().pending_authorizations = pending;
     }
 
+    pub(crate) fn observe_context_event_in_state(
+        state: &mut SnapshotState,
+        event: &ProductEvent,
+        operation_kind: Option<OperationKind>,
+    ) {
+        state
+            .context_projection
+            .apply_product_event(event, operation_kind);
+    }
+
     pub(crate) fn client_snapshot(
         &self,
         handle: &ClientHandle,
@@ -1028,7 +1041,8 @@ impl SnapshotCoordinator {
             projection.active_operation,
             client_drafts,
             state.pending_authorizations.clone(),
-        ))
+        )
+        .with_context(state.context_projection.clone()))
     }
 
     fn record<'a>(
@@ -1189,7 +1203,8 @@ impl SnapshotCoordinator {
                 .map(|draft| ClientDraft::new(draft.kind, draft.text.clone()))
                 .collect(),
             Vec::new(),
-        );
+        )
+        .with_context(state.context_projection.clone());
         let client_state = ClientSnapshotState {
             snapshot,
             drafts: record

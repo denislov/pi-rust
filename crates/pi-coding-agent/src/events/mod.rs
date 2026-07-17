@@ -298,6 +298,8 @@ pub enum CodingAgentAgentProductEvent {
         turn_id: String,
         provider: String,
         model: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        context_window: Option<u32>,
     },
 }
 
@@ -1385,6 +1387,7 @@ mod tests {
                 turn_id: "turn".into(),
                 provider: "faux".into(),
                 model: "model".into(),
+                context_window: Some(128_000),
             },
         ]
         .into_iter()

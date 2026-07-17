@@ -47,19 +47,25 @@ pub use crate::profiles::{
     ProfileKind, ProfileRegistry, ProfileRegistryOptions, ProfileSource, SupervisionPolicy,
     TeamProfile, TeamStrategy, TeamSupervisor,
 };
+pub(crate) use crate::runtime::client::context::{
+    UiContextProjection, UiFileChangeProjection, UiOperationProjection,
+};
 pub use crate::runtime::client::projection::{
     CodingAgentCapabilityControl, CodingAgentCapabilityRevocationOutcome,
     CodingAgentClientConnection, CodingAgentClientId, CodingAgentConnectionGeneration,
-    CodingAgentControlId, CodingAgentControlKind, CodingAgentControlReceipt,
-    CodingAgentControlRejection, CodingAgentControlRejectionReason, CodingAgentDetachOutcome,
-    CodingAgentDraft, CodingAgentDraftId, CodingAgentDraftKind, CodingAgentFreshSnapshotRecovery,
-    CodingAgentMutationRejection, CodingAgentOperationControl, CodingAgentOutcomeAcknowledgementId,
+    CodingAgentContextSnapshot, CodingAgentControlId, CodingAgentControlKind,
+    CodingAgentControlReceipt, CodingAgentControlRejection, CodingAgentControlRejectionReason,
+    CodingAgentDelegationSnapshot, CodingAgentDetachOutcome, CodingAgentDraft, CodingAgentDraftId,
+    CodingAgentDraftKind, CodingAgentFileChangeSnapshot, CodingAgentFreshSnapshotRecovery,
+    CodingAgentMutationRejection, CodingAgentOperationControl, CodingAgentOperationSnapshot,
+    CodingAgentOperationStatus, CodingAgentOutcomeAcknowledgementId,
     CodingAgentProductEventReceiver, CodingAgentPromptControl, CodingAgentReconnect,
     CodingAgentReconnectDelivery, CodingAgentReconnectReceiver, CodingAgentRecoveryReason,
     CodingAgentRuntimeShutdownHandle, CodingAgentShutdownOutcome, CodingAgentSnapshot,
     CodingAgentSnapshotCursor, CodingAgentSubmissionLease, CodingAgentSubmittedEventDurability,
     CodingAgentSubmittedOperation, CodingAgentSubmittedOperationStatus,
     CodingAgentSubmittedTerminalAnchor, CodingAgentTerminalUncertainty,
+    CodingAgentTurnUsageSnapshot, CodingAgentUsageSnapshot,
 };
 #[cfg(test)]
 pub(crate) use crate::runtime::client::state::{
@@ -86,8 +92,8 @@ use crate::runtime::client::projection as public_projection;
 use crate::runtime::snapshot as snapshot_coordinator;
 
 pub(crate) use crate::operations::delegation::{
-    PendingDelegationConfirmationQueue, PendingDelegationConfirmationState,
-    pending_state_from_replay,
+    DelegationTargetInventory, PendingDelegationConfirmationQueue,
+    PendingDelegationConfirmationState, pending_state_from_replay,
 };
 use crate::operations::export::flow::ExportOptions;
 use crate::operations::plugin_load::flow::PluginLoadOptions;

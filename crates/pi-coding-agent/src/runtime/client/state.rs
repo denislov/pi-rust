@@ -2,6 +2,7 @@ use crate::authorization::ToolAuthorizationRequest;
 use crate::events::ProductEventSequence;
 use crate::protocol::version::ProtocolFamilyVersion;
 use crate::runtime::capability::CapabilityGeneration;
+use crate::runtime::client::context::UiContextProjection;
 use crate::runtime::control::OperationKind;
 use crate::runtime::facade::context::{CodingAgentCapabilities, CodingAgentSessionView};
 
@@ -21,6 +22,7 @@ pub(crate) struct UiSnapshot {
     pub(crate) active_operation: Option<OperationKind>,
     pub(crate) client_drafts: Vec<ClientDraft>,
     pub(crate) pending_authorizations: Vec<ToolAuthorizationRequest>,
+    pub(crate) context: UiContextProjection,
 }
 
 impl UiSnapshot {
@@ -41,7 +43,13 @@ impl UiSnapshot {
             active_operation,
             client_drafts,
             pending_authorizations,
+            context: UiContextProjection::default(),
         }
+    }
+
+    pub(crate) fn with_context(mut self, context: UiContextProjection) -> Self {
+        self.context = context;
+        self
     }
 }
 
@@ -169,7 +177,7 @@ mod tests {
 
         assert_eq!(snapshot.version.family, "ui_snapshot");
         assert_eq!(snapshot.version.major, 2);
-        assert_eq!(snapshot.version.minor, 0);
+        assert_eq!(snapshot.version.minor, 1);
         assert_eq!(snapshot.version, UI_SNAPSHOT_PROTOCOL_VERSION);
     }
 }

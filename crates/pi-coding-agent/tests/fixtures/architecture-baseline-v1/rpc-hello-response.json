@@ -12,12 +12,12 @@
     "productEvents": {
       "family": "product_event",
       "major": 2,
-      "minor": 0
+      "minor": 1
     },
     "uiSnapshot": {
       "family": "ui_snapshot",
       "major": 2,
-      "minor": 0
+      "minor": 1
     }
   }
 }

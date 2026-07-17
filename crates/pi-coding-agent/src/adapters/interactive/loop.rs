@@ -2334,6 +2334,8 @@ fn apply_prompt_task_event<T: Terminal>(
     let force_render = ui_events.iter().any(ui_event_updates_visible_block);
     let root = root_mut(tui, root_id)?;
     let before = root.render_state();
+    root.set_context_projection(ui_projection.context().clone());
+    root.set_capabilities(ui_projection.capabilities().cloned());
     root.apply_events(ui_events);
     let after = root.render_state();
     let changed = before != after;
@@ -2584,6 +2586,9 @@ mod tests {
     use crate::events::message::MessageEvent;
     use crate::events::prompt_stream::PromptStreamEvent;
     use crate::events::tool::ToolEvent;
+    use crate::runtime::client::context::{
+        UiContextProjection, UiOperationProjection, UiOperationStatus,
+    };
     use crate::runtime::facade::{
         CapabilityStatus, CodingAgentCapabilities, CodingAgentProductEventKind, CodingAgentSession,
         CodingAgentSessionOptions, CodingAgentSessionProductEvent, CodingAgentSessionView,
@@ -2685,6 +2690,55 @@ mod tests {
         assert!(!root_ref(&tui, root_id).unwrap().selecting_settings);
         assert!(!tui.has_overlay(modal));
         assert!(root_ref(&tui, root_id).unwrap().focused());
+    }
+
+    #[test]
+    fn fullscreen_context_detail_overlay_restores_context_focus() {
+        let mut tui = Tui::new(VirtualTerminal::new(120, 24));
+        let mut root =
+            InteractiveRoot::new(PathBuf::from("."), "faux-model".into(), "session".into());
+        root.set_fullscreen_viewport(true);
+        let mut context = UiContextProjection::default();
+        context.operations.push(UiOperationProjection {
+            operation_id: "op-context".into(),
+            kind: "prompt".into(),
+            parent_operation_id: None,
+            root_operation_id: Some("op-context".into()),
+            status: UiOperationStatus::Running,
+            started_sequence: 1,
+            updated_sequence: 1,
+            diagnostics: Vec::new(),
+            failure: None,
+        });
+        root.set_context_projection(context);
+        let root_id = tui.add_child_with_id(Box::new(root));
+        tui.set_focus(Some(root_id));
+        install_transient_overlays(&mut tui, root_id).unwrap();
+        sync_transient_overlays(&mut tui, root_id).unwrap();
+        tui.render_once().unwrap();
+
+        tui.dispatch_input(&InputEvent::Key(parse_key("\t").unwrap()));
+        tui.dispatch_input(&InputEvent::Key(parse_key("\t").unwrap()));
+        tui.dispatch_input(&InputEvent::Key(parse_key("\r").unwrap()));
+        sync_transient_overlays(&mut tui, root_id).unwrap();
+        let (_, modal) = root_ref(&tui, root_id)
+            .unwrap()
+            .transient_overlay_handles()
+            .unwrap();
+        assert!(tui.has_overlay(modal));
+        assert!(root_ref(&tui, root_id).unwrap().modal_overlay_focused());
+
+        tui.dispatch_input(&InputEvent::Key(parse_key("\x1b").unwrap()));
+        root_mut(&mut tui, root_id)
+            .unwrap()
+            .drain_modal_overlay_input();
+        sync_transient_overlays(&mut tui, root_id).unwrap();
+        assert!(!tui.has_overlay(modal));
+
+        tui.dispatch_input(&InputEvent::Key(parse_key("\x1b[C").unwrap()));
+        tui.render_once().unwrap();
+        let frame = tui.rendered_lines().join("\n");
+        assert!(frame.contains("[changes]"), "{frame}");
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -51,7 +51,9 @@ use crate::authorization::{
 };
 use crate::config::{AuthStore, Settings};
 use crate::runtime::facade::{
+    CapabilityStatus, CodingAgentCapabilities, DelegationTargetInventory,
     PendingDelegationConfirmation, ProfileId, ProfileRegistry, SelfHealingEditReplacement,
+    UiContextProjection, UiFileChangeProjection, UiOperationProjection,
 };
 use crate::theme::{ResolvedTheme, ThemeColor};
 
@@ -130,6 +132,35 @@ impl ContextTab {
         let index = Self::ALL.iter().position(|tab| *tab == self).unwrap_or(0);
         Self::ALL[index.checked_sub(1).unwrap_or(Self::ALL.len() - 1)]
     }
+
+    const fn index(self) -> usize {
+        match self {
+            Self::Ops => 0,
+            Self::Changes => 1,
+            Self::Agents => 2,
+            Self::Usage => 3,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ContextDetail {
+    title: String,
+    lines: Vec<String>,
+    scroll: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ContextListItem {
+    summary: String,
+    detail_title: String,
+    detail_lines: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct OperationTiming {
+    first_seen: Instant,
+    terminal_elapsed: Option<Duration>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -161,6 +192,8 @@ struct ShellLayout {
 enum InteractiveHitTarget {
     Conversation,
     Context,
+    ContextTab(ContextTab),
+    ContextRow(usize),
     Composer,
     TranscriptBlock(TranscriptBlockId),
     TranscriptDisclosure(TranscriptBlockId),
@@ -681,6 +714,14 @@ pub(super) struct InteractiveRoot {
     terminal_capabilities: TerminalCapabilities,
     focus_ring: FocusRing<InteractiveRegion>,
     context_tab: ContextTab,
+    context_projection: UiContextProjection,
+    capabilities: Option<CodingAgentCapabilities>,
+    context_selection: [usize; 4],
+    context_scroll: [usize; 4],
+    context_viewport_height: usize,
+    context_operation_timing: HashMap<String, OperationTiming>,
+    context_change_timing: HashMap<String, (u64, Instant)>,
+    context_detail: Option<ContextDetail>,
     context_open: bool,
     context_restore_focus: InteractiveRegion,
     conversation_viewport_width: usize,
@@ -750,6 +791,11 @@ pub(super) struct InteractiveRenderState {
     transcript_has_new_output_below: bool,
     focused_region: Option<InteractiveRegion>,
     context_tab: ContextTab,
+    context_projection: Option<UiContextProjection>,
+    capabilities: Option<CodingAgentCapabilities>,
+    context_selection: [usize; 4],
+    context_scroll: [usize; 4],
+    context_detail: Option<ContextDetail>,
     context_open: bool,
     status: InteractiveStatus,
     stats: FooterStats,
@@ -902,6 +948,14 @@ impl InteractiveRoot {
             },
             focus_ring,
             context_tab: ContextTab::Ops,
+            context_projection: UiContextProjection::default(),
+            capabilities: None,
+            context_selection: [0; 4],
+            context_scroll: [0; 4],
+            context_viewport_height: 1,
+            context_operation_timing: HashMap::new(),
+            context_change_timing: HashMap::new(),
+            context_detail: None,
             context_open: false,
             context_restore_focus: InteractiveRegion::Composer,
             conversation_viewport_width: 1,
@@ -1076,6 +1130,156 @@ impl InteractiveRoot {
         self.default_agent_profile_id = profile_id;
         self.slash_suggestion_selected = 0;
         self.slash_suggestions_dismissed_for = None;
+    }
+
+    pub(super) fn set_context_projection(&mut self, projection: UiContextProjection) {
+        let now = Instant::now();
+        for operation in &projection.operations {
+            let previous_was_running = self
+                .context_projection
+                .operations
+                .iter()
+                .find(|previous| previous.operation_id == operation.operation_id)
+                .is_some_and(|previous| previous.status.is_running());
+            let timing = self
+                .context_operation_timing
+                .entry(operation.operation_id.clone())
+                .or_insert_with(|| OperationTiming {
+                    first_seen: now,
+                    terminal_elapsed: None,
+                });
+            if previous_was_running
+                && !operation.status.is_running()
+                && timing.terminal_elapsed.is_none()
+            {
+                timing.terminal_elapsed = Some(now.saturating_duration_since(timing.first_seen));
+            }
+        }
+        self.context_operation_timing.retain(|operation_id, _| {
+            projection
+                .operations
+                .iter()
+                .any(|operation| operation.operation_id == *operation_id)
+        });
+        for change in &projection.changes {
+            let timing = self
+                .context_change_timing
+                .entry(change.path.clone())
+                .or_insert((change.updated_sequence, now));
+            if timing.0 != change.updated_sequence {
+                *timing = (change.updated_sequence, now);
+            }
+        }
+        self.context_change_timing
+            .retain(|path, _| projection.changes.iter().any(|change| change.path == *path));
+        self.context_projection = projection;
+        self.clamp_context_navigation();
+    }
+
+    pub(super) fn set_capabilities(&mut self, capabilities: Option<CodingAgentCapabilities>) {
+        self.capabilities = capabilities;
+    }
+
+    fn clamp_context_navigation(&mut self) {
+        for tab in ContextTab::ALL {
+            let index = tab.index();
+            let count = if tab == ContextTab::Usage {
+                self.context_usage_lines().len()
+            } else {
+                self.context_items(tab).len()
+            };
+            self.context_selection[index] =
+                self.context_selection[index].min(count.saturating_sub(1));
+            self.context_scroll[index] = self.context_scroll[index]
+                .min(count.saturating_sub(self.context_viewport_height.max(1)));
+        }
+    }
+
+    fn move_context_selection(&mut self, direction: isize) {
+        let items = self.context_items(self.context_tab);
+        if items.is_empty() {
+            return;
+        }
+        let index = self.context_tab.index();
+        self.context_selection[index] = if direction < 0 {
+            self.context_selection[index].saturating_sub(1)
+        } else {
+            self.context_selection[index]
+                .saturating_add(1)
+                .min(items.len() - 1)
+        };
+        self.ensure_context_selection_visible();
+    }
+
+    fn ensure_context_selection_visible(&mut self) {
+        let index = self.context_tab.index();
+        let selected = self.context_selection[index];
+        let viewport = self.context_viewport_height.max(1);
+        if selected < self.context_scroll[index] {
+            self.context_scroll[index] = selected;
+        } else if selected >= self.context_scroll[index].saturating_add(viewport) {
+            self.context_scroll[index] = selected.saturating_add(1).saturating_sub(viewport);
+        }
+    }
+
+    fn scroll_context(&mut self, rows: isize) {
+        let index = self.context_tab.index();
+        let count = if self.context_tab == ContextTab::Usage {
+            self.context_usage_lines().len()
+        } else {
+            self.context_items(self.context_tab).len()
+        };
+        let maximum = count.saturating_sub(self.context_viewport_height.max(1));
+        self.context_scroll[index] = if rows < 0 {
+            self.context_scroll[index].saturating_sub(rows.unsigned_abs())
+        } else {
+            self.context_scroll[index]
+                .saturating_add(rows as usize)
+                .min(maximum)
+        };
+    }
+
+    fn open_selected_context_detail(&mut self) -> bool {
+        let items = self.context_items(self.context_tab);
+        let Some(item) = items.get(self.context_selection[self.context_tab.index()]) else {
+            return false;
+        };
+        self.context_detail = Some(ContextDetail {
+            title: item.detail_title.clone(),
+            lines: item.detail_lines.clone(),
+            scroll: 0,
+        });
+        true
+    }
+
+    pub(super) fn has_context_detail(&self) -> bool {
+        self.context_detail.is_some()
+    }
+
+    pub(super) fn handle_context_detail_input(&mut self, event: &InputEvent) -> bool {
+        let Some(detail) = self.context_detail.as_mut() else {
+            return false;
+        };
+        if matches_key(event, "escape")
+            || matches_key(event, "enter")
+            || matches_key(event, "ctrl+c")
+        {
+            self.context_detail = None;
+            return true;
+        }
+        if matches_key(event, "pageup") || matches_key(event, "up") {
+            detail.scroll = detail
+                .scroll
+                .saturating_sub(if matches_key(event, "pageup") { 8 } else { 1 });
+            return true;
+        }
+        if matches_key(event, "pagedown") || matches_key(event, "down") {
+            detail.scroll = detail
+                .scroll
+                .saturating_add(if matches_key(event, "pagedown") { 8 } else { 1 });
+            return true;
+        }
+        true
     }
 
     pub(super) fn take_selected_session(&mut self) -> Option<SessionChoice> {
@@ -1875,6 +2079,7 @@ impl InteractiveRoot {
             || self.pending_delegation_rejection_reason.is_some()
             || self.profile_menu.is_some()
             || self.pending_profile_task.is_some()
+            || self.context_detail.is_some()
         {
             return false;
         }
@@ -2408,6 +2613,17 @@ impl InteractiveRoot {
             transcript_has_new_output_below: self.transcript.has_new_output_below(),
             focused_region: self.focus_ring.current(),
             context_tab: self.context_tab,
+            context_projection: self
+                .fullscreen_viewport
+                .then(|| self.context_projection.clone()),
+            capabilities: if self.fullscreen_viewport {
+                self.capabilities.clone()
+            } else {
+                None
+            },
+            context_selection: self.context_selection,
+            context_scroll: self.context_scroll,
+            context_detail: self.context_detail.clone(),
             context_open: self.context_open,
             status: self.status,
             stats: self.stats,
@@ -2840,47 +3056,77 @@ impl InteractiveRoot {
         match self.focus_ring.current() {
             Some(InteractiveRegion::Conversation) => {
                 self.sync_transcript_view();
-                if matches_key(event, "up") || matches_key(event, "k") {
+                if self.keybindings.matches(event, "tui.select.up") || matches_key(event, "k") {
                     if self.transcript_view.select_previous(&self.transcript) {
                         self.ensure_selected_transcript_visible();
                     }
                     return true;
                 }
-                if matches_key(event, "down") || matches_key(event, "j") {
+                if self.keybindings.matches(event, "tui.select.down") || matches_key(event, "j") {
                     if self.transcript_view.select_next(&self.transcript) {
                         self.ensure_selected_transcript_visible();
                     }
                     return true;
                 }
-                if matches_key(event, "enter")
+                if self.keybindings.matches(event, "tui.select.confirm")
                     || matches_key(event, "space")
                     || matches_key(event, "ctrl+o")
                 {
                     self.toggle_selected_transcript_block();
                     return true;
                 }
-                if matches_key(event, "a") {
+                if self.keybindings.matches(event, "app.transcript.arguments") {
                     self.toggle_selected_transcript_arguments();
                     return true;
                 }
-                if matches_key(event, "pageup") {
+                if self.keybindings.matches(event, "tui.select.pageUp") {
                     self.transcript
                         .scroll_page_up(self.conversation_viewport_height.max(1));
                     return true;
                 }
-                if matches_key(event, "pagedown") {
+                if self.keybindings.matches(event, "tui.select.pageDown") {
                     self.transcript
                         .scroll_page_down(self.conversation_viewport_height.max(1));
                     return true;
                 }
             }
             Some(InteractiveRegion::Context) => {
-                if matches_key(event, "left") {
+                if self.keybindings.matches(event, "app.context.previousTab") {
                     self.context_tab = self.context_tab.previous();
+                    self.clamp_context_navigation();
                     return true;
                 }
-                if matches_key(event, "right") {
+                if self.keybindings.matches(event, "app.context.nextTab") {
                     self.context_tab = self.context_tab.next();
+                    self.clamp_context_navigation();
+                    return true;
+                }
+                if self.keybindings.matches(event, "tui.select.up") || matches_key(event, "k") {
+                    if self.context_tab == ContextTab::Usage {
+                        self.scroll_context(-1);
+                    } else {
+                        self.move_context_selection(-1);
+                    }
+                    return true;
+                }
+                if self.keybindings.matches(event, "tui.select.down") || matches_key(event, "j") {
+                    if self.context_tab == ContextTab::Usage {
+                        self.scroll_context(1);
+                    } else {
+                        self.move_context_selection(1);
+                    }
+                    return true;
+                }
+                if self.keybindings.matches(event, "tui.select.pageUp") {
+                    self.scroll_context(-(self.context_viewport_height.max(1) as isize));
+                    return true;
+                }
+                if self.keybindings.matches(event, "tui.select.pageDown") {
+                    self.scroll_context(self.context_viewport_height.max(1) as isize);
+                    return true;
+                }
+                if self.keybindings.matches(event, "tui.select.confirm") {
+                    self.open_selected_context_detail();
                     return true;
                 }
             }
@@ -2904,11 +3150,29 @@ impl InteractiveRoot {
             MouseEventKind::ScrollUp => {
                 if target.is_some_and(InteractiveHitTarget::is_conversation) {
                     self.transcript.scroll_page_up(MOUSE_SCROLL_ROWS);
+                } else if matches!(
+                    target,
+                    Some(
+                        InteractiveHitTarget::Context
+                            | InteractiveHitTarget::ContextTab(_)
+                            | InteractiveHitTarget::ContextRow(_)
+                    )
+                ) {
+                    self.scroll_context(-(MOUSE_SCROLL_ROWS as isize));
                 }
             }
             MouseEventKind::ScrollDown => {
                 if target.is_some_and(InteractiveHitTarget::is_conversation) {
                     self.transcript.scroll_page_down(MOUSE_SCROLL_ROWS);
+                } else if matches!(
+                    target,
+                    Some(
+                        InteractiveHitTarget::Context
+                            | InteractiveHitTarget::ContextTab(_)
+                            | InteractiveHitTarget::ContextRow(_)
+                    )
+                ) {
+                    self.scroll_context(MOUSE_SCROLL_ROWS as isize);
                 }
             }
             MouseEventKind::Down(MouseButton::Left) => match target {
@@ -2926,6 +3190,16 @@ impl InteractiveRoot {
                 }
                 Some(InteractiveHitTarget::Context) => {
                     self.focus_shell_region(InteractiveRegion::Context);
+                }
+                Some(InteractiveHitTarget::ContextTab(tab)) => {
+                    self.focus_shell_region(InteractiveRegion::Context);
+                    self.context_tab = tab;
+                    self.clamp_context_navigation();
+                }
+                Some(InteractiveHitTarget::ContextRow(index)) => {
+                    self.focus_shell_region(InteractiveRegion::Context);
+                    self.context_selection[self.context_tab.index()] = index;
+                    self.ensure_context_selection_visible();
                 }
                 Some(InteractiveHitTarget::Composer) => {
                     self.focus_shell_region(InteractiveRegion::Composer);
@@ -3148,6 +3422,43 @@ impl InteractiveRoot {
         if let Some(context) = layout.context {
             self.mouse_hits
                 .push(HitRegion::new(context, InteractiveHitTarget::Context));
+            let mut tab_x = context.x.saturating_add(10);
+            for tab in ContextTab::ALL {
+                let tab_width = tab
+                    .label()
+                    .len()
+                    .saturating_add(usize::from(tab == self.context_tab) * 2);
+                if tab_x < context.right() {
+                    self.mouse_hits.push(HitRegion::new(
+                        Rect::new(
+                            tab_x,
+                            context.y,
+                            tab_width.min(context.right().saturating_sub(tab_x)),
+                            1,
+                        ),
+                        InteractiveHitTarget::ContextTab(tab),
+                    ));
+                }
+                tab_x = tab_x.saturating_add(tab_width + 1);
+            }
+            if self.context_tab != ContextTab::Usage {
+                let item_count = self.context_items(self.context_tab).len();
+                let scroll = self.context_scroll[self.context_tab.index()];
+                for (visible_index, item_index) in (scroll..item_count)
+                    .take(context.height.saturating_sub(1))
+                    .enumerate()
+                {
+                    self.mouse_hits.push(HitRegion::new(
+                        Rect::new(
+                            context.x,
+                            context.y.saturating_add(1 + visible_index),
+                            context.width,
+                            1,
+                        ),
+                        InteractiveHitTarget::ContextRow(item_index),
+                    ));
+                }
+            }
         }
         self.mouse_hits.push(HitRegion::new(
             layout.composer,
@@ -3229,7 +3540,7 @@ impl InteractiveRoot {
         fit_line(&format!("{prefix}{title}"), width)
     }
 
-    fn render_context_region(&self, width: usize, height: usize) -> Vec<String> {
+    fn render_context_region(&mut self, width: usize, height: usize) -> Vec<String> {
         if width == 0 || height == 0 {
             return Vec::new();
         }
@@ -3249,55 +3560,427 @@ impl InteractiveRoot {
             InteractiveRegion::Context,
             width,
         )];
-        match self.context_tab {
-            ContextTab::Ops => {
-                lines.push(format!(
-                    "state     {}",
-                    match self.status {
-                        InteractiveStatus::Idle => "idle",
-                        InteractiveStatus::Running => "running",
-                    }
-                ));
-                lines.push("operation unavailable".into());
-            }
-            ContextTab::Changes => {
-                lines.push("change projection unavailable".into());
-            }
-            ContextTab::Agents => {
-                let active = self
-                    .profile_registry
-                    .agent(self.default_agent_profile_id.as_str());
-                lines.push(format!(
-                    "active    {}",
-                    active
-                        .map(|profile| profile.display_name.as_str())
-                        .unwrap_or(self.default_agent_profile_id.as_str())
-                ));
-                lines.push(format!(
-                    "profiles  {} agents / {} teams",
-                    self.profile_registry.agents().count(),
-                    self.profile_registry.teams().count()
-                ));
-            }
-            ContextTab::Usage => {
-                lines.push(format!("input     {}", format_tokens(self.stats.input)));
-                lines.push(format!("output    {}", format_tokens(self.stats.output)));
-                lines.push(format!(
-                    "cache     {}",
-                    format_tokens(self.stats.cache_read)
-                ));
-                if self.stats.cost > 0.0 {
-                    lines.push(format!("cost      ${:.3}", self.stats.cost));
-                } else {
-                    lines.push("cost      unavailable".into());
-                }
-            }
-        }
-        lines.truncate(height);
+        self.context_viewport_height = height.saturating_sub(1).max(1);
+        let body = if self.context_tab == ContextTab::Usage {
+            self.context_usage_lines()
+        } else {
+            self.context_list_lines()
+        };
+        let scroll = self.context_scroll[self.context_tab.index()]
+            .min(body.len().saturating_sub(self.context_viewport_height));
+        self.context_scroll[self.context_tab.index()] = scroll;
+        lines.extend(
+            body.into_iter()
+                .skip(scroll)
+                .take(self.context_viewport_height),
+        );
+        lines.truncate(height.max(1));
         lines
             .into_iter()
             .map(|line| fit_line(&line, width))
             .collect()
+    }
+
+    fn context_list_lines(&mut self) -> Vec<String> {
+        let items = self.context_items(self.context_tab);
+        if items.is_empty() {
+            return vec![
+                match self.context_tab {
+                    ContextTab::Ops => "no operations yet",
+                    ContextTab::Changes => "no successful file changes yet",
+                    ContextTab::Agents => "no agent inventory available",
+                    ContextTab::Usage => "usage unavailable",
+                }
+                .into(),
+            ];
+        }
+        let index = self.context_tab.index();
+        self.context_selection[index] = self.context_selection[index].min(items.len() - 1);
+        let selected = self.context_selection[index];
+        let viewport = self.context_viewport_height.max(1);
+        if selected < self.context_scroll[index] {
+            self.context_scroll[index] = selected;
+        } else if selected >= self.context_scroll[index].saturating_add(viewport) {
+            self.context_scroll[index] = selected.saturating_add(1).saturating_sub(viewport);
+        }
+        items
+            .into_iter()
+            .enumerate()
+            .map(|(item_index, item)| {
+                let marker = if item_index == selected { ">" } else { " " };
+                format!("{marker} {}", item.summary)
+            })
+            .collect()
+    }
+
+    fn context_items(&self, tab: ContextTab) -> Vec<ContextListItem> {
+        match tab {
+            ContextTab::Ops => self
+                .context_projection
+                .operations
+                .iter()
+                .map(|operation| self.operation_context_item(operation))
+                .collect(),
+            ContextTab::Changes => self
+                .context_projection
+                .changes
+                .iter()
+                .map(|change| self.change_context_item(change))
+                .collect(),
+            ContextTab::Agents => self.agent_context_items(),
+            ContextTab::Usage => Vec::new(),
+        }
+    }
+
+    fn operation_context_item(&self, operation: &UiOperationProjection) -> ContextListItem {
+        let elapsed = self.operation_elapsed(operation);
+        let cancellable = operation.status.is_running()
+            && self
+                .context_projection
+                .operations
+                .iter()
+                .find(|candidate| candidate.status.is_running())
+                .is_some_and(|candidate| candidate.operation_id == operation.operation_id)
+            && self.capabilities.as_ref().is_some_and(|capabilities| {
+                matches!(capabilities.abort, CapabilityStatus::Available)
+            });
+        let cancel = if cancellable { " cancel" } else { "" };
+        let summary = format!(
+            "{:<9} {} {} {}{cancel}",
+            operation.status.as_str(),
+            operation.kind,
+            short_id(&operation.operation_id),
+            elapsed
+        );
+        let mut detail_lines = vec![
+            format!("kind: {}", operation.kind),
+            format!("operation: {}", operation.operation_id),
+            format!("status: {}", operation.status.as_str()),
+            format!("elapsed: {elapsed}"),
+            format!(
+                "cancel: {}",
+                if cancellable {
+                    "available"
+                } else {
+                    "unavailable"
+                }
+            ),
+            format!(
+                "parent: {}",
+                operation.parent_operation_id.as_deref().unwrap_or("none")
+            ),
+            format!(
+                "root: {}",
+                operation.root_operation_id.as_deref().unwrap_or("none")
+            ),
+        ];
+        if let Some(failure) = &operation.failure {
+            detail_lines.push(format!("failure: {failure}"));
+        }
+        if operation.diagnostics.is_empty() {
+            detail_lines.push("diagnostics: none".into());
+        } else {
+            detail_lines.push("diagnostics:".into());
+            detail_lines.extend(
+                operation
+                    .diagnostics
+                    .iter()
+                    .map(|diagnostic| format!("- {diagnostic}")),
+            );
+        }
+        ContextListItem {
+            summary,
+            detail_title: format!("Operation {}", short_id(&operation.operation_id)),
+            detail_lines,
+        }
+    }
+
+    fn change_context_item(&self, change: &UiFileChangeProjection) -> ContextListItem {
+        let stats = match (change.added_lines, change.removed_lines) {
+            (Some(added), Some(removed)) => format!(" +{added}/-{removed}"),
+            (Some(added), None) => format!(" +{added}"),
+            (None, Some(removed)) => format!(" -{removed}"),
+            (None, None) => String::new(),
+        };
+        let age = self
+            .context_change_timing
+            .get(&change.path)
+            .map(|(_, seen_at)| Instant::now().saturating_duration_since(*seen_at));
+        let updated = age.map_or_else(
+            || format!("event #{}", change.updated_sequence),
+            |age| {
+                if age.as_secs() == 0 {
+                    format!("event #{} · now", change.updated_sequence)
+                } else {
+                    format!(
+                        "event #{} · {} ago",
+                        change.updated_sequence,
+                        format_duration(age)
+                    )
+                }
+            },
+        );
+        let mut detail_lines = vec![
+            format!("path: {}", change.path),
+            format!("mutation: {}", change.mutation_kind),
+            format!("operation: {}", change.operation_id),
+            format!(
+                "tool call: {}",
+                change.tool_call_id.as_deref().unwrap_or("unavailable")
+            ),
+            format!("updated: {updated}"),
+            format!(
+                "first changed line: {}",
+                change
+                    .first_changed_line
+                    .map(|line| line.to_string())
+                    .unwrap_or_else(|| "unavailable".into())
+            ),
+            format!(
+                "diff stats: {}",
+                if stats.is_empty() {
+                    "unavailable"
+                } else {
+                    stats.trim()
+                }
+            ),
+        ];
+        if let Some(diff) = &change.diff {
+            detail_lines.push("diff:".into());
+            detail_lines.extend(diff.lines().map(ToOwned::to_owned));
+        } else {
+            detail_lines.push("diff: unavailable".into());
+        }
+        ContextListItem {
+            summary: format!(
+                "{:<8} {}{} · {}",
+                change.mutation_kind,
+                abbreviate_path(&change.path, 18),
+                stats,
+                if age.is_some_and(|age| age.as_secs() == 0) {
+                    "now".into()
+                } else {
+                    age.map(format_duration).unwrap_or_else(|| "--".into())
+                }
+            ),
+            detail_title: format!("Change {}", abbreviate_path(&change.path, 40)),
+            detail_lines,
+        }
+    }
+
+    fn operation_elapsed(&self, operation: &UiOperationProjection) -> String {
+        let Some(timing) = self.context_operation_timing.get(&operation.operation_id) else {
+            return "--".into();
+        };
+        if operation.status.is_running() {
+            format_duration(Instant::now().saturating_duration_since(timing.first_seen))
+        } else {
+            timing
+                .terminal_elapsed
+                .map(format_duration)
+                .unwrap_or_else(|| "--".into())
+        }
+    }
+
+    fn agent_context_items(&self) -> Vec<ContextListItem> {
+        let mut items = Vec::new();
+        let active = self
+            .profile_registry
+            .agent(self.default_agent_profile_id.as_str());
+        if let Some(profile) = active {
+            let mut details = vec![
+                format!("id: {}", profile.id),
+                format!("name: {}", profile.display_name),
+                format!(
+                    "description: {}",
+                    profile.description.as_deref().unwrap_or("unavailable")
+                ),
+                format!(
+                    "model: {}",
+                    profile.model.as_deref().unwrap_or("session default")
+                ),
+                format!(
+                    "tools: {}",
+                    nonempty_join(&profile.tools, "session defaults")
+                ),
+                format!("skills: {}", nonempty_join(&profile.skills, "none")),
+                format!("max delegation depth: {}", profile.delegation.max_depth),
+                format!(
+                    "max parallel children: {}",
+                    profile.delegation.max_parallel_children
+                ),
+            ];
+            details.push(format!(
+                "delegation: agents={} teams={}",
+                profile.delegation.allow_delegate_agent, profile.delegation.allow_delegate_team
+            ));
+            items.push(ContextListItem {
+                summary: format!("active  {} · {}", profile.id, profile.display_name),
+                detail_title: format!("Agent profile {}", profile.id),
+                detail_lines: details,
+            });
+
+            let inventory = DelegationTargetInventory::from_registry(
+                &self.profile_registry,
+                &profile.delegation,
+            );
+            if profile.delegation.allow_delegate_agent {
+                for profile_id in inventory.agent_ids() {
+                    if let Some(target) = self.profile_registry.agent(profile_id.as_str()) {
+                        items.push(ContextListItem {
+                            summary: format!("agent   {} · {}", target.id, target.display_name),
+                            detail_title: format!("Delegation target {}", target.id),
+                            detail_lines: vec![
+                                "kind: agent".into(),
+                                format!("id: {}", target.id),
+                                format!("name: {}", target.display_name),
+                                format!(
+                                    "description: {}",
+                                    target.description.as_deref().unwrap_or("unavailable")
+                                ),
+                                format!(
+                                    "tools: {}",
+                                    nonempty_join(&target.tools, "session defaults")
+                                ),
+                                format!("skills: {}", nonempty_join(&target.skills, "none")),
+                            ],
+                        });
+                    }
+                }
+            }
+            if profile.delegation.allow_delegate_team {
+                for profile_id in inventory.team_ids() {
+                    if let Some(target) = self.profile_registry.team(profile_id.as_str()) {
+                        items.push(ContextListItem {
+                            summary: format!("team    {} · {}", target.id, target.display_name),
+                            detail_title: format!("Delegation team {}", target.id),
+                            detail_lines: vec![
+                                "kind: team".into(),
+                                format!("id: {}", target.id),
+                                format!("name: {}", target.display_name),
+                                format!(
+                                    "description: {}",
+                                    target.description.as_deref().unwrap_or("unavailable")
+                                ),
+                                format!(
+                                    "members: {}",
+                                    target
+                                        .members
+                                        .iter()
+                                        .map(ToString::to_string)
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                ),
+                            ],
+                        });
+                    }
+                }
+            }
+        } else {
+            items.push(ContextListItem {
+                summary: format!("active  {} · unavailable", self.default_agent_profile_id),
+                detail_title: "Active agent profile unavailable".into(),
+                detail_lines: vec![format!("id: {}", self.default_agent_profile_id)],
+            });
+        }
+
+        items.extend(
+            self.context_projection
+                .delegations
+                .iter()
+                .map(|delegation| {
+                    let mut detail_lines = vec![
+                        format!("kind: {}", delegation.target_kind),
+                        format!("target: {}", delegation.target_id),
+                        format!("status: {}", delegation.status),
+                        format!("tool call: {}", delegation.tool_call_id),
+                        format!(
+                            "child operation: {}",
+                            delegation
+                                .child_operation_id
+                                .as_deref()
+                                .unwrap_or("unavailable")
+                        ),
+                        format!("task: {}", delegation.task),
+                    ];
+                    if let Some(summary) = &delegation.summary {
+                        detail_lines.push(format!("summary: {summary}"));
+                    }
+                    if let Some(failure) = &delegation.failure {
+                        detail_lines.push(format!("failure: {failure}"));
+                    }
+                    ContextListItem {
+                        summary: format!(
+                            "child   {} {} · {}",
+                            delegation.target_id, delegation.target_kind, delegation.status
+                        ),
+                        detail_title: format!(
+                            "Delegated {} {}",
+                            delegation.target_kind, delegation.target_id
+                        ),
+                        detail_lines,
+                    }
+                }),
+        );
+        items
+    }
+
+    fn context_usage_lines(&self) -> Vec<String> {
+        let usage = &self.context_projection.usage;
+        let mut lines = vec![
+            "session totals".into(),
+            format!("input       {}", format_token_total(usage.input)),
+            format!("output      {}", format_token_total(usage.output)),
+            format!("cache read  {}", format_token_total(usage.cache_read)),
+            format!("cache write {}", format_token_total(usage.cache_write)),
+            format!(
+                "cost         {}",
+                usage
+                    .cost
+                    .map(|cost| format!("${cost:.4}"))
+                    .unwrap_or_else(|| "unavailable".into())
+            ),
+            String::new(),
+            "latest turn".into(),
+        ];
+        if let Some(turn) = &usage.latest_turn {
+            lines.extend([
+                format!("turn         {}", short_id(&turn.turn_id)),
+                format!("input        {}", format_tokens(turn.input)),
+                format!("output       {}", format_tokens(turn.output)),
+                format!("cache read   {}", format_tokens(turn.cache_read)),
+                format!("cache write  {}", format_tokens(turn.cache_write)),
+                format!(
+                    "cost          {}",
+                    turn.cost
+                        .map(|cost| format!("${cost:.4}"))
+                        .unwrap_or_else(|| "unavailable".into())
+                ),
+            ]);
+        } else {
+            lines.push("unavailable".into());
+        }
+        lines.push(String::new());
+        lines.push("context window".into());
+        let context_tokens = usage
+            .latest_turn
+            .as_ref()
+            .and_then(|turn| turn.context_tokens);
+        let context_window = usage.context_window;
+        lines.push(match (context_tokens, context_window) {
+            (Some(tokens), Some(window)) => format!(
+                "used          {} / {} ({:.0}%)",
+                format_tokens(tokens),
+                format_tokens(window),
+                f64::from(tokens) * 100.0 / f64::from(window)
+            ),
+            _ => "used          unavailable".into(),
+        });
+        lines.push(format!(
+            "model         {}",
+            usage.model_id.as_deref().unwrap_or("unavailable")
+        ));
+        lines
     }
 
     fn render_tips_region(&self, width: usize, height: usize) -> Vec<String> {
@@ -3308,58 +3991,138 @@ impl InteractiveRoot {
                 .next()
                 .unwrap_or_else(|| "?".into())
         };
-        let mut lines = vec![fit_line("  Tips", width)];
-        lines.push(fit_line(
-            &format!(
-                "{} / {}  focus",
-                key("app.focus.next"),
-                key("app.focus.previous")
-            ),
-            width,
-        ));
-        lines.push(fit_line(
-            &format!("{}  context", key("app.context.toggle")),
-            width,
-        ));
-        let focused = match self.focus_ring.current() {
-            Some(InteractiveRegion::Conversation)
+        let mut tips = vec![format!(
+            "{} / {}  focus",
+            key("app.focus.next"),
+            key("app.focus.previous")
+        )];
+        tips.push(format!("{}  context", key("app.context.toggle")));
+        match self.focus_ring.current() {
+            Some(InteractiveRegion::Conversation) => {
+                tips.push(format!(
+                    "{} / {}  select",
+                    key("tui.select.up"),
+                    key("tui.select.down")
+                ));
                 if self
                     .transcript_view
-                    .selected_has_tool_arguments(&self.transcript) =>
-            {
-                "Up/Down select · Enter result · A arguments"
+                    .selected()
+                    .and_then(|block_id| self.transcript.item_for_block(block_id))
+                    .is_some_and(TranscriptItem::foldable)
+                {
+                    tips.push(format!("{}  disclose", key("tui.select.confirm")));
+                }
+                if self
+                    .transcript_view
+                    .selected_has_tool_arguments(&self.transcript)
+                {
+                    tips.push(format!("{}  arguments", key("app.transcript.arguments")));
+                }
             }
-            Some(InteractiveRegion::Conversation) => "Up/Down select · Enter disclose",
-            Some(InteractiveRegion::Context) => "Left/Right  tabs",
-            Some(InteractiveRegion::Composer) => "Enter  submit",
-            None => "",
-        };
-        lines.push(fit_line(focused, width));
+            Some(InteractiveRegion::Context) => {
+                tips.push(format!(
+                    "{} / {}  tabs",
+                    key("app.context.previousTab"),
+                    key("app.context.nextTab")
+                ));
+                tips.push(format!(
+                    "{} / {}  {}",
+                    key("tui.select.up"),
+                    key("tui.select.down"),
+                    if self.context_tab == ContextTab::Usage {
+                        "scroll"
+                    } else {
+                        "select"
+                    }
+                ));
+                if self.context_tab != ContextTab::Usage
+                    && !self.context_items(self.context_tab).is_empty()
+                {
+                    tips.push(format!("{}  detail", key("tui.select.confirm")));
+                }
+                if self.capabilities.as_ref().is_some_and(|capabilities| {
+                    matches!(capabilities.abort, CapabilityStatus::Available)
+                }) {
+                    tips.push(format!("{}  cancel", key("app.interrupt")));
+                }
+            }
+            Some(InteractiveRegion::Composer) => {
+                tips.push(format!("{}  submit", key("tui.input.submit")));
+            }
+            None => {}
+        }
+        let mut lines = vec![fit_line("  Tips", width)];
+        lines.extend(tips.into_iter().map(|tip| fit_line(&tip, width)));
         lines.truncate(height);
         lines
     }
 
     fn render_status_bar(&self, width: usize) -> String {
-        let status = match self.status {
+        let active_kind = self
+            .context_projection
+            .operations
+            .iter()
+            .find(|operation| operation.status.is_running())
+            .map(|operation| operation.kind.as_str());
+        let mut state = match self.status {
             InteractiveStatus::Idle => "idle".to_string(),
-            InteractiveStatus::Running => running_status_text(self.spinner_frame),
-        };
-        let pending = if self.transcript.has_new_output_below() {
-            " | new output below"
-        } else {
-            ""
-        };
-        let model = self
-            .current_model()
-            .map_or("no-model", |model| model.id.as_str());
-        fit_line(
-            &format!(
-                " {status}{pending} | {} | {model} | {}",
-                self.session_label,
-                abbreviate_cwd(&self.cwd)
+            InteractiveStatus::Running => active_kind.map_or_else(
+                || running_status_text(self.spinner_frame),
+                |kind| format!("{} {kind}", running_status_text(self.spinner_frame)),
             ),
-            width,
-        )
+        };
+        if self.transcript.has_new_output_below() {
+            state.push_str(" +new output below");
+        }
+
+        let mut segments = vec![state];
+        segments.push(format!(
+            "{} / {}",
+            self.session_label, self.default_agent_profile_id
+        ));
+        segments.push(format!(
+            "{} / {}",
+            self.current_model()
+                .map(|model| model.id.as_str())
+                .unwrap_or("no-model"),
+            self.thinking_level
+        ));
+
+        let context = self
+            .context_projection
+            .usage
+            .latest_turn
+            .as_ref()
+            .and_then(|turn| turn.context_tokens)
+            .zip(self.context_projection.usage.context_window)
+            .map(|(tokens, window)| {
+                format!("ctx {}/{}", format_tokens(tokens), format_tokens(window))
+            });
+        let cost = self
+            .context_projection
+            .usage
+            .cost
+            .map(|cost| format!("${cost:.4}"));
+        if context.is_some() || cost.is_some() {
+            segments.push(
+                [context, cost]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            );
+        }
+        segments.push(abbreviate_cwd(&self.cwd));
+
+        let mut rendered = format!(" {}", segments[0]);
+        for segment in segments.into_iter().skip(1) {
+            let candidate = format!("{rendered} | {segment}");
+            if visible_width(&candidate) > width {
+                break;
+            }
+            rendered = candidate;
+        }
+        fit_line(&rendered, width)
     }
 
     fn render_transient_prompts(&self, width: usize) -> Vec<String> {
@@ -3388,7 +4151,30 @@ impl InteractiveRoot {
             lines.extend(self.render_session_selector(width));
         } else if self.selecting_settings {
             lines.extend(self.render_settings_menu(width));
+        } else if self.context_detail.is_some() {
+            lines.extend(self.render_context_detail(width));
         }
+        lines
+    }
+
+    fn render_context_detail(&mut self, width: usize) -> Vec<String> {
+        let Some(detail) = self.context_detail.as_mut() else {
+            return Vec::new();
+        };
+        let viewport = self.viewport_height.saturating_sub(8).clamp(3, 20);
+        detail.scroll = detail
+            .scroll
+            .min(detail.lines.len().saturating_sub(viewport));
+        let mut lines = vec![fit_line(&detail.title, width)];
+        lines.extend(
+            detail
+                .lines
+                .iter()
+                .skip(detail.scroll)
+                .take(viewport)
+                .map(|line| fit_line(line, width)),
+        );
+        lines.push(fit_line("Up/Down scroll · Enter/Esc close", width));
         lines
     }
 
@@ -3691,6 +4477,60 @@ impl Component for InteractiveRoot {
     }
 }
 
+fn format_duration(duration: Duration) -> String {
+    if duration.as_secs() >= 60 {
+        format!(
+            "{}m{:02}s",
+            duration.as_secs() / 60,
+            duration.as_secs() % 60
+        )
+    } else if duration.as_secs() > 0 {
+        format!("{}s", duration.as_secs())
+    } else {
+        format!("{}ms", duration.as_millis())
+    }
+}
+
+fn short_id(value: &str) -> String {
+    const MAX: usize = 10;
+    let mut characters = value.chars();
+    let short = characters.by_ref().take(MAX).collect::<String>();
+    if characters.next().is_some() {
+        format!("{short}…")
+    } else {
+        short
+    }
+}
+
+fn abbreviate_path(path: &str, max_characters: usize) -> String {
+    let characters = path.chars().collect::<Vec<_>>();
+    if characters.len() <= max_characters {
+        return path.to_owned();
+    }
+    let keep = max_characters.saturating_sub(1);
+    format!(
+        "…{}",
+        characters[characters.len().saturating_sub(keep)..]
+            .iter()
+            .collect::<String>()
+    )
+}
+
+fn nonempty_join(values: &[String], empty: &str) -> String {
+    if values.is_empty() {
+        empty.into()
+    } else {
+        values.join(", ")
+    }
+}
+
+fn format_token_total(count: u64) -> String {
+    u32::try_from(count).map_or_else(
+        |_| format!("{:.1}B", count as f64 / 1_000_000_000.0),
+        format_tokens,
+    )
+}
+
 fn transcript_viewport(lines: &[String], height: usize, scroll_offset: usize) -> Vec<String> {
     if height == 0 || lines.is_empty() {
         return Vec::new();
@@ -3915,6 +4755,10 @@ mod transcript_viewport_tests {
 
     use crate::adapters::interactive::UiEvent;
     use crate::adapters::interactive::transcript::TranscriptItem;
+    use crate::runtime::client::context::{
+        UiContextProjection, UiFileChangeProjection, UiOperationProjection, UiOperationStatus,
+        UiTurnUsageProjection,
+    };
 
     use super::{
         ContextTab, InteractiveHitTarget, InteractiveRegion, InteractiveRoot, transcript_viewport,
@@ -4001,6 +4845,176 @@ mod transcript_viewport_tests {
         assert!(root.editor.text().is_empty());
         assert!(root.handle_shell_input(&key("\x1b[D")));
         assert_eq!(root.context_tab, ContextTab::Ops);
+    }
+
+    fn context_projection(operation_count: usize) -> UiContextProjection {
+        let mut projection = UiContextProjection::default();
+        projection.operations = (0..operation_count)
+            .rev()
+            .map(|index| UiOperationProjection {
+                operation_id: format!("operation-{index}"),
+                kind: "prompt".into(),
+                parent_operation_id: None,
+                root_operation_id: Some(format!("operation-{index}")),
+                status: if index + 1 == operation_count {
+                    UiOperationStatus::Running
+                } else {
+                    UiOperationStatus::Completed
+                },
+                started_sequence: index as u64 + 1,
+                updated_sequence: index as u64 + 1,
+                diagnostics: Vec::new(),
+                failure: None,
+            })
+            .collect();
+        projection.changes.push(UiFileChangeProjection {
+            path: "src/lib.rs".into(),
+            mutation_kind: "edit".into(),
+            operation_id: "operation-0".into(),
+            tool_call_id: Some("tool-1".into()),
+            updated_sequence: 2,
+            first_changed_line: Some(7),
+            added_lines: None,
+            removed_lines: None,
+            diff: None,
+        });
+        projection
+    }
+
+    #[test]
+    fn context_projection_renders_typed_rows_and_opens_detail_overlay() {
+        let mut root = InteractiveRoot::new(PathBuf::from("."), "model".into(), "session".into());
+        root.set_fullscreen_viewport(true);
+        root.set_viewport_size(120, 24);
+        root.set_context_projection(context_projection(2));
+        root.set_capabilities(Some(
+            crate::runtime::facade::CodingAgentCapabilities::for_session_write_operation(
+                Some(crate::runtime::control::OperationKind::Prompt),
+                false,
+            ),
+        ));
+        root.focus_ring.focus(InteractiveRegion::Context);
+        root.apply_region_focus();
+
+        let ops = root.render(120).join("\n");
+        assert!(ops.contains("running"), "{ops}");
+        assert!(ops.contains("prompt"), "{ops}");
+        assert!(ops.contains("operation-"), "{ops}");
+
+        assert!(root.handle_shell_input(&key("\r")));
+        assert!(root.has_context_detail());
+        let overlay = root.prepare_transient_overlays(120);
+        assert!(overlay.modal_visible);
+        let detail = root.render_modal_surface(72).join("\n");
+        assert!(detail.contains("operation:"), "{detail}");
+        assert!(detail.contains("cancel: available"), "{detail}");
+        root.handle_context_detail_input(&key("\x1b"));
+
+        assert!(root.handle_shell_input(&key("\x1b[C")));
+        let changes = root.render(120).join("\n");
+        assert!(changes.contains("src/lib.rs"), "{changes}");
+        assert!(changes.contains("edit"), "{changes}");
+        assert!(root.handle_shell_input(&key("\r")));
+        let change_detail = root.render_modal_surface(72).join("\n");
+        assert!(
+            change_detail.contains("diff: unavailable"),
+            "{change_detail}"
+        );
+        assert!(
+            change_detail.contains("updated: event #2"),
+            "{change_detail}"
+        );
+        root.handle_context_detail_input(&key("\x1b"));
+
+        assert!(root.handle_shell_input(&key("\x1b[C")));
+        let agents = root.render(120).join("\n");
+        assert!(agents.contains("active  default"), "{agents}");
+        for target in ["explore", "review", "check"] {
+            assert!(agents.contains(target), "missing {target}: {agents}");
+        }
+        assert!(root.handle_shell_input(&key("\r")));
+        let profile_detail = root.render_modal_surface(72).join("\n");
+        assert!(
+            profile_detail.contains("Agent profile default"),
+            "{profile_detail}"
+        );
+        assert!(profile_detail.contains("tools:"), "{profile_detail}");
+        assert!(profile_detail.contains("skills:"), "{profile_detail}");
+        root.handle_context_detail_input(&key("\x1b"));
+
+        assert!(root.handle_shell_input(&key("\x1b[C")));
+        let usage = root.render(120).join("\n");
+        assert!(usage.contains("cost         unavailable"), "{usage}");
+        assert!(usage.contains("used          unavailable"), "{usage}");
+
+        let mut updated = context_projection(2);
+        updated.usage.input = 100;
+        updated.usage.output = 20;
+        updated.usage.cost = Some(0.003);
+        updated.usage.model_id = Some("model-1".into());
+        updated.usage.context_window = Some(128_000);
+        updated.usage.latest_turn = Some(UiTurnUsageProjection {
+            turn_id: "turn-1".into(),
+            input: 100,
+            output: 20,
+            cache_read: 5,
+            cache_write: 2,
+            context_tokens: Some(127),
+            cost: Some(0.003),
+        });
+        root.set_context_projection(updated);
+        let known_usage = root.render_context_region(38, 30).join("\n");
+        assert!(known_usage.contains("model-1"), "{known_usage}");
+        assert!(known_usage.contains("127 / 128k"), "{known_usage}");
+        assert!(known_usage.contains("$0.0030"), "{known_usage}");
+    }
+
+    #[test]
+    fn status_drops_lower_priority_segments_before_runtime_state() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("/a/very/long/workspace/path"),
+            "model".into(),
+            "session".into(),
+        );
+        root.set_context_projection(context_projection(1));
+
+        let narrow = root.render_status_bar(20);
+        assert!(narrow.contains("idle"), "{narrow}");
+        assert!(!narrow.contains("workspace"), "{narrow}");
+
+        let wide = root.render_status_bar(120);
+        assert!(wide.contains("session / default"), "{wide}");
+        assert!(wide.contains("no-model"), "{wide}");
+        assert!(wide.contains("workspace/path"), "{wide}");
+    }
+
+    #[test]
+    fn context_tabs_keep_independent_selection_and_scroll_state() {
+        let mut root = InteractiveRoot::new(PathBuf::from("."), "model".into(), "session".into());
+        root.set_fullscreen_viewport(true);
+        root.set_viewport_size(120, 12);
+        root.set_context_projection(context_projection(16));
+        root.focus_ring.focus(InteractiveRegion::Context);
+        root.apply_region_focus();
+        let _ = root.render(120);
+
+        for _ in 0..10 {
+            assert!(root.handle_shell_input(&key("\x1b[B")));
+        }
+        let ops_selection = root.context_selection[ContextTab::Ops.index()];
+        let ops_scroll = root.context_scroll[ContextTab::Ops.index()];
+        assert_eq!(ops_selection, 10);
+        assert!(ops_scroll > 0);
+
+        assert!(root.handle_shell_input(&key("\x1b[C")));
+        assert_eq!(root.context_selection[ContextTab::Changes.index()], 0);
+        assert_eq!(root.context_scroll[ContextTab::Changes.index()], 0);
+        assert!(root.handle_shell_input(&key("\x1b[D")));
+        assert_eq!(
+            root.context_selection[ContextTab::Ops.index()],
+            ops_selection
+        );
+        assert_eq!(root.context_scroll[ContextTab::Ops.index()], ops_scroll);
     }
 
     fn bash_tool(call_id: &str, prefix: &str) -> TranscriptItem {
@@ -4094,6 +5108,7 @@ mod transcript_viewport_tests {
             root.transcript
                 .push(TranscriptItem::user(format!("message {index}")));
         }
+        root.set_context_projection(context_projection(16));
         let _ = root.render(120);
 
         let conversation = root
@@ -4119,6 +5134,13 @@ mod transcript_viewport_tests {
             .rect;
         assert!(root.handle_shell_input(&mouse(MouseEventKind::ScrollUp, context.x, context.y)));
         assert_eq!(root.transcript.scroll_offset(), super::MOUSE_SCROLL_ROWS);
+        assert_eq!(root.context_scroll[ContextTab::Ops.index()], 0);
+        assert!(root.handle_shell_input(&mouse(MouseEventKind::ScrollDown, context.x, context.y)));
+        assert_eq!(root.transcript.scroll_offset(), super::MOUSE_SCROLL_ROWS);
+        assert_eq!(
+            root.context_scroll[ContextTab::Ops.index()],
+            super::MOUSE_SCROLL_ROWS
+        );
     }
 
     #[test]
@@ -4176,6 +5198,48 @@ mod transcript_viewport_tests {
         let disclosed = root.transcript_lines_at(80, 3).join("\n");
         assert!(disclosed.contains("alpha-1"), "{disclosed}");
         assert!(!disclosed.contains("beta-1"), "{disclosed}");
+    }
+
+    #[test]
+    fn mouse_selects_context_tabs_and_rows() {
+        let mut root = InteractiveRoot::new(PathBuf::from("."), "model".into(), "session".into());
+        root.set_fullscreen_viewport(true);
+        root.set_viewport_size(120, 24);
+        root.set_context_projection(context_projection(3));
+        let _ = root.render(120);
+
+        let changes_tab = root
+            .mouse_hits
+            .regions()
+            .iter()
+            .find_map(|region| {
+                (region.target == InteractiveHitTarget::ContextTab(ContextTab::Changes))
+                    .then_some(region.rect)
+            })
+            .unwrap();
+        assert!(root.handle_shell_input(&mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            changes_tab.x,
+            changes_tab.y
+        )));
+        assert_eq!(root.context_tab, ContextTab::Changes);
+
+        let _ = root.render(120);
+        let row = root
+            .mouse_hits
+            .regions()
+            .iter()
+            .find_map(|region| {
+                (region.target == InteractiveHitTarget::ContextRow(0)).then_some(region.rect)
+            })
+            .unwrap();
+        assert!(root.handle_shell_input(&mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            row.x,
+            row.y
+        )));
+        assert_eq!(root.focus_ring.current(), Some(InteractiveRegion::Context));
+        assert_eq!(root.context_selection[ContextTab::Changes.index()], 0);
     }
 
     #[test]

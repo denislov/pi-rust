@@ -60,6 +60,14 @@ impl DelegationTargetInventory {
             .collect();
         Self { agents, teams }
     }
+
+    pub(crate) fn agent_ids(&self) -> impl Iterator<Item = &ProfileId> {
+        self.agents.iter().map(|target| &target.id)
+    }
+
+    pub(crate) fn team_ids(&self) -> impl Iterator<Item = &ProfileId> {
+        self.teams.iter().map(|target| &target.id)
+    }
 }
 
 pub(crate) fn delegation_tools(

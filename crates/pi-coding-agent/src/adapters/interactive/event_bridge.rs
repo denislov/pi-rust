@@ -5,7 +5,7 @@ use crate::runtime::facade::{
     CodingAgentMessageProductEvent, CodingAgentProductEventKind,
     CodingAgentProductEventProfileKind, CodingAgentProductEventUsage,
     CodingAgentRuntimeProductEvent, CodingAgentToolProductEvent, CodingAgentWorkflowProductEvent,
-    ProductEvent, ProductEventSequence, ProfileId, ProfileKind, UiSnapshot,
+    ProductEvent, ProductEventSequence, ProfileId, ProfileKind, UiContextProjection, UiSnapshot,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -84,6 +84,8 @@ pub(crate) struct UiProjection {
     bridge: CodingEventBridge,
     last_sequence: ProductEventSequence,
     pending: Vec<UiEvent>,
+    context: UiContextProjection,
+    capabilities: Option<crate::runtime::facade::CodingAgentCapabilities>,
 }
 
 impl Default for UiProjection {
@@ -98,6 +100,8 @@ impl UiProjection {
             bridge: CodingEventBridge::new(),
             last_sequence: ProductEventSequence::default(),
             pending: Vec::new(),
+            context: UiContextProjection::default(),
+            capabilities: None,
         }
     }
 
@@ -106,6 +110,8 @@ impl UiProjection {
             bridge: CodingEventBridge::new(),
             last_sequence: snapshot.cursor.last_event_sequence,
             pending: snapshot_hydration_events(&snapshot),
+            context: snapshot.context,
+            capabilities: Some(snapshot.capabilities),
         }
     }
 
@@ -114,11 +120,20 @@ impl UiProjection {
             return;
         }
         self.last_sequence = event.sequence_internal();
+        self.context.apply_product_event(event, None);
         self.pending.extend(self.bridge.push_product_event(event));
     }
 
     pub(crate) fn drain(&mut self) -> Vec<UiEvent> {
         self.pending.drain(..).collect()
+    }
+
+    pub(crate) fn context(&self) -> &UiContextProjection {
+        &self.context
+    }
+
+    pub(crate) fn capabilities(&self) -> Option<&crate::runtime::facade::CodingAgentCapabilities> {
+        self.capabilities.as_ref()
     }
 }
 
@@ -650,6 +665,9 @@ mod tests {
     use crate::events::message::MessageEvent;
     use crate::events::prompt_stream::PromptStreamEvent;
     use crate::events::runtime::RuntimeEvent;
+    use crate::runtime::client::context::{
+        UiContextProjection, UiOperationProjection, UiOperationStatus,
+    };
     use crate::runtime::facade::{
         CapabilityStatus, CodingAgentCapabilities, CodingAgentSession, CodingAgentSessionOptions,
         CodingAgentSessionView, ProductEvent, ProductEventSequence, ProfileId, UiSnapshot,
@@ -792,6 +810,40 @@ mod tests {
         assert_eq!(projection.last_sequence, ProductEventSequence::new(7));
         assert!(projection.drain().is_empty());
         assert!(projection.drain().is_empty());
+    }
+
+    #[tokio::test]
+    async fn ui_projection_preserves_context_snapshot_across_live_events() {
+        let mut snapshot = snapshot(ProductEventSequence::new(7), "sess_projection").await;
+        let mut context = UiContextProjection::default();
+        context.operations = vec![UiOperationProjection {
+            operation_id: "op_interactive".into(),
+            kind: "prompt".into(),
+            parent_operation_id: None,
+            root_operation_id: Some("op_interactive".into()),
+            status: UiOperationStatus::Running,
+            started_sequence: 1,
+            updated_sequence: 7,
+            diagnostics: Vec::new(),
+            failure: None,
+        }];
+        snapshot.context = context;
+        let mut projection = UiProjection::from_snapshot(snapshot);
+
+        projection.apply_product_event(&stream_event(
+            8,
+            PromptStreamEvent::Tool(crate::events::tool::ToolEvent::Updated {
+                operation_id: "op_interactive".into(),
+                turn_id: "turn_1".into(),
+                tool_call_id: "tool-1".into(),
+                name: "bash".into(),
+                message: "running".into(),
+            }),
+        ));
+
+        assert_eq!(projection.context().operations.len(), 1);
+        assert_eq!(projection.context().operations[0].kind, "prompt");
+        assert_eq!(projection.context().operations[0].updated_sequence, 8);
     }
 
     #[tokio::test]

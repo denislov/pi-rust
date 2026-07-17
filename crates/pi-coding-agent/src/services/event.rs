@@ -541,6 +541,11 @@ impl EventService {
             state.shutdown_drain_boundary = Some(sequence);
         }
         SnapshotCoordinator::observe_root_terminal_in_state(&mut state, &product_event);
+        SnapshotCoordinator::observe_context_event_in_state(
+            &mut state,
+            &product_event,
+            operation_kind,
+        );
         self.retain_product_event(&mut state, product_event.clone());
         drop(state);
         let _ = self.product_sender.send(product_event.clone());
@@ -1165,6 +1170,8 @@ pub(crate) fn map_agent_event(
                     turn_id: context.turn_id.clone(),
                     provider: request.model.provider.clone(),
                     model: request.model.id.clone(),
+                    context_window: (request.model.context_window > 0)
+                        .then_some(request.model.context_window),
                 },
             )]
         }
@@ -1960,6 +1967,7 @@ mod tests {
                     turn_id: "turn_1".into(),
                     provider: "test-provider".into(),
                     model: "test-model".into(),
+                    context_window: None,
                 },
             )]
         );
@@ -2974,6 +2982,52 @@ mod tests {
         );
         assert_eq!(status.current_sequence, ProductEventSequence::new(4));
         assert_eq!(status.dropped_before, Some(ProductEventSequence::new(3)));
+    }
+
+    #[test]
+    fn context_snapshot_survives_eviction_from_the_replay_window() {
+        let coordinator = SnapshotCoordinator::new();
+        coordinator.install_projection(
+            crate::runtime::facade::CodingAgentSessionView {
+                session_id: "session-1".into(),
+                default_agent_profile_id: ProfileId::from("default"),
+            },
+            crate::runtime::facade::CodingAgentCapabilities::idle(false),
+            crate::runtime::capability::CapabilityGeneration::new(1),
+        );
+        let service =
+            EventService::with_event_capacity_and_coordinator_for_tests(2, coordinator.clone());
+
+        service.emit_prompt_started("op-1", "turn-1");
+        service.publish_prompt_stream_event(PromptStreamEvent::Tool(ToolEvent::Started {
+            operation_id: "op-1".into(),
+            turn_id: "turn-1".into(),
+            tool_call_id: "tool-1".into(),
+            name: "edit".into(),
+            arguments_json: r#"{"path":"src/lib.rs","oldText":"a","newText":"b"}"#.into(),
+        }));
+        service.publish_prompt_stream_event(PromptStreamEvent::Tool(ToolEvent::Completed {
+            operation_id: "op-1".into(),
+            turn_id: "turn-1".into(),
+            tool_call_id: "tool-1".into(),
+            name: "edit".into(),
+            summary: "updated".into(),
+        }));
+        for index in 0..4 {
+            service.emit_diagnostic(None::<String>, format!("evict {index}"));
+        }
+
+        let status = service.backpressure_status();
+        assert_eq!(status.retained_capacity, 2);
+        assert!(status.oldest_retained_sequence.unwrap().get() > 3);
+        let snapshot = coordinator.snapshot();
+        assert_eq!(snapshot.context.changes.len(), 1);
+        assert_eq!(snapshot.context.changes[0].path, "src/lib.rs");
+        assert_eq!(snapshot.context.operations.len(), 1);
+        assert_eq!(snapshot.context.operations[0].operation_id, "op-1");
+        let public_snapshot: crate::runtime::facade::CodingAgentSnapshot = snapshot.into();
+        assert_eq!(public_snapshot.context.changes[0].path, "src/lib.rs");
+        assert_eq!(public_snapshot.context.operations[0].operation_id, "op-1");
     }
 
     #[tokio::test]

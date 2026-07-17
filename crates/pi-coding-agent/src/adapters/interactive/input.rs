@@ -150,6 +150,10 @@ pub(super) fn handle_root_input(root: &mut InteractiveRoot, event: &InputEvent) 
         return;
     }
 
+    if root.has_context_detail() && root.handle_context_detail_input(event) {
+        return;
+    }
+
     if root.handle_shell_input(event) {
         return;
     }

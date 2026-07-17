@@ -175,6 +175,7 @@ fn coding_event_adapter_maps_prompt_sequence_to_protocol_events() {
             turn_id: "turn_1".into(),
             provider: "typed-provider".into(),
             model: "typed-model".into(),
+            context_window: Some(128_000),
         }),
         CodingAgentProductEventKind::Message(CodingAgentMessageProductEvent::Started {
             operation_id: "op_1".into(),

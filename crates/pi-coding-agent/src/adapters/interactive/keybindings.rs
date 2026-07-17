@@ -33,6 +33,24 @@ pub(crate) static APP_KEYBINDINGS: LazyLock<BTreeMap<String, KeybindingDefinitio
         );
         insert(
             &mut definitions,
+            "app.context.previousTab",
+            &["left"],
+            "Select previous context tab",
+        );
+        insert(
+            &mut definitions,
+            "app.context.nextTab",
+            &["right"],
+            "Select next context tab",
+        );
+        insert(
+            &mut definitions,
+            "app.transcript.arguments",
+            &["a"],
+            "Toggle selected tool arguments",
+        );
+        insert(
+            &mut definitions,
             "app.tools.expand",
             &["ctrl+o"],
             "Expand tool results",

@@ -87,16 +87,19 @@ pub mod api {
     pub mod client {
         pub use crate::runtime::facade::{
             CodingAgentClientConnection, CodingAgentClientId, CodingAgentConnectionGeneration,
-            CodingAgentControlId, CodingAgentControlKind, CodingAgentControlReceipt,
-            CodingAgentControlRejection, CodingAgentControlRejectionReason,
+            CodingAgentContextSnapshot, CodingAgentControlId, CodingAgentControlKind,
+            CodingAgentControlReceipt, CodingAgentControlRejection,
+            CodingAgentControlRejectionReason, CodingAgentDelegationSnapshot,
             CodingAgentDetachOutcome, CodingAgentDraft, CodingAgentDraftId, CodingAgentDraftKind,
-            CodingAgentFreshSnapshotRecovery, CodingAgentLifecycleRejection,
-            CodingAgentMutationRejection, CodingAgentOperationControl,
+            CodingAgentFileChangeSnapshot, CodingAgentFreshSnapshotRecovery,
+            CodingAgentLifecycleRejection, CodingAgentMutationRejection,
+            CodingAgentOperationControl, CodingAgentOperationSnapshot, CodingAgentOperationStatus,
             CodingAgentOutcomeAcknowledgementId, CodingAgentPromptControl, CodingAgentReconnect,
             CodingAgentReconnectDelivery, CodingAgentReconnectReceiver, CodingAgentRecoveryReason,
             CodingAgentSnapshot, CodingAgentSnapshotCursor, CodingAgentSubmissionLease,
             CodingAgentSubmittedOperation, CodingAgentSubmittedOperationStatus,
             CodingAgentSubmittedTerminalAnchor, CodingAgentTerminalUncertainty,
+            CodingAgentTurnUsageSnapshot, CodingAgentUsageSnapshot,
         };
     }
 

@@ -2,6 +2,10 @@ use crate::events::ProductEventSequence;
 use crate::events::{CodingAgentProductEvent, CodingAgentProductEventTerminalStatus};
 use crate::protocol::version::{ProtocolFamilyVersion, UI_SNAPSHOT_PROTOCOL_VERSION};
 use crate::runtime::capability::{CapabilityRevocationPolicy, InstalledCapabilityGeneration};
+use crate::runtime::client::context::{
+    UiContextProjection, UiDelegationProjection, UiFileChangeProjection, UiOperationProjection,
+    UiOperationStatus, UiTurnUsageProjection, UiUsageProjection,
+};
 use crate::runtime::client::state::{ClientConnectionId, ClientDraftKind, UiSnapshot};
 use crate::runtime::control::OperationControl;
 use crate::runtime::error::CodingSessionError;
@@ -191,7 +195,7 @@ pub enum CodingAgentRecoveryReason {
     LiveReceiverLag,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CodingAgentFreshSnapshotRecovery {
     pub requested_sequence: u64,
     pub oldest_available_sequence: u64,
@@ -463,7 +467,93 @@ pub struct CodingAgentSnapshotCursor {
     pub capability_generation: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CodingAgentOperationStatus {
+    Running,
+    Completed,
+    Failed,
+    Aborted,
+    Recovered,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingAgentOperationSnapshot {
+    pub operation_id: String,
+    pub kind: String,
+    pub parent_operation_id: Option<String>,
+    pub root_operation_id: Option<String>,
+    pub status: CodingAgentOperationStatus,
+    pub started_sequence: u64,
+    pub updated_sequence: u64,
+    pub diagnostics: Vec<String>,
+    pub failure: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingAgentFileChangeSnapshot {
+    pub path: String,
+    pub mutation_kind: String,
+    pub operation_id: String,
+    pub tool_call_id: Option<String>,
+    pub updated_sequence: u64,
+    pub first_changed_line: Option<usize>,
+    pub added_lines: Option<usize>,
+    pub removed_lines: Option<usize>,
+    pub diff: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingAgentDelegationSnapshot {
+    pub tool_call_id: String,
+    pub child_operation_id: Option<String>,
+    pub target_kind: String,
+    pub target_id: String,
+    pub task: String,
+    pub status: String,
+    pub updated_sequence: u64,
+    pub summary: Option<String>,
+    pub failure: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingAgentTurnUsageSnapshot {
+    pub turn_id: String,
+    pub input: u32,
+    pub output: u32,
+    pub cache_read: u32,
+    pub cache_write: u32,
+    pub context_tokens: Option<u32>,
+    pub cost: Option<f64>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingAgentUsageSnapshot {
+    pub input: u64,
+    pub output: u64,
+    pub cache_read: u64,
+    pub cache_write: u64,
+    pub cost: Option<f64>,
+    pub latest_turn: Option<CodingAgentTurnUsageSnapshot>,
+    pub model_id: Option<String>,
+    pub context_window: Option<u32>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingAgentContextSnapshot {
+    pub operations: Vec<CodingAgentOperationSnapshot>,
+    pub changes: Vec<CodingAgentFileChangeSnapshot>,
+    pub delegations: Vec<CodingAgentDelegationSnapshot>,
+    pub usage: CodingAgentUsageSnapshot,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct CodingAgentSnapshot {
     pub cursor: CodingAgentSnapshotCursor,
     pub version: ProtocolFamilyVersion,
@@ -473,6 +563,7 @@ pub struct CodingAgentSnapshot {
     pub drafts: Vec<CodingAgentDraft>,
     pub submitted_operation: Option<CodingAgentSubmittedOperation>,
     pub pending_authorizations: Vec<crate::authorization::ToolAuthorizationRequest>,
+    pub context: CodingAgentContextSnapshot,
 }
 
 #[derive(Debug, Clone)]
@@ -1000,6 +1091,7 @@ impl From<UiSnapshot> for CodingAgentSnapshot {
                 .active_operation
                 .map(|kind| kind.as_str().to_owned()),
             pending_authorizations: snapshot.pending_authorizations,
+            context: snapshot.context.into(),
             drafts: snapshot
                 .client_drafts
                 .into_iter()
@@ -1021,6 +1113,106 @@ impl From<UiSnapshot> for CodingAgentSnapshot {
                 })
                 .collect(),
             submitted_operation: None,
+        }
+    }
+}
+
+impl From<UiOperationStatus> for CodingAgentOperationStatus {
+    fn from(status: UiOperationStatus) -> Self {
+        match status {
+            UiOperationStatus::Running => Self::Running,
+            UiOperationStatus::Completed => Self::Completed,
+            UiOperationStatus::Failed => Self::Failed,
+            UiOperationStatus::Aborted => Self::Aborted,
+            UiOperationStatus::Recovered => Self::Recovered,
+        }
+    }
+}
+
+impl From<UiOperationProjection> for CodingAgentOperationSnapshot {
+    fn from(operation: UiOperationProjection) -> Self {
+        Self {
+            operation_id: operation.operation_id,
+            kind: operation.kind,
+            parent_operation_id: operation.parent_operation_id,
+            root_operation_id: operation.root_operation_id,
+            status: operation.status.into(),
+            started_sequence: operation.started_sequence,
+            updated_sequence: operation.updated_sequence,
+            diagnostics: operation.diagnostics,
+            failure: operation.failure,
+        }
+    }
+}
+
+impl From<UiFileChangeProjection> for CodingAgentFileChangeSnapshot {
+    fn from(change: UiFileChangeProjection) -> Self {
+        Self {
+            path: change.path,
+            mutation_kind: change.mutation_kind,
+            operation_id: change.operation_id,
+            tool_call_id: change.tool_call_id,
+            updated_sequence: change.updated_sequence,
+            first_changed_line: change.first_changed_line,
+            added_lines: change.added_lines,
+            removed_lines: change.removed_lines,
+            diff: change.diff,
+        }
+    }
+}
+
+impl From<UiDelegationProjection> for CodingAgentDelegationSnapshot {
+    fn from(delegation: UiDelegationProjection) -> Self {
+        Self {
+            tool_call_id: delegation.tool_call_id,
+            child_operation_id: delegation.child_operation_id,
+            target_kind: delegation.target_kind,
+            target_id: delegation.target_id,
+            task: delegation.task,
+            status: delegation.status,
+            updated_sequence: delegation.updated_sequence,
+            summary: delegation.summary,
+            failure: delegation.failure,
+        }
+    }
+}
+
+impl From<UiTurnUsageProjection> for CodingAgentTurnUsageSnapshot {
+    fn from(usage: UiTurnUsageProjection) -> Self {
+        Self {
+            turn_id: usage.turn_id,
+            input: usage.input,
+            output: usage.output,
+            cache_read: usage.cache_read,
+            cache_write: usage.cache_write,
+            context_tokens: usage.context_tokens,
+            cost: usage.cost,
+        }
+    }
+}
+
+impl From<UiUsageProjection> for CodingAgentUsageSnapshot {
+    fn from(usage: UiUsageProjection) -> Self {
+        Self {
+            input: usage.input,
+            output: usage.output,
+            cache_read: usage.cache_read,
+            cache_write: usage.cache_write,
+            cost: usage.cost,
+            latest_turn: usage.latest_turn.map(Into::into),
+            model_id: usage.model_id,
+            context_window: usage.context_window,
+        }
+    }
+}
+
+impl From<UiContextProjection> for CodingAgentContextSnapshot {
+    fn from(context: UiContextProjection) -> Self {
+        Self {
+            operations: context.operations.into_iter().map(Into::into).collect(),
+            changes: context.changes.into_iter().map(Into::into).collect(),
+            delegations: context.delegations.into_iter().map(Into::into).collect(),
+            usage: context.usage.into(),
         }
     }
 }

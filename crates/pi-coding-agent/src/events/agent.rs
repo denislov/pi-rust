@@ -19,6 +19,7 @@ pub(crate) enum AgentStreamEvent {
         turn_id: String,
         provider: String,
         model: String,
+        context_window: Option<u32>,
     },
 }
 
@@ -42,12 +43,14 @@ impl AgentStreamEvent {
                 turn_id,
                 provider,
                 model,
+                context_window,
             } => (
                 CodingAgentAgentProductEvent::ProviderRequestStarted {
                     operation_id: operation_id.clone(),
                     turn_id,
                     provider,
                     model,
+                    context_window,
                 },
                 operation_id,
             ),

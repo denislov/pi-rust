@@ -33,11 +33,14 @@ use pi_coding_agent::api::cli::theme::{
     get_theme_for_rgb_color, is_light_theme, parse_osc11_background_color, resolve,
 };
 use pi_coding_agent::api::client::{
-    CodingAgentClientConnection, CodingAgentClientId, CodingAgentControlId, CodingAgentControlKind,
-    CodingAgentControlRejectionReason, CodingAgentDetachOutcome, CodingAgentDraft,
-    CodingAgentDraftId, CodingAgentDraftKind, CodingAgentLifecycleRejection,
-    CodingAgentOperationControl, CodingAgentOutcomeAcknowledgementId, CodingAgentSnapshot,
-    CodingAgentSnapshotCursor, CodingAgentSubmittedTerminalAnchor, CodingAgentTerminalUncertainty,
+    CodingAgentClientConnection, CodingAgentClientId, CodingAgentContextSnapshot,
+    CodingAgentControlId, CodingAgentControlKind, CodingAgentControlRejectionReason,
+    CodingAgentDelegationSnapshot, CodingAgentDetachOutcome, CodingAgentDraft, CodingAgentDraftId,
+    CodingAgentDraftKind, CodingAgentFileChangeSnapshot, CodingAgentLifecycleRejection,
+    CodingAgentOperationControl, CodingAgentOperationSnapshot, CodingAgentOperationStatus,
+    CodingAgentOutcomeAcknowledgementId, CodingAgentSnapshot, CodingAgentSnapshotCursor,
+    CodingAgentSubmittedTerminalAnchor, CodingAgentTerminalUncertainty,
+    CodingAgentTurnUsageSnapshot, CodingAgentUsageSnapshot,
 };
 use pi_coding_agent::api::event::{
     CodingAgentAgentProductEvent, CodingAgentCapabilityProductEvent,
@@ -251,6 +254,13 @@ fn stable_api_signature_closure_is_importable() {
         name::<CodingAgentSessionView>(),
         name::<CodingAgentSnapshot>(),
         name::<CodingAgentSnapshotCursor>(),
+        name::<CodingAgentContextSnapshot>(),
+        name::<CodingAgentOperationSnapshot>(),
+        name::<CodingAgentOperationStatus>(),
+        name::<CodingAgentFileChangeSnapshot>(),
+        name::<CodingAgentDelegationSnapshot>(),
+        name::<CodingAgentUsageSnapshot>(),
+        name::<CodingAgentTurnUsageSnapshot>(),
         name::<CodingAgentCapabilities>(),
         name::<CapabilityStatus>(),
         name::<CodingAgentProductEvent>(),
@@ -669,6 +679,10 @@ async fn coding_session_snapshot_public_facade_is_importable() {
     let session_id = snapshot.session.session_id.clone();
     assert!(session_id.starts_with("runtime_sess_"));
     assert_eq!(snapshot.cursor.last_event_sequence, 0);
+    assert!(snapshot.context.operations.is_empty());
+    assert!(snapshot.context.changes.is_empty());
+    assert!(snapshot.context.delegations.is_empty());
+    assert_eq!(snapshot.context.usage, CodingAgentUsageSnapshot::default());
     let _cursor_type_name = std::any::type_name::<CodingAgentSnapshotCursor>();
 
     let client_id = CodingAgentClientId::new("public-client");
