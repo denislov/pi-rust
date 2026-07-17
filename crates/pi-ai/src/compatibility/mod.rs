@@ -11,6 +11,48 @@ pub use openai_completions::{OpenAICompletionsCompat, OpenRouterRouting, VercelG
 pub use openai_responses::OpenAIResponsesCompat;
 pub use thinking::{CacheControlFormat, ThinkingFormat, ThinkingLevelMap, ThinkingLevelValue};
 
+/// Declares where a retained model compatibility field has observable effect.
+/// `CatalogOnly` fields are descriptive metadata and do not alter requests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompatibilityDisposition {
+    Request,
+    Transport,
+    Parser,
+    CatalogOnly,
+}
+
+/// Returns the registered runtime disposition for a serialized compatibility
+/// field name. Unknown fields return `None` and fail generated-catalog audits.
+pub fn compatibility_field_disposition(field: &str) -> Option<CompatibilityDisposition> {
+    use CompatibilityDisposition::{CatalogOnly, Request};
+    Some(match field {
+        "supportsTemperature"
+        | "forceAdaptiveThinking"
+        | "supportsCacheControlOnTools"
+        | "supportsUsageInStreaming"
+        | "supportsDeveloperRole"
+        | "supportsReasoningEffort"
+        | "maxTokensField"
+        | "requiresReasoningContentOnAssistantMessages"
+        | "thinkingFormat"
+        | "supportsStrictMode" => Request,
+        "sendSessionAffinityHeaders"
+        | "sendSessionIdHeader"
+        | "supportsEagerToolInputStreaming"
+        | "zaiToolStream"
+        | "supportsLongCacheRetention"
+        | "supportsStore"
+        | "allowEmptySignature"
+        | "requiresToolResultName"
+        | "requiresAssistantAfterToolResult"
+        | "requiresThinkingAsText"
+        | "openRouterRouting"
+        | "vercelGatewayRouting"
+        | "cacheControlFormat" => CatalogOnly,
+        _ => return None,
+    })
+}
+
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum ModelCompat {
@@ -20,6 +62,7 @@ pub enum ModelCompat {
 }
 
 impl ModelCompat {
+    /// Parse compatibility metadata into its provider-family representation.
     pub fn from_json(value: Value) -> Self {
         if looks_like_anthropic_compat(&value) {
             return Self::AnthropicMessages(serde_json::from_value(value).unwrap_or_default());

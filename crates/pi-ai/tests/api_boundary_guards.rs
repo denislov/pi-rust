@@ -64,3 +64,13 @@ fn testing_facade_requires_explicit_test_support() {
         "pi_ai::api::testing must be absent from normal dependency builds"
     );
 }
+
+#[test]
+fn stable_facade_does_not_advertise_dto_only_image_generation() {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let api_source = fs::read_to_string(crate_root.join("src/api.rs")).expect("read pi-ai api.rs");
+    assert!(
+        !api_source.contains("pub mod images"),
+        "image-generation DTOs must remain private until a production provider contract exists"
+    );
+}

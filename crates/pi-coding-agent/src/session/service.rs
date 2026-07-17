@@ -1113,6 +1113,7 @@ impl SessionService {
                 cache_read: replay.usage.cache_read,
                 cache_write: replay.usage.cache_write,
                 cost: replay.usage.cost,
+                cost_known: replay.usage.cost_known,
                 last_context_tokens: replay.usage.last_context_tokens,
             },
         })

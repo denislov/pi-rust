@@ -23,9 +23,37 @@ impl std::fmt::Debug for ProviderResponseInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProviderResponseInfo")
             .field("status", &self.status)
-            .field("headers", &self.headers)
+            .field("headers", &self.headers.as_ref().map(redacted_headers))
             .finish()
     }
+}
+
+fn redacted_headers(headers: &serde_json::Value) -> serde_json::Value {
+    let Some(object) = headers.as_object() else {
+        return serde_json::Value::String("[REDACTED]".into());
+    };
+    let mut redacted = serde_json::Map::new();
+    for (name, value) in object {
+        let sensitive = matches!(
+            name.to_ascii_lowercase().as_str(),
+            "authorization"
+                | "api-key"
+                | "x-api-key"
+                | "cookie"
+                | "set-cookie"
+                | "x-amz-security-token"
+                | "x-amz-signature"
+        );
+        redacted.insert(
+            name.clone(),
+            if sensitive {
+                serde_json::Value::String("[REDACTED]".into())
+            } else {
+                value.clone()
+            },
+        );
+    }
+    serde_json::Value::Object(redacted)
 }
 
 #[derive(Clone, Default)]

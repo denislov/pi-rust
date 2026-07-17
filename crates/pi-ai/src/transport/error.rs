@@ -8,6 +8,7 @@ pub enum ProviderErrorKind {
     RetryAfterTooLong,
     HookFailed,
     StreamParse,
+    UnsupportedOption,
 }
 
 #[derive(Debug, Clone)]
@@ -110,6 +111,24 @@ impl ProviderError {
     ) -> Self {
         Self {
             kind: ProviderErrorKind::RetryAfterTooLong,
+            api: api.to_string(),
+            provider: Some(provider.to_string()),
+            model: Some(model_id.to_string()),
+            status: None,
+            message: message.into(),
+            body: None,
+            retry_after_ms: None,
+        }
+    }
+
+    pub fn unsupported_option(
+        api: &str,
+        model_id: &str,
+        provider: &str,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind: ProviderErrorKind::UnsupportedOption,
             api: api.to_string(),
             provider: Some(provider.to_string()),
             model: Some(model_id.to_string()),

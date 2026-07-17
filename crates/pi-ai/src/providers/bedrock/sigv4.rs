@@ -1,5 +1,8 @@
-use ring::{digest, hmac};
+use aws_sigv4::http_request::{SignableRequest, SigningParams, SigningSettings, sign as aws_sign};
+use http_02::Request;
+use ring::digest;
 use std::collections::BTreeMap;
+use std::time::SystemTime;
 
 #[derive(Debug, Clone)]
 pub struct SignRequest<'a> {
@@ -12,86 +15,83 @@ pub struct SignRequest<'a> {
     pub access_key: &'a str,
     pub secret_key: &'a str,
     pub session_token: Option<&'a str>,
-    pub amz_date: &'a str,
-    pub date: &'a str,
+    pub time: SystemTime,
     pub body: &'a [u8],
 }
 
 #[derive(Debug, Clone)]
 pub struct SignedRequest {
     pub payload_hash: String,
-    pub canonical_request: String,
-    pub string_to_sign: String,
     pub signature: String,
     pub authorization: String,
     pub headers: BTreeMap<String, String>,
 }
 
-pub fn sign(req: SignRequest<'_>, extra_headers: &[(&str, &str)]) -> SignedRequest {
+pub fn sign(req: SignRequest<'_>, extra_headers: &[(&str, &str)]) -> Result<SignedRequest, String> {
     let payload_hash = hex_sha256(req.body);
-    let mut headers = BTreeMap::new();
-    headers.insert("host".to_string(), req.host.to_string());
-    headers.insert("x-amz-content-sha256".to_string(), payload_hash.clone());
-    headers.insert("x-amz-date".to_string(), req.amz_date.to_string());
-    if let Some(token) = req.session_token {
-        headers.insert("x-amz-security-token".to_string(), token.to_string());
-    }
+    let url = if req.query.is_empty() {
+        format!("https://{}{}", req.host, req.uri)
+    } else {
+        format!("https://{}{}?{}", req.host, req.uri, req.query)
+    };
+    let mut request = Request::builder()
+        .method(req.method)
+        .uri(url)
+        .header("host", req.host)
+        .header("x-amz-content-sha256", &payload_hash)
+        .body(req.body)
+        .map_err(|error| format!("AWS signing request construction failed: {error}"))?;
     for (key, value) in extra_headers {
         let key = key.to_ascii_lowercase();
         if key == "authorization" || key == "host" || key.starts_with("x-amz-") {
             continue;
         }
-        headers.insert(key, value.trim().to_string());
+        let name = http_02::header::HeaderName::from_bytes(key.as_bytes())
+            .map_err(|_| format!("Invalid AWS signing header name `{key}`"))?;
+        let value = http_02::header::HeaderValue::from_str(value.trim())
+            .map_err(|_| format!("Invalid AWS signing header value for `{key}`"))?;
+        request.headers_mut().insert(name, value);
     }
 
-    let canonical_headers = headers
-        .iter()
-        .map(|(key, value)| format!("{}:{}\n", key, normalize_header_value(value)))
-        .collect::<String>();
-    let signed_headers = headers.keys().cloned().collect::<Vec<_>>().join(";");
-    let canonical_request = format!(
-        "{}\n{}\n{}\n{}\n{}\n{}",
-        req.method, req.uri, req.query, canonical_headers, signed_headers, payload_hash
-    );
-    let canonical_hash = hex_sha256(canonical_request.as_bytes());
-    let scope = format!("{}/{}/{}/aws4_request", req.date, req.region, req.service);
-    let string_to_sign = format!(
-        "AWS4-HMAC-SHA256\n{}\n{}\n{}",
-        req.amz_date, scope, canonical_hash
-    );
-    let signing_key = signing_key(req.secret_key, req.date, req.region, req.service);
-    let signature = hex_hmac(&signing_key, string_to_sign.as_bytes());
-    let authorization = format!(
-        "AWS4-HMAC-SHA256 Credential={}/{}, SignedHeaders={}, Signature={}",
-        req.access_key, scope, signed_headers, signature
-    );
+    let settings = SigningSettings::default();
+    let mut params = SigningParams::builder()
+        .access_key(req.access_key)
+        .secret_key(req.secret_key)
+        .region(req.region)
+        .service_name(req.service)
+        .time(req.time)
+        .settings(settings);
+    if let Some(token) = req.session_token {
+        params = params.security_token(token);
+    }
+    let params = params
+        .build()
+        .map_err(|error| format!("AWS signing parameters are invalid: {error}"))?;
+    let (instructions, signature) = aws_sign(SignableRequest::from(&request), &params)
+        .map_err(|error| format!("AWS SigV4 signing failed: {error}"))?
+        .into_parts();
+    instructions.apply_to_request(&mut request);
 
-    headers.insert("authorization".to_string(), authorization.clone());
-    SignedRequest {
+    let headers = request
+        .headers()
+        .iter()
+        .map(|(name, value)| {
+            value
+                .to_str()
+                .map(|value| (name.as_str().to_string(), value.to_string()))
+                .map_err(|_| format!("AWS signer produced a non-text header `{name}`"))
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    let authorization = headers
+        .get("authorization")
+        .cloned()
+        .ok_or_else(|| "AWS signer did not produce an authorization header".to_string())?;
+    Ok(SignedRequest {
         payload_hash,
-        canonical_request,
-        string_to_sign,
         signature,
         authorization,
         headers,
-    }
-}
-
-fn signing_key(secret_key: &str, date: &str, region: &str, service: &str) -> Vec<u8> {
-    let k_date = hmac_bytes(format!("AWS4{}", secret_key).as_bytes(), date.as_bytes());
-    let k_region = hmac_bytes(&k_date, region.as_bytes());
-    let k_service = hmac_bytes(&k_region, service.as_bytes());
-    hmac_bytes(&k_service, b"aws4_request")
-}
-
-fn hmac_bytes(key: &[u8], data: &[u8]) -> Vec<u8> {
-    let key = hmac::Key::new(hmac::HMAC_SHA256, key);
-    hmac::sign(&key, data).as_ref().to_vec()
-}
-
-fn hex_hmac(key: &[u8], data: &[u8]) -> String {
-    let key = hmac::Key::new(hmac::HMAC_SHA256, key);
-    hex(hmac::sign(&key, data).as_ref())
+    })
 }
 
 fn hex_sha256(data: &[u8]) -> String {
@@ -104,8 +104,4 @@ fn hex(bytes: &[u8]) -> String {
         out.push_str(&format!("{:02x}", byte));
     }
     out
-}
-
-fn normalize_header_value(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
 }

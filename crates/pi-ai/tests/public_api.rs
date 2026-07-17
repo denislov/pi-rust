@@ -7,9 +7,9 @@ use pi_ai::api::auth::{
 };
 use pi_ai::api::client::AiClient;
 use pi_ai::api::compatibility::{
-    AnthropicMessagesCompat, CacheControlFormat, ModelCompat, OpenAICompletionsCompat,
-    OpenAIResponsesCompat, OpenRouterRouting, ThinkingFormat, ThinkingLevelMap, ThinkingLevelValue,
-    VercelGatewayRouting,
+    AnthropicMessagesCompat, CacheControlFormat, CompatibilityDisposition, ModelCompat,
+    OpenAICompletionsCompat, OpenAIResponsesCompat, OpenRouterRouting, ThinkingFormat,
+    ThinkingLevelMap, ThinkingLevelValue, VercelGatewayRouting, compatibility_field_disposition,
 };
 use pi_ai::api::conversation::{
     AssistantMessage, ContentBlock, Context, Cost, Message, StopReason, Tool, Usage,
@@ -18,10 +18,6 @@ use pi_ai::api::error::{ProviderError, ProviderErrorKind};
 use pi_ai::api::hooks::{
     ProviderPayloadHook, ProviderPayloadHookFuture, ProviderResponseHook,
     ProviderResponseHookFuture, ProviderResponseInfo, ProviderStreamHooks,
-};
-use pi_ai::api::images::{
-    AssistantImages, ImageContent, ImageInput, ImageOutput, ImagesContext, ImagesModel,
-    ImagesModelCost, ImagesModelOutput, ImagesUsage, TextContent,
 };
 use pi_ai::api::model::{
     Model, ModelCost, ModelInput, ThinkingConfig, all_models, calculate_cost, get_model,
@@ -41,7 +37,6 @@ fn categorized_api_facade_exposes_intentional_contract_groups() {
     use pi_ai::api::conversation::{AssistantMessage, ContentBlock, Context, Usage};
     use pi_ai::api::error::{ProviderError, ProviderErrorKind};
     use pi_ai::api::hooks::{ProviderResponseInfo, ProviderStreamHooks};
-    use pi_ai::api::images::{ImageInput, ImagesContext};
     use pi_ai::api::model::{Model, ThinkingConfig, lookup_model};
     use pi_ai::api::provider::{ApiProvider, ProviderRegistry};
     use pi_ai::api::stream::{AssistantMessageEvent, EventStream, StreamOptions, complete};
@@ -61,8 +56,6 @@ fn categorized_api_facade_exposes_intentional_contract_groups() {
     accepts::<ProviderErrorKind>();
     accepts::<ProviderResponseInfo>();
     accepts::<ProviderStreamHooks>();
-    accepts::<ImageInput>();
-    accepts::<ImagesContext>();
     accepts::<Model>();
     accepts::<ThinkingConfig>();
     accepts::<ProviderRegistry>();
@@ -89,55 +82,36 @@ fn public_api_symbols_are_importable_from_api_facade() {
     let _ = env_api_key as fn(&str) -> Option<String>;
     let _ = builtin_provider_apis as fn() -> &'static [&'static str];
 
-    #[allow(clippy::too_many_arguments)]
-    fn accepts_types(
-        _assistant: Option<AssistantMessage>,
-        _event: Option<AssistantMessageEvent>,
-        _content: Option<ContentBlock>,
-        _context: Option<Context>,
-        _cost: Option<Cost>,
-        _image_content: Option<ImageContent>,
-        _image_input: Option<ImageInput>,
-        _image_output: Option<ImageOutput>,
-        _images: Option<AssistantImages>,
-        _images_context: Option<ImagesContext>,
-        _images_cost: Option<ImagesModelCost>,
-        _images_model: Option<ImagesModel>,
-        _images_output: Option<ImagesModelOutput>,
-        _images_usage: Option<ImagesUsage>,
-        _message: Option<Message>,
-        _model_compat: Option<ModelCompat>,
-        _model_cost: Option<ModelCost>,
-        _model_input: Option<ModelInput>,
-        _openai_completions_compat: Option<OpenAICompletionsCompat>,
-        _openrouter_routing: Option<OpenRouterRouting>,
-        _provider_payload_hook: Option<ProviderPayloadHook>,
-        _provider_payload_future: Option<ProviderPayloadHookFuture>,
-        _provider_auth_diagnostic: Option<ProviderAuthDiagnostic>,
-        _provider_info: Option<ProviderResponseInfo>,
-        _provider_response_hook: Option<ProviderResponseHook>,
-        _provider_response_future: Option<ProviderResponseHookFuture>,
-        _hooks: Option<ProviderStreamHooks>,
-        _stop: Option<StopReason>,
-        _options: Option<StreamOptions>,
-        _text_content: Option<TextContent>,
-        _thinking: Option<ThinkingConfig>,
-        _thinking_format: Option<ThinkingFormat>,
-        _thinking_level_map: Option<ThinkingLevelMap>,
-        _thinking_level_value: Option<ThinkingLevelValue>,
-        _tool: Option<Tool>,
-        _usage: Option<Usage>,
-        _vercel_gateway_routing: Option<VercelGatewayRouting>,
-        _cache_control_format: Option<CacheControlFormat>,
-        _stream: Option<EventStream>,
-    ) {
-    }
-
-    accepts_types(
-        None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
-        None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
-        None, None, None, None, None, None, None, None, None,
-    );
+    fn accepts<T>() {}
+    accepts::<AssistantMessage>();
+    accepts::<AssistantMessageEvent>();
+    accepts::<ContentBlock>();
+    accepts::<Context>();
+    accepts::<Cost>();
+    accepts::<Message>();
+    accepts::<ModelCompat>();
+    accepts::<ModelCost>();
+    accepts::<ModelInput>();
+    accepts::<OpenAICompletionsCompat>();
+    accepts::<OpenRouterRouting>();
+    accepts::<ProviderPayloadHook>();
+    accepts::<ProviderPayloadHookFuture>();
+    accepts::<ProviderAuthDiagnostic>();
+    accepts::<ProviderResponseInfo>();
+    accepts::<ProviderResponseHook>();
+    accepts::<ProviderResponseHookFuture>();
+    accepts::<ProviderStreamHooks>();
+    accepts::<StopReason>();
+    accepts::<StreamOptions>();
+    accepts::<ThinkingConfig>();
+    accepts::<ThinkingFormat>();
+    accepts::<ThinkingLevelMap>();
+    accepts::<ThinkingLevelValue>();
+    accepts::<Tool>();
+    accepts::<Usage>();
+    accepts::<VercelGatewayRouting>();
+    accepts::<CacheControlFormat>();
+    accepts::<EventStream>();
 
     let _ = complete;
 }
@@ -187,6 +161,16 @@ fn provider_error_surface_is_importable_from_api_facade() {
 
 #[test]
 fn compat_surface_is_importable_from_api_facade() {
+    assert_eq!(
+        compatibility_field_disposition("supportsTemperature"),
+        Some(CompatibilityDisposition::Request)
+    );
+    assert_eq!(
+        compatibility_field_disposition("sendSessionIdHeader"),
+        Some(CompatibilityDisposition::CatalogOnly)
+    );
+    assert_eq!(compatibility_field_disposition("unknownField"), None);
+
     let anthropic = ModelCompat::AnthropicMessages(AnthropicMessagesCompat {
         supports_temperature: Some(true),
         supports_cache_control_on_tools: Some(false),
@@ -579,6 +563,52 @@ async fn env_auth_resolver_applies_bedrock_sigv4_material_for_model() {
     assert!(!diagnostic_json.contains("bedrock-access"));
     assert!(!diagnostic_json.contains("bedrock-secret"));
     assert!(!diagnostic_json.contains("bedrock-session"));
+}
+
+#[tokio::test]
+async fn env_auth_resolver_applies_bedrock_profile_for_standard_chain() {
+    let env = EnvGuard::new(&[
+        "AWS_REGION",
+        "AWS_DEFAULT_REGION",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "AWS_BEARER_TOKEN_BEDROCK",
+        "AWS_PROFILE",
+    ]);
+    env.remove("AWS_REGION");
+    env.remove("AWS_DEFAULT_REGION");
+    env.remove("AWS_ACCESS_KEY_ID");
+    env.remove("AWS_SECRET_ACCESS_KEY");
+    env.remove("AWS_SESSION_TOKEN");
+    env.remove("AWS_BEARER_TOKEN_BEDROCK");
+    env.set("AWS_PROFILE", "release-profile");
+
+    let seen_options = Arc::new(Mutex::new(None));
+    let client = AiClient::with_auth_resolver(Arc::new(EnvProviderAuthResolver));
+    let model = scoped_model("env-bedrock-profile-api", "amazon-bedrock");
+    client.register_provider(
+        "env-bedrock-profile-api",
+        Arc::new(RecordingOptionsProvider {
+            seen_options: Arc::clone(&seen_options),
+        }),
+    );
+
+    complete(client.stream_model(&model, empty_context(), None))
+        .await
+        .unwrap();
+    let options = seen_options.lock().unwrap().clone().unwrap();
+    assert_eq!(options.bedrock_profile.as_deref(), Some("release-profile"));
+    assert!(options.bedrock_access_key_id.is_none());
+    assert!(options.bedrock_secret_access_key.is_none());
+    assert_eq!(
+        options
+            .auth_diagnostics
+            .iter()
+            .map(|diagnostic| (diagnostic.field.as_str(), diagnostic.source.as_str()))
+            .collect::<Vec<_>>(),
+        vec![("bedrock_profile", "AWS_PROFILE")]
+    );
 }
 
 #[tokio::test]

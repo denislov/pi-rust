@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use super::wire;
 use crate::model::Model;
 use crate::model::calculate_cost;
@@ -34,14 +36,155 @@ where
     process_sse(body, model, cancel, ResponsesHandler::default(), api_name)
 }
 
+#[derive(Debug)]
+enum OutputKind {
+    Text,
+    Tool { arguments: String },
+}
+
+#[derive(Debug)]
+struct OutputState {
+    content_index: u32,
+    kind: OutputKind,
+    ended: bool,
+}
+
 #[derive(Default)]
 struct ResponsesHandler {
-    first_event: bool,
-    text_content_index: Option<u32>,
-    tool_content_index: Option<u32>,
-    accumulated_tool_args: String,
+    started: bool,
     response_id: Option<String>,
     usage: Option<wire::ResponseUsage>,
+    outputs: HashMap<String, OutputState>,
+    output_order: Vec<String>,
+    last_text_output: Option<String>,
+    last_tool_output: Option<String>,
+    synthetic_output_id: u64,
+}
+
+impl ResponsesHandler {
+    fn next_synthetic_id(&mut self, prefix: &str) -> String {
+        self.synthetic_output_id = self.synthetic_output_id.saturating_add(1);
+        format!("{prefix}-{}", self.synthetic_output_id)
+    }
+
+    fn start_text(
+        &mut self,
+        item_id: Option<String>,
+        partial: &mut AssistantMessage,
+        events: &mut Vec<AssistantMessageEvent>,
+    ) -> String {
+        let key = item_id.unwrap_or_else(|| self.next_synthetic_id("text"));
+        if self.outputs.contains_key(&key) {
+            self.last_text_output = Some(key.clone());
+            return key;
+        }
+        let content_index = partial.content.len() as u32;
+        partial.content.push(ContentBlock::Text {
+            text: String::new(),
+            text_signature: None,
+        });
+        self.outputs.insert(
+            key.clone(),
+            OutputState {
+                content_index,
+                kind: OutputKind::Text,
+                ended: false,
+            },
+        );
+        self.output_order.push(key.clone());
+        self.last_text_output = Some(key.clone());
+        events.push(AssistantMessageEvent::TextStart {
+            content_index,
+            partial: partial.clone(),
+        });
+        key
+    }
+
+    fn start_tool(
+        &mut self,
+        item: wire::OutputItem,
+        partial: &mut AssistantMessage,
+        events: &mut Vec<AssistantMessageEvent>,
+    ) {
+        let key = item.id.clone();
+        if self.outputs.contains_key(&key) {
+            self.last_tool_output = Some(key);
+            return;
+        }
+        let content_index = partial.content.len() as u32;
+        partial.content.push(ContentBlock::ToolCall {
+            id: item.call_id.unwrap_or_else(|| item.id.clone()),
+            name: item.name.unwrap_or_default(),
+            arguments: serde_json::json!({}),
+            thought_signature: None,
+        });
+        self.outputs.insert(
+            key.clone(),
+            OutputState {
+                content_index,
+                kind: OutputKind::Tool {
+                    arguments: item.arguments.unwrap_or_default(),
+                },
+                ended: false,
+            },
+        );
+        self.output_order.push(key.clone());
+        self.last_tool_output = Some(key);
+        events.push(AssistantMessageEvent::ToolcallStart {
+            content_index,
+            partial: partial.clone(),
+        });
+    }
+
+    fn finish_output(
+        &mut self,
+        key: &str,
+        partial: &mut AssistantMessage,
+    ) -> Result<Option<AssistantMessageEvent>, String> {
+        let Some(output) = self.outputs.get_mut(key) else {
+            return Ok(None);
+        };
+        if output.ended {
+            return Ok(None);
+        }
+        output.ended = true;
+
+        let event = match &output.kind {
+            OutputKind::Text => AssistantMessageEvent::TextEnd {
+                content_index: output.content_index,
+                partial: partial.clone(),
+            },
+            OutputKind::Tool { arguments } => {
+                let parsed = try_parse_streaming_json(arguments)
+                    .map_err(|error| format!("malformed final tool arguments: {error}"))?;
+                if let Some(ContentBlock::ToolCall {
+                    arguments: value, ..
+                }) = partial.content.get_mut(output.content_index as usize)
+                {
+                    *value = parsed;
+                }
+                AssistantMessageEvent::ToolcallEnd {
+                    content_index: output.content_index,
+                    partial: partial.clone(),
+                }
+            }
+        };
+        Ok(Some(event))
+    }
+
+    fn failure_message(kind: &str, response: &wire::ResponseInfo) -> String {
+        if let Some(error) = &response.error {
+            let code = error.code.as_deref().unwrap_or("unknown_code");
+            let error_type = error.error_type.as_deref().unwrap_or("unknown_type");
+            return format!("{kind}: {error_type}/{code}: {}", error.message);
+        }
+        if let Some(details) = &response.incomplete_details
+            && let Some(reason) = &details.reason
+        {
+            return format!("{kind}: {reason}");
+        }
+        format!("{kind}: provider returned status {:?}", response.status)
+    }
 }
 
 impl SseEventHandler for ResponsesHandler {
@@ -51,195 +194,221 @@ impl SseEventHandler for ResponsesHandler {
         partial: &mut AssistantMessage,
         _model: &Model,
     ) -> Result<SseEventResult, String> {
-        let event: wire::ResponseStreamEvent =
-            serde_json::from_str(data).map_err(|e| format!("SSE parse error: {}", e))?;
-
+        let event = wire::ResponseStreamEvent::parse(data)
+            .map_err(|error| format!("Responses event parse error: {error}"))?;
         let mut events = Vec::new();
 
         match event {
             wire::ResponseStreamEvent::ResponseCreated { response } => {
+                if self.started {
+                    return Err("duplicate response.created event".into());
+                }
                 self.response_id = Some(response.id);
-                if !self.first_event {
-                    partial.response_id = self.response_id.clone();
-                    partial.timestamp = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs();
-                    events.push(AssistantMessageEvent::Start {
-                        content_index: None,
-                        partial: partial.clone(),
-                    });
-                    self.first_event = true;
+                partial.response_id = self.response_id.clone();
+                partial.timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs();
+                events.push(AssistantMessageEvent::Start {
+                    content_index: None,
+                    partial: partial.clone(),
+                });
+                self.started = true;
+            }
+            wire::ResponseStreamEvent::OutputItemAdded { item } => {
+                if item.item_type == "function_call" {
+                    self.start_tool(item, partial, &mut events);
                 }
             }
-
-            wire::ResponseStreamEvent::OutputItemAdded { item } => {
-                if item.item_type.as_str() == "function_call" {
-                    if let Some(ci) = self.tool_content_index {
-                        let parsed = try_parse_streaming_json(&self.accumulated_tool_args)
-                            .map_err(|e| format!("Malformed final tool arguments: {e}"))?;
-                        if let Some(ContentBlock::ToolCall { arguments, .. }) =
-                            partial.content.get_mut(ci as usize)
+            wire::ResponseStreamEvent::ContentPartAdded { item_id, part } => {
+                if part.part_type == "output_text" || part.part_type == "text" {
+                    let key = self.start_text(item_id, partial, &mut events);
+                    if let Some(text) = part.text
+                        && !text.is_empty()
+                    {
+                        let output = self.outputs.get(&key).expect("text output was inserted");
+                        if let Some(ContentBlock::Text { text: value, .. }) =
+                            partial.content.get_mut(output.content_index as usize)
                         {
-                            *arguments = parsed;
+                            value.push_str(&text);
                         }
-                        events.push(AssistantMessageEvent::ToolcallEnd {
-                            content_index: ci,
+                        events.push(AssistantMessageEvent::TextDelta {
+                            content_index: output.content_index,
+                            delta: text,
                             partial: partial.clone(),
                         });
                     }
-                    self.tool_content_index = Some(partial.content.len() as u32);
-                    let call_id = item.call_id.unwrap_or(item.id.clone());
-                    let call_name = item.name.unwrap_or_default();
-                    self.accumulated_tool_args.clear();
-                    partial.content.push(ContentBlock::ToolCall {
-                        id: call_id,
-                        name: call_name,
-                        arguments: serde_json::json!({}),
-                        thought_signature: None,
-                    });
-                    events.push(AssistantMessageEvent::ToolcallStart {
-                        content_index: self.tool_content_index.unwrap(),
-                        partial: partial.clone(),
-                    });
                 }
             }
-
-            wire::ResponseStreamEvent::ContentPartAdded { .. } => {
-                self.text_content_index = Some(partial.content.len() as u32);
-                partial.content.push(ContentBlock::Text {
-                    text: String::new(),
-                    text_signature: None,
-                });
-                events.push(AssistantMessageEvent::TextStart {
-                    content_index: self.text_content_index.unwrap(),
+            wire::ResponseStreamEvent::OutputTextDelta { item_id, delta } => {
+                let key = item_id
+                    .or_else(|| self.last_text_output.clone())
+                    .ok_or_else(|| {
+                        "output_text.delta arrived before a text output item".to_string()
+                    })?;
+                let output = self
+                    .outputs
+                    .get(&key)
+                    .ok_or_else(|| format!("output_text.delta references unknown item {key}"))?;
+                if output.ended || !matches!(output.kind, OutputKind::Text) {
+                    return Err(format!(
+                        "output_text.delta references closed/non-text item {key}"
+                    ));
+                }
+                if let Some(ContentBlock::Text { text, .. }) =
+                    partial.content.get_mut(output.content_index as usize)
+                {
+                    text.push_str(&delta);
+                }
+                events.push(AssistantMessageEvent::TextDelta {
+                    content_index: output.content_index,
+                    delta,
                     partial: partial.clone(),
                 });
             }
-
-            wire::ResponseStreamEvent::OutputTextDelta { delta } => {
-                if let Some(ci) = self.text_content_index {
-                    if let Some(ContentBlock::Text { text, .. }) =
-                        partial.content.get_mut(ci as usize)
-                    {
-                        text.push_str(&delta);
-                    }
-                    events.push(AssistantMessageEvent::TextDelta {
-                        content_index: ci,
-                        delta: delta.clone(),
-                        partial: partial.clone(),
-                    });
+            wire::ResponseStreamEvent::FunctionCallArgumentsDelta { item_id, delta } => {
+                let key = item_id
+                    .or_else(|| self.last_tool_output.clone())
+                    .ok_or_else(|| {
+                        "function_call_arguments.delta arrived before a tool output item"
+                            .to_string()
+                    })?;
+                let output = self.outputs.get_mut(&key).ok_or_else(|| {
+                    format!("function_call_arguments.delta references unknown item {key}")
+                })?;
+                let OutputKind::Tool { arguments } = &mut output.kind else {
+                    return Err(format!(
+                        "function_call_arguments.delta references non-tool item {key}"
+                    ));
+                };
+                if output.ended {
+                    return Err(format!(
+                        "function_call_arguments.delta references closed item {key}"
+                    ));
+                }
+                arguments.push_str(&delta);
+                let parsed = parse_streaming_json(arguments);
+                if let Some(ContentBlock::ToolCall {
+                    arguments: value, ..
+                }) = partial.content.get_mut(output.content_index as usize)
+                {
+                    *value = parsed;
+                }
+                events.push(AssistantMessageEvent::ToolcallDelta {
+                    content_index: output.content_index,
+                    delta,
+                    partial: partial.clone(),
+                });
+            }
+            wire::ResponseStreamEvent::OutputItemDone { item } => {
+                let key = if self.outputs.contains_key(&item.id) {
+                    item.id
+                } else if item.item_type == "message" {
+                    self.last_text_output.clone().unwrap_or(item.id)
+                } else {
+                    self.last_tool_output.clone().unwrap_or(item.id)
+                };
+                if let Some(event) = self.finish_output(&key, partial)? {
+                    events.push(event);
                 }
             }
-
-            wire::ResponseStreamEvent::FunctionCallArgumentsDelta { delta } => {
-                self.accumulated_tool_args.push_str(&delta);
-                let parsed = parse_streaming_json(&self.accumulated_tool_args);
-                if let Some(ci) = self.tool_content_index {
-                    if let Some(ContentBlock::ToolCall { arguments, .. }) =
-                        partial.content.get_mut(ci as usize)
-                    {
-                        *arguments = parsed;
-                    }
-                    events.push(AssistantMessageEvent::ToolcallDelta {
-                        content_index: ci,
-                        delta: delta.clone(),
-                        partial: partial.clone(),
-                    });
-                }
-            }
-
-            wire::ResponseStreamEvent::OutputItemDone { item } => match item.item_type.as_str() {
-                "message" => {
-                    if let Some(ci) = self.text_content_index {
-                        events.push(AssistantMessageEvent::TextEnd {
-                            content_index: ci,
-                            partial: partial.clone(),
-                        });
-                        self.text_content_index = None;
-                    }
-                }
-                "function_call" => {
-                    if let Some(ci) = self.tool_content_index {
-                        let parsed = try_parse_streaming_json(&self.accumulated_tool_args)
-                            .map_err(|e| format!("Malformed final tool arguments: {e}"))?;
-                        if let Some(ContentBlock::ToolCall { arguments, .. }) =
-                            partial.content.get_mut(ci as usize)
-                        {
-                            *arguments = parsed;
-                        }
-                        events.push(AssistantMessageEvent::ToolcallEnd {
-                            content_index: ci,
-                            partial: partial.clone(),
-                        });
-                        self.tool_content_index = None;
-                    }
-                }
-                _ => {}
-            },
-
             wire::ResponseStreamEvent::ResponseCompleted { response } => {
-                partial.response_id = self.response_id.clone();
+                if !self.started {
+                    return Err("response.completed arrived before response.created".into());
+                }
+                partial.response_id = Some(response.id);
                 self.usage = response.usage;
+                return Ok(SseEventResult::ProviderDone(events));
+            }
+            wire::ResponseStreamEvent::ResponseFailed { response } => {
+                return Ok(SseEventResult::ProviderError {
+                    events,
+                    reason: StopReason::Error,
+                    message: Self::failure_message("response failed", &response),
+                });
+            }
+            wire::ResponseStreamEvent::ResponseIncomplete { response } => {
+                return Ok(SseEventResult::ProviderError {
+                    events,
+                    reason: StopReason::Error,
+                    message: Self::failure_message("response incomplete", &response),
+                });
+            }
+            wire::ResponseStreamEvent::ResponseCancelled { response } => {
+                return Ok(SseEventResult::ProviderError {
+                    events,
+                    reason: StopReason::Aborted,
+                    message: Self::failure_message("response cancelled", &response),
+                });
+            }
+            wire::ResponseStreamEvent::Error { error } => {
+                let code = error.code.as_deref().unwrap_or("unknown_code");
+                let error_type = error.error_type.as_deref().unwrap_or("unknown_type");
+                return Ok(SseEventResult::ProviderError {
+                    events,
+                    reason: StopReason::Error,
+                    message: format!("provider error {error_type}/{code}: {}", error.message),
+                });
+            }
+            wire::ResponseStreamEvent::Bookkeeping => {}
+            wire::ResponseStreamEvent::Unknown { event_type, raw } => {
+                let content_bearing = event_type.contains(".delta")
+                    || event_type.contains("content")
+                    || event_type.contains("output_item")
+                    || raw.get("delta").is_some()
+                    || raw.get("item").is_some();
+                let terminal_like = ["complete", "failed", "error", "incomplete", "cancel"]
+                    .iter()
+                    .any(|marker| event_type.contains(marker));
+                if content_bearing || terminal_like {
+                    return Err(format!(
+                        "unsupported significant Responses event `{event_type}`"
+                    ));
+                }
             }
         }
 
         Ok(SseEventResult::Continue(events))
     }
 
-    fn finalize(
-        &self,
+    fn finish(
+        &mut self,
         partial: &mut AssistantMessage,
         model: &Model,
-    ) -> Vec<AssistantMessageEvent> {
+    ) -> Result<Vec<AssistantMessageEvent>, String> {
         let mut events = Vec::new();
-
-        if let Some(ci) = self.text_content_index {
-            events.push(AssistantMessageEvent::TextEnd {
-                content_index: ci,
-                partial: partial.clone(),
-            });
-        }
-        if let Some(ci) = self.tool_content_index {
-            let parsed = parse_streaming_json(&self.accumulated_tool_args);
-            if let Some(ContentBlock::ToolCall { arguments, .. }) =
-                partial.content.get_mut(ci as usize)
-            {
-                *arguments = parsed;
+        for key in self.output_order.clone() {
+            if let Some(event) = self.finish_output(&key, partial)? {
+                events.push(event);
             }
-            events.push(AssistantMessageEvent::ToolcallEnd {
-                content_index: ci,
-                partial: partial.clone(),
-            });
         }
 
-        if let Some(u) = &self.usage {
-            partial.usage = map_usage(u, model);
+        if let Some(usage) = &self.usage {
+            partial.usage = map_usage(usage, model);
         }
-        let has_tool_calls = partial
+        partial.stop_reason = if partial
             .content
             .iter()
-            .any(|b| matches!(b, ContentBlock::ToolCall { .. }));
-        partial.stop_reason = if has_tool_calls {
+            .any(|block| matches!(block, ContentBlock::ToolCall { .. }))
+        {
             StopReason::ToolUse
         } else {
             StopReason::Stop
         };
-
-        events
+        Ok(events)
     }
 }
 
-fn map_usage(u: &wire::ResponseUsage, model: &Model) -> Usage {
+fn map_usage(usage: &wire::ResponseUsage, model: &Model) -> Usage {
     let mut result = Usage {
-        input: u.input_tokens,
-        output: u.output_tokens,
+        input: usage.input_tokens,
+        output: usage.output_tokens,
         cache_read: 0,
         cache_write: 0,
-        total_tokens: if u.total_tokens == 0 {
-            u.input_tokens + u.output_tokens
+        total_tokens: if usage.total_tokens == 0 {
+            usage.input_tokens + usage.output_tokens
         } else {
-            u.total_tokens
+            usage.total_tokens
         },
         cost: Cost::default(),
     };

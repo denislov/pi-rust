@@ -1,3 +1,6 @@
+/// Retry and end-to-end timeout policy derived from
+/// [`crate::protocol::StreamOptions`].
+/// Retries never replay a response after provider-neutral output is visible.
 #[derive(Debug, Clone, Copy)]
 pub struct RetryConfig {
     pub max_retries: u32,

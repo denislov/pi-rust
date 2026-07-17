@@ -1,5 +1,4 @@
 use async_stream::stream;
-use futures::StreamExt;
 use std::collections::BTreeMap;
 
 use crate::protocol::{
@@ -10,7 +9,7 @@ use crate::model::Model;
 use crate::protocol::stream::EventStream;
 use crate::providers::openai::responses::{convert, stream, wire};
 use crate::registry::ApiProvider;
-use crate::transport::retry::RetryConfig;
+use crate::transport::http::send_json_stream;
 
 const DEFAULT_AZURE_API_VERSION: &str = "v1";
 
@@ -146,8 +145,6 @@ impl ApiProvider for AzureOpenAIResponsesProvider {
             .as_ref()
             .and_then(|o| o.api_key.clone())
             .or_else(|| self.resolve_key());
-        let cancel = opts.as_ref().and_then(|o| o.cancel.clone());
-
         let Some(api_key) = key else {
             let model_id = model.id.clone();
             return Box::pin(stream! {
@@ -180,83 +177,46 @@ impl ApiProvider for AzureOpenAIResponsesProvider {
         };
 
         let req_body = build_request(model, &ctx, &opts);
+        let payload = match serde_json::to_value(&req_body) {
+            Ok(payload) => payload,
+            Err(error) => return serialization_error(model, error),
+        };
         let mut request = self
             .client
             .post(&target.url)
             .header("api-key", api_key)
             .header("content-type", "application/json")
-            .header("accept", "text/event-stream")
-            .json(&req_body);
+            .header("accept", "text/event-stream");
 
         for (key, value) in build_headers(model, &opts) {
             request = request.header(key, value);
         }
 
-        let model = model.clone();
-        let model_id = model.id.clone();
-        let retry_cfg = RetryConfig::from_options(opts.as_ref());
-        Box::pin(stream! {
-            let send_future = request.send();
-            let response = match retry_cfg.timeout_ms {
-                Some(ms) => match tokio::time::timeout(std::time::Duration::from_millis(ms), send_future).await {
-                    Ok(Ok(r)) => r,
-                    Ok(Err(e)) => {
-                        let mut msg = AssistantMessage::empty("azure-openai-responses", &model_id);
-                        msg.provider = Some(model.provider.clone());
-                        msg.error_message = Some(format!("HTTP request failed: {}", e));
-                        msg.stop_reason = StopReason::Error;
-                        yield AssistantMessageEvent::Error { reason: StopReason::Error, message: msg };
-                        return;
-                    }
-                    Err(_) => {
-                        let mut msg = AssistantMessage::empty("azure-openai-responses", &model_id);
-                        msg.provider = Some(model.provider.clone());
-                        msg.error_message = Some(format!("Request timed out after {}ms", ms));
-                        msg.stop_reason = StopReason::Error;
-                        yield AssistantMessageEvent::Error { reason: StopReason::Error, message: msg };
-                        return;
-                    }
-                },
-                None => match send_future.await {
-                    Ok(r) => r,
-                    Err(e) => {
-                        let mut msg = AssistantMessage::empty("azure-openai-responses", &model_id);
-                        msg.provider = Some(model.provider.clone());
-                        msg.error_message = Some(format!("HTTP request failed: {}", e));
-                        msg.stop_reason = StopReason::Error;
-                        yield AssistantMessageEvent::Error { reason: StopReason::Error, message: msg };
-                        return;
-                    }
-                },
-            };
-
-            if !response.status().is_success() {
-                let status = response.status().as_u16();
-                let body = response.text().await.unwrap_or_default();
-                let mut msg = AssistantMessage::empty("azure-openai-responses", &model_id);
-                msg.provider = Some(model.provider.clone());
-                msg.error_message = Some(format!("HTTP {} : {}", status, body));
-                msg.stop_reason = StopReason::Error;
-                yield AssistantMessageEvent::Error {
-                    reason: StopReason::Error,
-                    message: msg,
-                };
-                return;
-            }
-
-            let body_stream = response
-                .bytes_stream()
-                .map(|r| r.map_err(|e| e.to_string()));
-
-            let mut event_stream = stream::process_with_api_name(
-                body_stream,
-                model,
-                cancel,
-                "azure-openai-responses",
-            );
-            while let Some(event) = event_stream.next().await {
-                yield event;
-            }
-        })
+        send_json_stream(
+            &self.client,
+            model,
+            opts.as_ref(),
+            "azure-openai-responses",
+            request,
+            payload,
+            |body, model, cancel| {
+                stream::process_with_api_name(body, model, cancel, "azure-openai-responses")
+            },
+        )
     }
+}
+
+fn serialization_error(model: &Model, error: serde_json::Error) -> EventStream {
+    let model_id = model.id.clone();
+    let provider = model.provider.clone();
+    Box::pin(stream! {
+        let mut message = AssistantMessage::empty("azure-openai-responses", &model_id);
+        message.provider = Some(provider);
+        message.error_message = Some(format!("Azure request serialization failed: {error}"));
+        message.stop_reason = StopReason::Error;
+        yield AssistantMessageEvent::Error {
+            reason: StopReason::Error,
+            message,
+        };
+    })
 }

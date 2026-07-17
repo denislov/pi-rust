@@ -24,6 +24,7 @@ fn test_model(api_key: &str) -> Model {
         thinking_level_map: None,
         input: vec![ModelInput::Text],
         cost: ModelCost {
+            known: true,
             input: 0.0,
             output: 0.0,
             cache_read: 0.0,
@@ -710,6 +711,37 @@ async fn provider_error_event_preserves_error_message() {
         )
     });
     assert!(has_provider_error, "should preserve provider error");
+}
+
+#[tokio::test]
+async fn provider_timeout_error_is_not_committed_as_a_successful_turn() {
+    let api_key = "test-api-provider-timeout";
+    let mut message = AssistantMessage::empty("test", "test-model");
+    message.error_message = Some("provider invocation timed out after 10 ms".into());
+    message.stop_reason = StopReason::Error;
+    let provider = Arc::new(TestProvider::new(vec![ScriptedTurn {
+        events: vec![AssistantMessageEvent::Error {
+            reason: StopReason::Error,
+            message,
+        }],
+        stop_reason: StopReason::Error,
+        response_id: "resp_timeout".into(),
+        model_name: "test-model".into(),
+    }]));
+    let _provider_guard = ProviderGuard::register(api_key, provider);
+    let agent = Agent::new(test_config(api_key, Some(&_provider_guard)));
+
+    let events = agent.prompt("hi").collect::<Vec<_>>().await;
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::AgentError { error } if error.contains("timed out after 10 ms")
+    )));
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::AgentDone { .. })),
+        "timeout must not commit a successful assistant turn"
+    );
 }
 
 #[tokio::test]

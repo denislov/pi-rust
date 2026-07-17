@@ -386,7 +386,7 @@ impl UiContextProjection {
             .usage
             .cache_write
             .saturating_add(usage.cache_write as u64);
-        let priced = (cost > 0.0).then_some(cost);
+        let priced = (usage.cost_known && cost > 0.0).then_some(cost);
         if let Some(cost) = priced {
             self.usage.cost = Some(self.usage.cost.unwrap_or(0.0) + cost);
         }
@@ -642,6 +642,7 @@ mod tests {
                         cache_read: 5,
                         cache_write: 2,
                         total_tokens: 127,
+                        cost_known: true,
                         input_cost: 0.001,
                         output_cost: 0.002,
                         cache_read_cost: 0.0,
@@ -744,6 +745,7 @@ mod tests {
                         cache_read: 0,
                         cache_write: 0,
                         total_tokens: 2,
+                        cost_known: true,
                         input_cost: 0.0,
                         output_cost: 0.0,
                         cache_read_cost: 0.0,

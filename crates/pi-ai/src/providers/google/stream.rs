@@ -44,6 +44,7 @@ impl SseEventHandler for GoogleHandler {
             serde_json::from_str(data).map_err(|e| format!("SSE parse error: {}", e))?;
 
         let mut events = Vec::new();
+        let mut terminal_observed = false;
 
         if !self.first_event {
             partial.timestamp = std::time::SystemTime::now()
@@ -62,6 +63,7 @@ impl SseEventHandler for GoogleHandler {
                 && !fr.is_empty()
             {
                 partial.stop_reason = map_finish_reason(fr);
+                terminal_observed = true;
             }
 
             if let Some(content) = &candidate.content {
@@ -139,14 +141,18 @@ impl SseEventHandler for GoogleHandler {
             partial.usage = map_usage(usage, model);
         }
 
-        Ok(SseEventResult::Continue(events))
+        if terminal_observed {
+            Ok(SseEventResult::ProviderDone(events))
+        } else {
+            Ok(SseEventResult::Continue(events))
+        }
     }
 
-    fn finalize(
-        &self,
+    fn finish(
+        &mut self,
         partial: &mut AssistantMessage,
         _model: &Model,
-    ) -> Vec<AssistantMessageEvent> {
+    ) -> Result<Vec<AssistantMessageEvent>, String> {
         let has_tool_calls = partial
             .content
             .iter()
@@ -154,7 +160,7 @@ impl SseEventHandler for GoogleHandler {
         if has_tool_calls {
             partial.stop_reason = StopReason::ToolUse;
         }
-        Vec::new()
+        Ok(Vec::new())
     }
 }
 

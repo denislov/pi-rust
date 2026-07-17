@@ -19,6 +19,7 @@ fn test_model() -> Model {
         thinking_level_map: None,
         input: vec![ModelInput::Text, ModelInput::Image],
         cost: ModelCost {
+            known: true,
             input: 1.25,
             output: 10.0,
             cache_read: 0.125,
@@ -79,36 +80,11 @@ fn codex_request_body_maps_context_tools_reasoning_and_cache() {
 }
 
 #[test]
-fn codex_urls_and_websocket_frame_match_protocol_shape() {
+fn codex_sse_url_matches_protocol_shape() {
     assert_eq!(
         codex::resolve_codex_url("https://chatgpt.com/backend-api"),
         "https://chatgpt.com/backend-api/codex/responses"
     );
-    assert_eq!(
-        codex::resolve_codex_websocket_url("https://chatgpt.com/backend-api/codex"),
-        "wss://chatgpt.com/backend-api/codex/responses"
-    );
-
-    let req = codex::wire::RequestBody {
-        model: "gpt-5-codex".into(),
-        store: Some(false),
-        stream: Some(true),
-        instructions: Some("hi".into()),
-        input: vec![],
-        tools: None,
-        tool_choice: Some("auto".into()),
-        parallel_tool_calls: Some(true),
-        temperature: None,
-        reasoning: None,
-        service_tier: None,
-        text: None,
-        include: vec![],
-        prompt_cache_key: None,
-    };
-    let frame = codex::build_websocket_frame(&req).unwrap();
-    let json: serde_json::Value = serde_json::from_str(&frame).unwrap();
-    assert_eq!(json["type"], "response.create");
-    assert_eq!(json["model"], "gpt-5-codex");
 }
 
 #[test]

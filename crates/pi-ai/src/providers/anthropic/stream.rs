@@ -267,11 +267,7 @@ impl SseEventHandler for AnthropicHandler {
                 partial.stop_reason = self.stop_reason.clone().unwrap_or(StopReason::Stop);
                 partial.provider = Some("anthropic".into());
 
-                events.push(AssistantMessageEvent::Done {
-                    reason: partial.stop_reason.clone(),
-                    message: partial.clone(),
-                });
-                return Ok(SseEventResult::Done(events));
+                return Ok(SseEventResult::ProviderDone(events));
             }
 
             wire::StreamEvent::Ping => {}
@@ -280,13 +276,11 @@ impl SseEventHandler for AnthropicHandler {
         Ok(SseEventResult::Continue(events))
     }
 
-    fn finalize(
-        &self,
-        partial: &mut AssistantMessage,
+    fn finish(
+        &mut self,
+        _partial: &mut AssistantMessage,
         _model: &Model,
-    ) -> Vec<AssistantMessageEvent> {
-        partial.stop_reason = StopReason::Error;
-        partial.error_message = Some("stream ended without message_stop".into());
-        Vec::new()
+    ) -> Result<Vec<AssistantMessageEvent>, String> {
+        Ok(Vec::new())
     }
 }

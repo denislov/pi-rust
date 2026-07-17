@@ -11,9 +11,8 @@ use crate::protocol::{
 use crate::model::Model;
 use crate::protocol::stream::EventStream;
 use crate::registry::ApiProvider;
+use crate::transport::http::send_json_stream;
 use convert::build_request;
-use stream::response_to_events;
-use wire::ChatCompletionResponse;
 
 pub struct DeepSeekProvider {
     client: reqwest::Client,
@@ -39,8 +38,6 @@ impl ApiProvider for DeepSeekProvider {
             .as_ref()
             .and_then(|opts| opts.api_key.clone())
             .or_else(|| self.resolve_key());
-        let cancel = opts.as_ref().and_then(|opts| opts.cancel.clone());
-
         let Some(api_key) = key else {
             let model_id = model.id.clone();
             return Box::pin(stream! {
@@ -56,6 +53,10 @@ impl ApiProvider for DeepSeekProvider {
         };
 
         let request_body = build_request(model, &ctx, &opts);
+        let payload = match serde_json::to_value(&request_body) {
+            Ok(payload) => payload,
+            Err(error) => return serialization_error(model, error),
+        };
         let base_url = model.base_url.trim_end_matches('/');
         let url = format!("{}/chat/completions", base_url);
         let mut request = self
@@ -63,8 +64,7 @@ impl ApiProvider for DeepSeekProvider {
             .post(&url)
             .bearer_auth(api_key)
             .header("content-type", "application/json")
-            .header("accept", "application/json")
-            .json(&request_body);
+            .header("accept", "application/json");
 
         if let Some(opts) = &opts
             && let Some(headers) = &opts.headers
@@ -77,69 +77,29 @@ impl ApiProvider for DeepSeekProvider {
             }
         }
 
-        let model = model.clone();
-        let model_id = model.id.clone();
-        Box::pin(stream! {
-            if let Some(token) = &cancel
-                && token.is_cancelled() {
-                    let mut msg = AssistantMessage::empty("deepseek-chat-completions", &model_id);
-                    msg.provider = Some("deepseek".into());
-                    msg.error_message = Some("cancelled".into());
-                    msg.stop_reason = StopReason::Aborted;
-                    yield AssistantMessageEvent::Error {
-                        reason: StopReason::Aborted,
-                        message: msg,
-                    };
-                    return;
-                }
-
-            let response = match request.send().await {
-                Ok(response) => response,
-                Err(error) => {
-                    let mut msg = AssistantMessage::empty("deepseek-chat-completions", &model_id);
-                    msg.provider = Some("deepseek".into());
-                    msg.error_message = Some(format!("HTTP request failed: {}", error));
-                    msg.stop_reason = StopReason::Error;
-                    yield AssistantMessageEvent::Error {
-                        reason: StopReason::Error,
-                        message: msg,
-                    };
-                    return;
-                }
-            };
-
-            if !response.status().is_success() {
-                let status = response.status().as_u16();
-                let body = response.text().await.unwrap_or_default();
-                let mut msg = AssistantMessage::empty("deepseek-chat-completions", &model_id);
-                msg.provider = Some("deepseek".into());
-                msg.error_message = Some(format!("HTTP {} : {}", status, body));
-                msg.stop_reason = StopReason::Error;
-                yield AssistantMessageEvent::Error {
-                    reason: StopReason::Error,
-                    message: msg,
-                };
-                return;
-            }
-
-            let parsed = match response.json::<ChatCompletionResponse>().await {
-                Ok(parsed) => parsed,
-                Err(error) => {
-                    let mut msg = AssistantMessage::empty("deepseek-chat-completions", &model_id);
-                    msg.provider = Some("deepseek".into());
-                    msg.error_message = Some(format!("DeepSeek response parse error: {}", error));
-                    msg.stop_reason = StopReason::Error;
-                    yield AssistantMessageEvent::Error {
-                        reason: StopReason::Error,
-                        message: msg,
-                    };
-                    return;
-                }
-            };
-
-            for event in response_to_events(parsed, &model) {
-                yield event;
-            }
-        })
+        send_json_stream(
+            &self.client,
+            model,
+            opts.as_ref(),
+            "deepseek-chat-completions",
+            request,
+            payload,
+            |body, model, cancel| stream::process(body, model, cancel),
+        )
     }
+}
+
+fn serialization_error(model: &Model, error: serde_json::Error) -> EventStream {
+    let model_id = model.id.clone();
+    let provider = model.provider.clone();
+    Box::pin(stream! {
+        let mut message = AssistantMessage::empty("deepseek-chat-completions", &model_id);
+        message.provider = Some(provider);
+        message.error_message = Some(format!("DeepSeek request serialization failed: {error}"));
+        message.stop_reason = StopReason::Error;
+        yield AssistantMessageEvent::Error {
+            reason: StopReason::Error,
+            message,
+        };
+    })
 }

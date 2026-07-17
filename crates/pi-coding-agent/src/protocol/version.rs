@@ -43,8 +43,8 @@ impl fmt::Display for RequestedProtocolVersion {
     }
 }
 
-pub const RPC_PROTOCOL_VERSION: ProtocolFamilyVersion = ProtocolFamilyVersion::new("rpc", 2, 0);
+pub const RPC_PROTOCOL_VERSION: ProtocolFamilyVersion = ProtocolFamilyVersion::new("rpc", 2, 1);
 pub const PRODUCT_EVENT_PROTOCOL_VERSION: ProtocolFamilyVersion =
-    ProtocolFamilyVersion::new("product_event", 2, 1);
+    ProtocolFamilyVersion::new("product_event", 2, 2);
 pub const UI_SNAPSHOT_PROTOCOL_VERSION: ProtocolFamilyVersion =
     ProtocolFamilyVersion::new("ui_snapshot", 2, 1);

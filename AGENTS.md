@@ -89,3 +89,8 @@ The smoke suite requires `tmux`, builds `pi-coding-agent`, and writes captures t
 - User/project configuration, sessions, themes, skills, templates, plugins, and profiles are resolved by `pi-coding-agent`. Tests should isolate them with temporary directories and `PI_RUST_DIR` rather than touching a developer's real configuration.
 - Provider credentials are resolved from environment/configuration by `pi-ai` and `pi-coding-agent`. Never print secret values in diagnostics, snapshots, fixtures, or test failures.
 - TUI code must preserve terminal cleanup, cursor placement, Unicode display width, resize behavior, and unrelated scrollback. Cover rendering logic with virtual-terminal tests where possible, then use the smoke script for lifecycle behavior.
+
+## 工作原则
+1. 要有大局观，不要为了兼容性测试写冗余代码，可以做执行债务记录，推迟收敛，但在计划完整收敛时，所有债务记录需要处理掉。
+2. 每一个任务必须进入版本计划进行收敛，可以多个任务组合在一起推进一个大版本迭代，也可以一个小任务推进一个小版本迭代。
+3. 每推进一个版本计划，必须同步更新项目的版本信息、以及CHANGELOG的更新。

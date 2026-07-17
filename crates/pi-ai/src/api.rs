@@ -74,17 +74,10 @@ pub mod transport {
 /// Explicit cross-provider compatibility configuration values.
 pub mod compatibility {
     pub use crate::compatibility::{
-        AnthropicMessagesCompat, CacheControlFormat, ModelCompat, OpenAICompletionsCompat,
-        OpenAIResponsesCompat, OpenRouterRouting, ThinkingFormat, ThinkingLevelMap,
-        ThinkingLevelValue, VercelGatewayRouting,
-    };
-}
-
-/// Image-generation request, response, model, and usage values.
-pub mod images {
-    pub use crate::images::{
-        AssistantImages, ImageContent, ImageInput, ImageOutput, ImagesContext, ImagesModel,
-        ImagesModelCost, ImagesModelOutput, ImagesUsage, TextContent,
+        AnthropicMessagesCompat, CacheControlFormat, CompatibilityDisposition, ModelCompat,
+        OpenAICompletionsCompat, OpenAIResponsesCompat, OpenRouterRouting, ThinkingFormat,
+        ThinkingLevelMap, ThinkingLevelValue, VercelGatewayRouting,
+        compatibility_field_disposition,
     };
 }
 

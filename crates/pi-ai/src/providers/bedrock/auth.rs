@@ -1,5 +1,6 @@
 use super::sigv4;
 use crate::protocol::StreamOptions;
+use aws_credential_types::provider::ProvideCredentials;
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone)]
@@ -26,9 +27,9 @@ pub fn auth_headers(
         )]));
     }
 
-    let credentials = resolve_credentials_from_options(opts)?;
+    let credentials = resolve_explicit_credentials_from_options(opts)?
+        .ok_or_else(|| "No explicit AWS credentials found".to_string())?;
     let (host, uri, query) = parse_url_for_signing(url)?;
-    let (date, amz_date) = super::datetime::current_aws_dates();
     let signed = sigv4::sign(
         sigv4::SignRequest {
             method: "POST",
@@ -40,31 +41,19 @@ pub fn auth_headers(
             access_key: &credentials.access_key,
             secret_key: &credentials.secret_key,
             session_token: credentials.session_token.as_deref(),
-            amz_date: &amz_date,
-            date: &date,
+            time: std::time::SystemTime::now(),
             body,
         },
         &[],
-    );
+    )?;
     Ok(signed.headers)
 }
 
-pub fn resolve_credentials(explicit: Option<(String, String)>) -> Result<AwsCredentials, String> {
-    if let Some((access_key, secret_key)) = explicit {
-        return Ok(AwsCredentials {
-            access_key,
-            secret_key,
-            session_token: None,
-        });
-    }
-    Err("No AWS credentials found. Pass Bedrock credentials or bearer token through StreamOptions/ProviderAuthResolver.".into())
-}
-
-pub fn resolve_credentials_from_options(
+pub fn resolve_explicit_credentials_from_options(
     opts: &Option<StreamOptions>,
-) -> Result<AwsCredentials, String> {
+) -> Result<Option<AwsCredentials>, String> {
     let Some(opts) = opts.as_ref() else {
-        return resolve_credentials(None);
+        return Ok(None);
     };
     match (
         opts.bedrock_access_key_id.clone(),
@@ -73,14 +62,38 @@ pub fn resolve_credentials_from_options(
         (Some(access_key), Some(secret_key))
             if !access_key.trim().is_empty() && !secret_key.trim().is_empty() =>
         {
-            Ok(AwsCredentials {
+            Ok(Some(AwsCredentials {
                 access_key,
                 secret_key,
                 session_token: opts.bedrock_session_token.clone(),
-            })
+            }))
         }
-        _ => resolve_credentials(None),
+        (None, None) => Ok(None),
+        _ => Err(
+            "Bedrock explicit credentials require both access key ID and secret access key".into(),
+        ),
     }
+}
+
+pub async fn resolve_credentials_from_chain(
+    profile: Option<&str>,
+) -> Result<AwsCredentials, String> {
+    let mut loader = aws_config::from_env();
+    if let Some(profile) = profile.filter(|profile| !profile.trim().is_empty()) {
+        loader = loader.profile_name(profile);
+    }
+    let config = loader.load().await;
+    let provider = config
+        .credentials_provider()
+        .ok_or_else(|| "AWS credential provider chain is unavailable".to_string())?;
+    let credentials = provider.provide_credentials().await.map_err(|_| {
+        "AWS credential provider chain did not return usable credentials".to_string()
+    })?;
+    Ok(AwsCredentials {
+        access_key: credentials.access_key_id().to_string(),
+        secret_key: credentials.secret_access_key().to_string(),
+        session_token: credentials.session_token().map(str::to_string),
+    })
 }
 
 pub fn parse_url_for_signing(url: &str) -> Result<(String, String, String), String> {

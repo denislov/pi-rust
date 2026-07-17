@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
 
+/// Anthropic model compatibility metadata. Use
+/// [`super::compatibility_field_disposition`] to distinguish request-enforced
+/// flags from catalog-only documentation.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AnthropicMessagesCompat {
     #[serde(rename = "supportsEagerToolInputStreaming", default)]
@@ -16,4 +19,13 @@ pub struct AnthropicMessagesCompat {
     pub force_adaptive_thinking: Option<bool>,
     #[serde(rename = "allowEmptySignature", default)]
     pub allow_empty_signature: Option<bool>,
+}
+
+impl AnthropicMessagesCompat {
+    pub fn from_model(model: &crate::model::Model) -> Self {
+        match model.compat.as_ref() {
+            Some(super::ModelCompat::AnthropicMessages(compat)) => compat.clone(),
+            _ => Self::default(),
+        }
+    }
 }

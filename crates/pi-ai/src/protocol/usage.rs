@@ -1,13 +1,47 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Cost {
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub known: bool,
     pub input: f64,
     pub output: f64,
     #[serde(rename = "cacheRead")]
     pub cache_read: f64,
     #[serde(rename = "cacheWrite")]
     pub cache_write: f64,
+}
+
+impl Cost {
+    pub fn unknown() -> Self {
+        Self {
+            known: false,
+            input: 0.0,
+            output: 0.0,
+            cache_read: 0.0,
+            cache_write: 0.0,
+        }
+    }
+}
+
+impl Default for Cost {
+    fn default() -> Self {
+        Self {
+            known: true,
+            input: 0.0,
+            output: 0.0,
+            cache_read: 0.0,
+            cache_write: 0.0,
+        }
+    }
+}
+
+const fn default_true() -> bool {
+    true
+}
+
+const fn is_true(value: &bool) -> bool {
+    *value
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]

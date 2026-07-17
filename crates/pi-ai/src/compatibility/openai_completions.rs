@@ -44,6 +44,9 @@ pub struct VercelGatewayRouting {
     pub order: Option<Vec<String>>,
 }
 
+/// OpenAI-compatible chat-completions metadata. Use
+/// [`super::compatibility_field_disposition`] to distinguish request-enforced
+/// flags from catalog-only documentation.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct OpenAICompletionsCompat {
     #[serde(rename = "supportsStore", default)]

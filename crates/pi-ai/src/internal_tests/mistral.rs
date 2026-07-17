@@ -22,6 +22,7 @@ fn test_model() -> Model {
         thinking_level_map: None,
         input: vec![ModelInput::Text, ModelInput::Image],
         cost: ModelCost {
+            known: true,
             input: 0.0,
             output: 0.0,
             cache_read: 0.0,
@@ -202,6 +203,27 @@ async fn mistral_fixture_maps_text_thinking_tool_usage_and_done() {
         }
         other => panic!("expected Done event, got {:?}", other),
     }
+}
+
+#[tokio::test]
+async fn mistral_clean_truncation_before_done_marker_is_an_error() {
+    let content = std::fs::read_to_string("tests/fixtures/mistral-text-thinking-tool.sse")
+        .unwrap()
+        .replace("data: [DONE]", "");
+    let body = stream::iter(vec![Ok::<_, String>(Bytes::from(content))]);
+    use futures::StreamExt;
+    let events: Vec<_> = mistral::stream::process(body, test_model(), None)
+        .collect()
+        .await;
+    assert!(matches!(
+        events.last(),
+        Some(AssistantMessageEvent::Error { .. })
+    ));
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, AssistantMessageEvent::Done { .. }))
+    );
 }
 
 #[tokio::test]

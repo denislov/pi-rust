@@ -22,6 +22,7 @@ fn faux_model(api: &str) -> Model {
         thinking_level_map: None,
         input: vec![ModelInput::Text],
         cost: ModelCost {
+            known: true,
             input: 0.0,
             output: 0.0,
             cache_read: 0.0,

@@ -97,6 +97,7 @@ impl MessageEvent {
                         cache_read: usage.cache_read,
                         cache_write: usage.cache_write,
                         total_tokens: usage.total_tokens,
+                        cost_known: usage.cost.known,
                         input_cost: usage.cost.input,
                         output_cost: usage.cost.output,
                         cache_read_cost: usage.cost.cache_read,

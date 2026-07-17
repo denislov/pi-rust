@@ -32,6 +32,13 @@ pub fn build_request(
         temperature,
         tool_choice: opts.as_ref().and_then(|o| o.tool_choice.clone()),
         prompt_cache_key: opts.as_ref().and_then(|o| o.session_id.clone()),
+        reasoning: opts
+            .as_ref()
+            .and_then(|options| options.thinking.as_ref())
+            .filter(|thinking| thinking.enabled)
+            .map(|thinking| wire::ResponseReasoning {
+                effort: thinking.effort.clone().unwrap_or_else(|| "medium".into()),
+            }),
         stream: true,
     }
 }

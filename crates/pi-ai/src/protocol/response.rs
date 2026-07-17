@@ -2,6 +2,12 @@ use super::message::AssistantMessage;
 use super::usage::StopReason;
 use serde::{Deserialize, Serialize};
 
+/// Incremental provider-neutral assistant response events.
+///
+/// A stream has exactly one terminal event. `Done` is reserved for successful
+/// `Stop`, `Length`, or `ToolUse` completion after the provider's required
+/// terminal marker. Truncation, protocol failure, timeout, and cancellation use
+/// `Error`; cancellation carries `StopReason::Aborted`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type")]
 pub enum AssistantMessageEvent {
@@ -69,11 +75,13 @@ pub enum AssistantMessageEvent {
         partial: AssistantMessage,
     },
     #[serde(rename = "done")]
+    /// Successful provider completion.
     Done {
         reason: StopReason,
         message: AssistantMessage,
     },
     #[serde(rename = "error")]
+    /// Failed or aborted provider completion.
     Error {
         reason: StopReason,
         message: AssistantMessage,

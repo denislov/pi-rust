@@ -132,14 +132,29 @@ pub(crate) struct CodingAgentSessionTree {
     pub(crate) active_leaf_id: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct CodingAgentSessionUsageSummary {
     pub(crate) input: u32,
     pub(crate) output: u32,
     pub(crate) cache_read: u32,
     pub(crate) cache_write: u32,
     pub(crate) cost: f64,
+    pub(crate) cost_known: bool,
     pub(crate) last_context_tokens: Option<u32>,
+}
+
+impl Default for CodingAgentSessionUsageSummary {
+    fn default() -> Self {
+        Self {
+            input: 0,
+            output: 0,
+            cache_read: 0,
+            cache_write: 0,
+            cost: 0.0,
+            cost_known: true,
+            last_context_tokens: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

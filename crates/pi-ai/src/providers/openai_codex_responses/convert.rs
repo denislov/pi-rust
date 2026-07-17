@@ -29,9 +29,15 @@ pub fn build_request(
                 })
                 .collect()
         }),
-        tool_choice: Some("auto".into()),
+        tool_choice: opts
+            .as_ref()
+            .and_then(|options| options.tool_choice.as_ref())
+            .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned)
+            .or_else(|| Some("auto".into())),
         parallel_tool_calls: Some(true),
         temperature: opts.as_ref().and_then(|o| o.temperature),
+        max_output_tokens: opts.as_ref().and_then(|options| options.max_tokens),
         reasoning: opts
             .as_ref()
             .and_then(|o| o.thinking.as_ref())

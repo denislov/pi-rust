@@ -19,6 +19,7 @@ fn assistant_message_roundtrip() {
             cache_write: 10,
             total_tokens: 300,
             cost: Cost {
+                known: true,
                 input: 0.0003,
                 output: 0.003,
                 cache_read: 0.0,

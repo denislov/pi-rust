@@ -1,7 +1,7 @@
 use crate::model::Model;
 use crate::protocol::{ProviderAuthDiagnostic, StreamOptions};
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Clone, Default, PartialEq)]
 pub struct ProviderAuth {
     pub api_key: Option<String>,
     pub headers: Option<serde_json::Value>,
@@ -16,6 +16,42 @@ pub struct ProviderAuth {
     pub bedrock_secret_access_key: Option<String>,
     pub bedrock_session_token: Option<String>,
     pub diagnostics: Vec<ProviderAuthDiagnostic>,
+}
+
+impl std::fmt::Debug for ProviderAuth {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ProviderAuth")
+            .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
+            .field("headers", &self.headers.as_ref().map(|_| "[REDACTED]"))
+            .field("azure_api_version", &self.azure_api_version)
+            .field("azure_resource_name", &self.azure_resource_name)
+            .field("azure_base_url", &self.azure_base_url)
+            .field("azure_deployment_name", &self.azure_deployment_name)
+            .field("bedrock_region", &self.bedrock_region)
+            .field("bedrock_profile", &self.bedrock_profile)
+            .field(
+                "bedrock_bearer_token",
+                &self.bedrock_bearer_token.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field(
+                "bedrock_access_key_id",
+                &self.bedrock_access_key_id.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field(
+                "bedrock_secret_access_key",
+                &self
+                    .bedrock_secret_access_key
+                    .as_ref()
+                    .map(|_| "[REDACTED]"),
+            )
+            .field(
+                "bedrock_session_token",
+                &self.bedrock_session_token.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("diagnostics", &self.diagnostics)
+            .finish()
+    }
 }
 
 pub trait ProviderAuthResolver: Send + Sync {
@@ -93,6 +129,12 @@ impl ProviderAuthResolver for EnvProviderAuthResolver {
                 &mut auth.diagnostics,
                 "bedrock_region",
                 &["AWS_REGION", "AWS_DEFAULT_REGION"],
+            );
+            set_auth_from_env(
+                &mut auth.bedrock_profile,
+                &mut auth.diagnostics,
+                "bedrock_profile",
+                "AWS_PROFILE",
             );
             set_auth_from_env(
                 &mut auth.bedrock_bearer_token,

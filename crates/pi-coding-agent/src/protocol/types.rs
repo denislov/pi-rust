@@ -880,6 +880,8 @@ pub struct RpcSessionStats {
     pub total_messages: usize,
     pub tokens: RpcSessionTokenStats,
     pub cost: f64,
+    #[serde(rename = "costKnown")]
+    pub cost_known: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -989,17 +991,17 @@ impl From<CodingAgentCapabilities> for RpcCapabilities {
             steer: capabilities.steer.into(),
             follow_up: capabilities.follow_up.into(),
             compact: capabilities.compact.into(),
-            fork: rpc_unsupported("RPC protocol 2.0 does not expose a fork command"),
+            fork: rpc_unsupported("RPC protocol 2.1 does not expose a fork command"),
             clone_session: rpc_unsupported(
-                "RPC protocol 2.0 does not expose a cloneSession command",
+                "RPC protocol 2.1 does not expose a cloneSession command",
             ),
             branch_summary: rpc_unsupported(
-                "RPC protocol 2.0 does not expose a branchSummary command",
+                "RPC protocol 2.1 does not expose a branchSummary command",
             ),
             switch_session: rpc_unsupported(
-                "RPC protocol 2.0 does not expose a switchSession command",
+                "RPC protocol 2.1 does not expose a switchSession command",
             ),
-            export: rpc_unsupported("RPC protocol 2.0 does not expose an export command"),
+            export: rpc_unsupported("RPC protocol 2.1 does not expose an export command"),
             plugin_reload: capabilities.plugin_reload.into(),
             self_healing_edit: capabilities.self_healing_edit.into(),
             agent_profiles: capabilities.agent_profiles.into(),

@@ -1,5 +1,6 @@
 mod client;
 mod compatibility;
+#[cfg(test)]
 mod images;
 mod model;
 // Provider wire fields are intentionally deserialized even when the generic

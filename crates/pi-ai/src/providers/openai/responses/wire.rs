@@ -16,7 +16,14 @@ pub struct ResponseCreateRequest {
     pub tool_choice: Option<serde_json::Value>,
     #[serde(rename = "prompt_cache_key", skip_serializing_if = "Option::is_none")]
     pub prompt_cache_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<ResponseReasoning>,
     pub stream: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ResponseReasoning {
+    pub effort: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -49,23 +56,123 @@ pub struct ResponseTool {
 
 // ── SSE event types ────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "type")]
+#[derive(Debug, Clone)]
 pub enum ResponseStreamEvent {
-    #[serde(rename = "response.created")]
-    ResponseCreated { response: ResponseInfo },
-    #[serde(rename = "response.output_item.added")]
-    OutputItemAdded { item: OutputItem },
-    #[serde(rename = "response.content_part.added")]
-    ContentPartAdded { part: ContentPart },
-    #[serde(rename = "response.output_text.delta")]
-    OutputTextDelta { delta: String },
-    #[serde(rename = "response.function_call_arguments.delta")]
-    FunctionCallArgumentsDelta { delta: String },
-    #[serde(rename = "response.output_item.done")]
-    OutputItemDone { item: OutputItem },
-    #[serde(rename = "response.completed")]
-    ResponseCompleted { response: ResponseInfo },
+    ResponseCreated {
+        response: ResponseInfo,
+    },
+    OutputItemAdded {
+        item: OutputItem,
+    },
+    ContentPartAdded {
+        item_id: Option<String>,
+        part: ContentPart,
+    },
+    OutputTextDelta {
+        item_id: Option<String>,
+        delta: String,
+    },
+    FunctionCallArgumentsDelta {
+        item_id: Option<String>,
+        delta: String,
+    },
+    OutputItemDone {
+        item: OutputItem,
+    },
+    ResponseCompleted {
+        response: ResponseInfo,
+    },
+    ResponseFailed {
+        response: ResponseInfo,
+    },
+    ResponseIncomplete {
+        response: ResponseInfo,
+    },
+    ResponseCancelled {
+        response: ResponseInfo,
+    },
+    Error {
+        error: ResponseError,
+    },
+    Bookkeeping,
+    Unknown {
+        event_type: String,
+        raw: serde_json::Value,
+    },
+}
+
+impl ResponseStreamEvent {
+    pub fn parse(data: &str) -> Result<Self, String> {
+        let raw: serde_json::Value =
+            serde_json::from_str(data).map_err(|error| format!("invalid JSON: {error}"))?;
+        let event_type = raw
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "event is missing string field `type`".to_string())?;
+
+        match event_type {
+            "response.created" => Ok(Self::ResponseCreated {
+                response: field(&raw, "response")?,
+            }),
+            "response.output_item.added" => Ok(Self::OutputItemAdded {
+                item: field(&raw, "item")?,
+            }),
+            "response.content_part.added" => Ok(Self::ContentPartAdded {
+                item_id: optional_string(&raw, "item_id"),
+                part: field(&raw, "part")?,
+            }),
+            "response.output_text.delta" => Ok(Self::OutputTextDelta {
+                item_id: optional_string(&raw, "item_id"),
+                delta: field(&raw, "delta")?,
+            }),
+            "response.function_call_arguments.delta" => Ok(Self::FunctionCallArgumentsDelta {
+                item_id: optional_string(&raw, "item_id"),
+                delta: field(&raw, "delta")?,
+            }),
+            "response.output_item.done" => Ok(Self::OutputItemDone {
+                item: field(&raw, "item")?,
+            }),
+            "response.completed" => Ok(Self::ResponseCompleted {
+                response: field(&raw, "response")?,
+            }),
+            "response.failed" => Ok(Self::ResponseFailed {
+                response: field(&raw, "response")?,
+            }),
+            "response.incomplete" => Ok(Self::ResponseIncomplete {
+                response: field(&raw, "response")?,
+            }),
+            "response.cancelled" | "response.canceled" => Ok(Self::ResponseCancelled {
+                response: field(&raw, "response")?,
+            }),
+            "error" => Ok(Self::Error {
+                error: field(&raw, "error")?,
+            }),
+            "response.in_progress"
+            | "response.queued"
+            | "response.content_part.done"
+            | "response.output_text.done"
+            | "response.function_call_arguments.done" => Ok(Self::Bookkeeping),
+            _ => Ok(Self::Unknown {
+                event_type: event_type.to_string(),
+                raw,
+            }),
+        }
+    }
+}
+
+fn field<T: serde::de::DeserializeOwned>(raw: &serde_json::Value, name: &str) -> Result<T, String> {
+    serde_json::from_value(
+        raw.get(name)
+            .cloned()
+            .ok_or_else(|| format!("event is missing field `{name}`"))?,
+    )
+    .map_err(|error| format!("invalid `{name}` field: {error}"))
+}
+
+fn optional_string(raw: &serde_json::Value, name: &str) -> Option<String> {
+    raw.get(name)
+        .and_then(serde_json::Value::as_str)
+        .map(ToOwned::to_owned)
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -75,6 +182,26 @@ pub struct ResponseInfo {
     pub status: Option<String>,
     #[serde(default)]
     pub usage: Option<ResponseUsage>,
+    #[serde(default)]
+    pub error: Option<ResponseError>,
+    #[serde(default)]
+    pub incomplete_details: Option<IncompleteDetails>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ResponseError {
+    #[serde(default)]
+    pub code: Option<String>,
+    #[serde(default)]
+    pub message: String,
+    #[serde(rename = "type", default)]
+    pub error_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct IncompleteDetails {
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

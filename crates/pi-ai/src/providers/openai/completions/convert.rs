@@ -57,6 +57,7 @@ pub fn build_request(
                     name: t.name.clone(),
                     description: t.description.clone(),
                     parameters: t.parameters.clone(),
+                    strict: compat.supports_strict_mode.then_some(true),
                 },
             })
             .collect()

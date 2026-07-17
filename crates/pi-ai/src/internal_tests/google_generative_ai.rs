@@ -14,6 +14,7 @@ fn test_model() -> Model {
         thinking_level_map: None,
         input: vec![ModelInput::Text, ModelInput::Image],
         cost: ModelCost {
+            known: true,
             input: 0.15,
             output: 0.6,
             cache_read: 0.0,
@@ -91,6 +92,26 @@ async fn complete_smoke_test() {
         msg.content
             .iter()
             .any(|b| { matches!(b, ContentBlock::ToolCall { name, .. } if name == "read") })
+    );
+}
+
+#[tokio::test]
+async fn google_clean_truncation_without_finish_reason_is_an_error() {
+    let body = stream::iter(vec![Ok::<_, String>(Bytes::from_static(
+        b"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"partial\"}]}}]}\n\n",
+    ))]);
+    use futures::StreamExt;
+    let events: Vec<_> = google::stream::process(body, test_model(), None)
+        .collect()
+        .await;
+    assert!(matches!(
+        events.last(),
+        Some(AssistantMessageEvent::Error { .. })
+    ));
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, AssistantMessageEvent::Done { .. }))
     );
 }
 

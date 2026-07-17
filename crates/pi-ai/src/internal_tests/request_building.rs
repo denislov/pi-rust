@@ -1,3 +1,4 @@
+use pi_ai::compatibility::{AnthropicMessagesCompat, ModelCompat};
 use pi_ai::model::{Model, ModelCost, ModelInput};
 use pi_ai::protocol::*;
 
@@ -12,6 +13,7 @@ fn test_model() -> Model {
         thinking_level_map: None,
         input: vec![ModelInput::Text],
         cost: ModelCost {
+            known: true,
             input: 1.0,
             output: 5.0,
             cache_read: 0.0,
@@ -123,5 +125,75 @@ fn tool_def_converts_parameters_to_input_schema() {
     let tools = json["tools"].as_array().unwrap();
     assert_eq!(tools[0]["name"], "search");
     assert!(tools[0].as_object().unwrap().contains_key("input_schema"));
+}
+
+#[test]
+fn anthropic_compat_suppresses_temperature_forces_adaptive_and_enables_tool_cache() {
+    let mut model = test_model();
+    model.compat = Some(ModelCompat::AnthropicMessages(AnthropicMessagesCompat {
+        supports_temperature: Some(false),
+        force_adaptive_thinking: Some(true),
+        supports_cache_control_on_tools: Some(true),
+        ..Default::default()
+    }));
+    let ctx = Context {
+        system_prompt: None,
+        messages: Vec::new(),
+        tools: Some(vec![Tool {
+            name: "search".into(),
+            description: None,
+            parameters: serde_json::json!({"type": "object"}),
+        }]),
+    };
+    let options = StreamOptions {
+        temperature: Some(0.8),
+        thinking: Some(ThinkingConfig {
+            enabled: true,
+            budget_tokens: Some(2048),
+            effort: None,
+        }),
+        ..Default::default()
+    };
+
+    let request = pi_ai::providers::anthropic::convert::build_request(&model, &ctx, &Some(options));
+    let json = serde_json::to_value(request).unwrap();
+    assert!(json.get("temperature").is_none());
+    assert_eq!(json["thinking"]["type"], "adaptive");
+    assert_eq!(json["tools"][0]["cache_control"]["type"], "ephemeral");
+}
+
+#[test]
+fn anthropic_compat_positive_parameter_support_preserves_requested_values() {
+    let mut model = test_model();
+    model.compat = Some(ModelCompat::AnthropicMessages(AnthropicMessagesCompat {
+        supports_temperature: Some(true),
+        force_adaptive_thinking: Some(false),
+        supports_cache_control_on_tools: Some(false),
+        ..Default::default()
+    }));
+    let ctx = Context {
+        system_prompt: None,
+        messages: Vec::new(),
+        tools: Some(vec![Tool {
+            name: "search".into(),
+            description: None,
+            parameters: serde_json::json!({"type": "object"}),
+        }]),
+    };
+    let options = StreamOptions {
+        temperature: Some(0.8),
+        thinking: Some(ThinkingConfig {
+            enabled: true,
+            budget_tokens: Some(2048),
+            effort: None,
+        }),
+        ..Default::default()
+    };
+
+    let request = pi_ai::providers::anthropic::convert::build_request(&model, &ctx, &Some(options));
+    let json = serde_json::to_value(request).unwrap();
+    assert_eq!(json["temperature"], 0.8);
+    assert_eq!(json["thinking"]["type"], "enabled");
+    assert!(json["tools"][0].get("cache_control").is_none());
 }
 // Internal provider request-building tests.

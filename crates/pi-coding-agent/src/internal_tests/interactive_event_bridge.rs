@@ -104,6 +104,7 @@ fn coding_event_bridge_maps_assistant_events() {
                 cache_write: 0,
                 total_tokens: 150,
                 cost: Cost {
+                    known: true,
                     input: 0.125,
                     output: 0.125,
                     cache_read: 0.0,
@@ -145,6 +146,7 @@ fn coding_event_bridge_maps_assistant_events() {
                 cache_write: 0,
                 total_tokens: 0,
                 cost: Cost {
+                    known: true,
                     input: 0.0625,
                     output: 0.0625,
                     cache_read: 0.0,

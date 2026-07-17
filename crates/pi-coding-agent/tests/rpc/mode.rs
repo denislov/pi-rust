@@ -176,6 +176,7 @@ async fn rpc_session_stats_use_persistent_replay_usage_and_tool_facts() {
         cache_write: 3,
         total_tokens: 23,
         cost: Cost {
+            known: true,
             input: 0.1,
             output: 0.2,
             cache_read: 0.3,
@@ -256,6 +257,7 @@ async fn rpc_session_stats_use_persistent_replay_usage_and_tool_facts() {
     assert_eq!(response["data"]["tokens"]["cacheWrite"], 6);
     assert_eq!(response["data"]["tokens"]["total"], 46);
     assert_eq!(response["data"]["cost"], 2.0);
+    assert_eq!(response["data"]["costKnown"], true);
     assert!(response["data"]["sessionId"].as_str().is_some());
     assert!(response["data"]["activeLeafId"].as_str().is_some());
 
@@ -1417,22 +1419,22 @@ async fn rpc_state_reports_capabilities_when_idle() {
         "requires persistent Rust-native session"
     );
     let unsupported = [
-        ("fork", "RPC protocol 2.0 does not expose a fork command"),
+        ("fork", "RPC protocol 2.1 does not expose a fork command"),
         (
             "cloneSession",
-            "RPC protocol 2.0 does not expose a cloneSession command",
+            "RPC protocol 2.1 does not expose a cloneSession command",
         ),
         (
             "branchSummary",
-            "RPC protocol 2.0 does not expose a branchSummary command",
+            "RPC protocol 2.1 does not expose a branchSummary command",
         ),
         (
             "switchSession",
-            "RPC protocol 2.0 does not expose a switchSession command",
+            "RPC protocol 2.1 does not expose a switchSession command",
         ),
         (
             "export",
-            "RPC protocol 2.0 does not expose an export command",
+            "RPC protocol 2.1 does not expose an export command",
         ),
     ];
     for (capability, reason) in unsupported {

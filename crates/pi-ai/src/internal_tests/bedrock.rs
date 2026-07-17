@@ -19,6 +19,7 @@ fn test_model() -> Model {
         thinking_level_map: None,
         input: vec![ModelInput::Text, ModelInput::Image],
         cost: ModelCost {
+            known: true,
             input: 3.0,
             output: 15.0,
             cache_read: 0.3,
@@ -217,6 +218,33 @@ async fn bedrock_event_stream_maps_text_thinking_tool_usage_and_done() {
     );
 }
 
+#[tokio::test]
+async fn bedrock_clean_truncation_without_message_stop_is_an_error() {
+    let frames = vec![
+        event_frame(serde_json::json!({"messageStart": {"role": "assistant"}})),
+        event_frame(serde_json::json!({
+            "contentBlockDelta": {
+                "contentBlockIndex": 0,
+                "delta": {"text": "partial"}
+            }
+        })),
+    ];
+    let body = futures::stream::iter(frames.into_iter().map(Ok::<_, String>));
+    use futures::StreamExt;
+    let events: Vec<_> = bedrock::stream::process(body, test_model(), None)
+        .collect()
+        .await;
+    assert!(matches!(
+        events.last(),
+        Some(AssistantMessageEvent::Error { .. })
+    ));
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, AssistantMessageEvent::Done { .. }))
+    );
+}
+
 #[test]
 fn sigv4_signing_matches_fixed_vector() {
     let signed = bedrock::sigv4::sign(
@@ -230,12 +258,12 @@ fn sigv4_signing_matches_fixed_vector() {
             access_key: "AKIDEXAMPLE",
             secret_key: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
             session_token: None,
-            amz_date: "20260102T030405Z",
-            date: "20260102",
+            time: std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_767_323_045),
             body: br#"{"modelId":"anthropic.claude-3-5-sonnet-20240620-v1:0"}"#,
         },
         &[],
-    );
+    )
+    .unwrap();
 
     assert_eq!(
         signed.payload_hash,
@@ -243,7 +271,7 @@ fn sigv4_signing_matches_fixed_vector() {
     );
     assert_eq!(
         signed.signature,
-        "fb6532cd9d390370a046145801fb06b493a79eccc7966a691bd961e27a717919"
+        "83c6063af2fa764ee5c06e4be007a483bd2936a8b9353b26127145b10262efc6"
     );
     assert!(
         signed
@@ -291,15 +319,138 @@ async fn bedrock_provider_missing_credentials_returns_error_event() {
         "AWS_SECRET_ACCESS_KEY",
         "AWS_SESSION_TOKEN",
         "AWS_BEARER_TOKEN_BEDROCK",
+        "AWS_PROFILE",
+        "AWS_CONFIG_FILE",
+        "AWS_SHARED_CREDENTIALS_FILE",
+        "AWS_EC2_METADATA_DISABLED",
+        "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+        "AWS_CONTAINER_CREDENTIALS_FULL_URI",
     ]);
     env.remove("AWS_ACCESS_KEY_ID");
     env.remove("AWS_SECRET_ACCESS_KEY");
     env.remove("AWS_SESSION_TOKEN");
     env.remove("AWS_BEARER_TOKEN_BEDROCK");
+    env.remove("AWS_PROFILE");
+    let isolated = tempfile::tempdir().unwrap();
+    env.set(
+        "AWS_CONFIG_FILE",
+        isolated.path().join("missing-config").to_str().unwrap(),
+    );
+    env.set(
+        "AWS_SHARED_CREDENTIALS_FILE",
+        isolated
+            .path()
+            .join("missing-credentials")
+            .to_str()
+            .unwrap(),
+    );
+    env.set("AWS_EC2_METADATA_DISABLED", "true");
+    env.remove("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI");
+    env.remove("AWS_CONTAINER_CREDENTIALS_FULL_URI");
 
     let event_stream = provider.stream(&model, ctx, None);
     use futures::StreamExt;
     let events: Vec<_> = event_stream.collect().await;
     assert_eq!(events.len(), 1);
     assert!(matches!(events[0], AssistantMessageEvent::Error { .. }));
+}
+
+#[tokio::test]
+async fn bedrock_named_profile_uses_isolated_standard_credential_chain() {
+    let env = EnvGuard::new(&[
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "AWS_PROFILE",
+        "AWS_CONFIG_FILE",
+        "AWS_SHARED_CREDENTIALS_FILE",
+        "AWS_EC2_METADATA_DISABLED",
+        "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+        "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+    ]);
+    env.remove("AWS_ACCESS_KEY_ID");
+    env.remove("AWS_SECRET_ACCESS_KEY");
+    env.remove("AWS_SESSION_TOKEN");
+    env.remove("AWS_PROFILE");
+    env.set("AWS_EC2_METADATA_DISABLED", "true");
+    env.remove("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI");
+    env.remove("AWS_CONTAINER_CREDENTIALS_FULL_URI");
+
+    let isolated = tempfile::tempdir().unwrap();
+    let credentials_path = isolated.path().join("credentials");
+    let config_path = isolated.path().join("config");
+    tokio::fs::write(
+        &credentials_path,
+        "[release-test]\naws_access_key_id = PROFILE_ACCESS\naws_secret_access_key = PROFILE_SECRET\naws_session_token = PROFILE_SESSION\n",
+    )
+    .await
+    .unwrap();
+    tokio::fs::write(&config_path, "[profile release-test]\nregion = us-west-2\n")
+        .await
+        .unwrap();
+    env.set(
+        "AWS_SHARED_CREDENTIALS_FILE",
+        credentials_path.to_str().unwrap(),
+    );
+    env.set("AWS_CONFIG_FILE", config_path.to_str().unwrap());
+
+    let credentials = bedrock::auth::resolve_credentials_from_chain(Some("release-test"))
+        .await
+        .unwrap();
+    assert_eq!(credentials.access_key, "PROFILE_ACCESS");
+    assert_eq!(credentials.secret_key, "PROFILE_SECRET");
+    assert_eq!(
+        credentials.session_token.as_deref(),
+        Some("PROFILE_SESSION")
+    );
+}
+
+#[tokio::test]
+async fn bedrock_profile_resolution_honors_pre_cancelled_operation_without_leaking_profile() {
+    use futures::StreamExt;
+
+    let provider = bedrock::BedrockProvider::new(None);
+    let cancellation = tokio_util::sync::CancellationToken::new();
+    cancellation.cancel();
+    let private_profile = "private-profile-name";
+    let events = provider
+        .stream(
+            &test_model(),
+            Context {
+                system_prompt: None,
+                messages: Vec::new(),
+                tools: None,
+            },
+            Some(StreamOptions {
+                bedrock_profile: Some(private_profile.into()),
+                cancel: Some(cancellation),
+                ..Default::default()
+            }),
+        )
+        .collect::<Vec<_>>()
+        .await;
+    assert_eq!(events.len(), 1);
+    let AssistantMessageEvent::Error { reason, message } = &events[0] else {
+        panic!("expected aborted terminal, got {events:?}");
+    };
+    assert_eq!(reason, &StopReason::Aborted);
+    assert_eq!(message.stop_reason, StopReason::Aborted);
+    assert!(
+        !message
+            .error_message
+            .as_deref()
+            .unwrap()
+            .contains(private_profile)
+    );
+}
+
+#[test]
+fn bedrock_partial_explicit_credentials_fail_closed() {
+    let error = bedrock::auth::resolve_explicit_credentials_from_options(&Some(StreamOptions {
+        bedrock_access_key_id: Some("ACCESS_ONLY".into()),
+        ..Default::default()
+    }))
+    .unwrap_err();
+    assert!(!error.contains("ACCESS_ONLY"));
+    assert!(error.contains("require both"));
 }

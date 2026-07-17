@@ -14,6 +14,7 @@ fn test_model() -> Model {
         thinking_level_map: None,
         input: vec![ModelInput::Text],
         cost: ModelCost {
+            known: true,
             input: 3.0,
             output: 15.0,
             cache_read: 0.30,
@@ -115,5 +116,32 @@ async fn thinking_and_tool_use_stream() {
         }
         _ => panic!("expected Done event"),
     }
+}
+
+#[tokio::test]
+async fn anthropic_clean_truncation_is_an_error_terminal() {
+    let content = std::fs::read_to_string("tests/fixtures/anthropic-text.sse").unwrap();
+    let truncated = content
+        .split("event: message_stop")
+        .next()
+        .expect("fixture should contain message_stop");
+    let body = stream::iter(vec![Ok::<_, String>(Bytes::from(truncated.to_string()))]);
+    use futures::StreamExt;
+    let events: Vec<_> = pi_ai::providers::anthropic::stream::process(body, test_model(), None)
+        .collect()
+        .await;
+
+    assert!(matches!(
+        events.last(),
+        Some(AssistantMessageEvent::Error {
+            reason: StopReason::Error,
+            ..
+        })
+    ));
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, AssistantMessageEvent::Done { .. }))
+    );
 }
 // Internal Anthropic mapping tests.

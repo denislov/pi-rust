@@ -154,6 +154,7 @@ impl RpcState {
                     usage.cache_write.into(),
                 ),
                 cost: usage.cost,
+                cost_known: usage.cost_known,
             });
         }
 
@@ -163,6 +164,7 @@ impl RpcState {
         let mut cache_read = 0_u64;
         let mut cache_write = 0_u64;
         let mut cost = 0.0;
+        let mut cost_known = true;
         for message in &self.messages {
             match message {
                 StoredAgentMessage::User { .. } => counts.user += 1,
@@ -181,10 +183,14 @@ impl RpcState {
                     output += u64::from(usage.output);
                     cache_read += u64::from(usage.cache_read);
                     cache_write += u64::from(usage.cache_write);
-                    cost += usage.cost.input
-                        + usage.cost.output
-                        + usage.cost.cache_read
-                        + usage.cost.cache_write;
+                    if usage.cost.known {
+                        cost += usage.cost.input
+                            + usage.cost.output
+                            + usage.cost.cache_read
+                            + usage.cost.cache_write;
+                    } else {
+                        cost_known = false;
+                    }
                 }
                 StoredAgentMessage::ToolResult { .. } => counts.tool_results += 1,
                 StoredAgentMessage::BashExecution { .. }
@@ -204,6 +210,7 @@ impl RpcState {
             total_messages: counts.total_messages(),
             tokens: token_stats(input, output, cache_read, cache_write),
             cost,
+            cost_known,
         })
     }
 
@@ -309,6 +316,7 @@ mod tests {
                     cache_write: 2,
                     total: 10,
                     cost: StoredUsageCost {
+                        known: true,
                         input: 0.1,
                         output: 0.2,
                         cache_read: 0.3,
@@ -363,6 +371,43 @@ mod tests {
         assert_eq!(stats.tokens.cache_write, 2);
         assert_eq!(stats.tokens.total, 10);
         assert!((stats.cost - 1.0).abs() < f64::EPSILON);
+        assert!(stats.cost_known);
+    }
+
+    #[test]
+    fn non_persistent_stats_mark_aggregate_cost_unknown() {
+        let mut state = RpcState::new(CliRunOptions::default()).unwrap();
+        state.messages = vec![StoredAgentMessage::Assistant {
+            content: Vec::new(),
+            api: "test".into(),
+            provider: "test".into(),
+            model: "dynamic-price".into(),
+            response_model: None,
+            response_id: None,
+            usage: StoredUsage {
+                input: 3,
+                output: 4,
+                cache_read: 0,
+                cache_write: 0,
+                total: 7,
+                cost: StoredUsageCost {
+                    known: false,
+                    input: 0.0,
+                    output: 0.0,
+                    cache_read: 0.0,
+                    cache_write: 0.0,
+                },
+            },
+            stop_reason: StopReason::Stop,
+            error_message: None,
+            timestamp: 1,
+        }];
+
+        let stats = state.session_stats().unwrap();
+        assert_eq!(stats.cost, 0.0);
+        assert!(!stats.cost_known);
+        let json = serde_json::to_value(stats).unwrap();
+        assert_eq!(json["costKnown"], false);
     }
 
     #[tokio::test]

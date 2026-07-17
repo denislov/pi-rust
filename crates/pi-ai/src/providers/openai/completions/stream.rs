@@ -6,7 +6,9 @@ use crate::protocol::stream::EventStream;
 use crate::protocol::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Cost, StopReason, Usage,
 };
-use crate::providers::common::{SseEventHandler, SseEventResult, process_sse};
+use crate::providers::common::{
+    SseEventHandler, SseEventResult, SseTransportTerminal, process_sse,
+};
 use bytes::Bytes;
 use futures::Stream;
 use std::collections::HashMap;
@@ -195,11 +197,11 @@ impl SseEventHandler for CompletionsHandler {
         Ok(SseEventResult::Continue(events))
     }
 
-    fn finalize(
-        &self,
+    fn finish(
+        &mut self,
         partial: &mut AssistantMessage,
         _model: &Model,
-    ) -> Vec<AssistantMessageEvent> {
+    ) -> Result<Vec<AssistantMessageEvent>, String> {
         let mut events = Vec::new();
 
         if let Some(ci) = self.text_content_index {
@@ -236,7 +238,19 @@ impl SseEventHandler for CompletionsHandler {
             partial.usage = Usage::default();
         }
 
-        events
+        Ok(events)
+    }
+
+    fn accept_transport_terminal(&self, terminal: SseTransportTerminal) -> Result<(), String> {
+        match terminal {
+            SseTransportTerminal::DoneMarker if self.finish_reason.is_some() => Ok(()),
+            SseTransportTerminal::DoneMarker => {
+                Err("received [DONE] before a usable finish reason".into())
+            }
+            SseTransportTerminal::Eof => {
+                Err("stream ended before the required [DONE] marker".into())
+            }
+        }
     }
 }
 
@@ -310,6 +324,7 @@ mod tests {
             thinking_level_map: None,
             input: vec![ModelInput::Text],
             cost: ModelCost {
+                known: true,
                 input: 5.0,
                 output: 15.0,
                 cache_read: 2.5,

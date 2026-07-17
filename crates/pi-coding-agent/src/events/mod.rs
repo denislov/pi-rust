@@ -178,10 +178,20 @@ pub struct CodingAgentProductEventUsage {
     pub cache_read: u32,
     pub cache_write: u32,
     pub total_tokens: u32,
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub cost_known: bool,
     pub input_cost: f64,
     pub output_cost: f64,
     pub cache_read_cost: f64,
     pub cache_write_cost: f64,
+}
+
+const fn default_true() -> bool {
+    true
+}
+
+const fn is_true(value: &bool) -> bool {
+    *value
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -1713,6 +1723,7 @@ mod tests {
             cache_read: 0,
             cache_write: 0,
             total_tokens: 0,
+            cost_known: true,
             input_cost: 0.0,
             output_cost: 0.0,
             cache_read_cost: 0.0,
@@ -1732,6 +1743,16 @@ mod tests {
         let json = serde_json::to_value(&event).unwrap();
         assert_eq!(json["images"][0]["mime_type"], "image/png");
         assert_eq!(json["images"][0]["data"], "cG5n");
+        assert!(json["usage"].get("cost_known").is_none());
+
+        let unknown_cost = CodingAgentProductEventUsage {
+            cost_known: false,
+            ..usage.clone()
+        };
+        assert_eq!(
+            serde_json::to_value(unknown_cost).unwrap()["cost_known"],
+            false
+        );
 
         let empty = CodingAgentMessageProductEvent::Completed {
             operation_id: "op-1".into(),

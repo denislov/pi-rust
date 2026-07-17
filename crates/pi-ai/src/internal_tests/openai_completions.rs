@@ -25,6 +25,7 @@ fn test_model() -> Model {
         thinking_level_map: None,
         input: vec![ModelInput::Text],
         cost: ModelCost {
+            known: true,
             input: 0.0,
             output: 0.0,
             cache_read: 0.0,
@@ -270,6 +271,27 @@ async fn completions_stream_maps_reasoning_content_to_thinking_events() {
 }
 
 #[tokio::test]
+async fn completions_clean_truncation_before_done_marker_is_an_error() {
+    let content = std::fs::read_to_string("tests/fixtures/openai-completions-text-tool.sse")
+        .unwrap()
+        .replace("data: [DONE]", "");
+    let body = stream::iter(vec![Ok::<_, String>(Bytes::from(content))]);
+    use futures::StreamExt;
+    let events: Vec<_> = completions::stream::process(body, test_model(), None)
+        .collect()
+        .await;
+    assert!(matches!(
+        events.last(),
+        Some(AssistantMessageEvent::Error { .. })
+    ));
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, AssistantMessageEvent::Done { .. }))
+    );
+}
+
+#[tokio::test]
 async fn completions_provider_missing_key_returns_error_event() {
     let provider = completions::OpenAICompletionsProvider::new(None);
     let model = Model {
@@ -282,6 +304,7 @@ async fn completions_provider_missing_key_returns_error_event() {
         thinking_level_map: None,
         input: vec![ModelInput::Text],
         cost: ModelCost {
+            known: true,
             input: 0.0,
             output: 0.0,
             cache_read: 0.0,

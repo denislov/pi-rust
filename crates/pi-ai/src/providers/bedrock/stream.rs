@@ -24,16 +24,29 @@ where
         let mut decoder = EventStreamDecoder::default();
         let mut state = ProcessState::default();
 
-        while let Some(chunk) = body.next().await {
-            if let Some(token) = &cancel && token.is_cancelled() {
-                partial.stop_reason = StopReason::Aborted;
-                partial.error_message = Some("cancelled".into());
-                yield AssistantMessageEvent::Error {
-                    reason: StopReason::Aborted,
-                    message: partial.clone(),
-                };
-                return;
-            }
+        loop {
+            let next_chunk = match cancel.as_ref() {
+                Some(token) => tokio::select! {
+                    biased;
+                    _ = token.cancelled() => {
+                        partial.stop_reason = StopReason::Aborted;
+                        partial.error_message = Some(format!(
+                            "Bedrock stream cancelled for provider {} model {}",
+                            model.provider, model.id
+                        ));
+                        yield AssistantMessageEvent::Error {
+                            reason: StopReason::Aborted,
+                            message: partial.clone(),
+                        };
+                        return;
+                    }
+                    chunk = body.next() => chunk,
+                },
+                None => body.next().await,
+            };
+            let Some(chunk) = next_chunk else {
+                break;
+            };
 
             let chunk = match chunk {
                 Ok(chunk) => chunk,
@@ -133,6 +146,33 @@ where
             return;
         }
 
+        if !state.message_stop_observed {
+            partial.stop_reason = StopReason::Error;
+            partial.error_message = Some(format!(
+                "Bedrock stream ended without messageStop for provider {} model {}",
+                model.provider, model.id
+            ));
+            yield AssistantMessageEvent::Error {
+                reason: StopReason::Error,
+                message: partial,
+            };
+            return;
+        }
+
+        if matches!(partial.stop_reason, StopReason::Error | StopReason::Aborted) {
+            if partial.error_message.is_none() {
+                partial.error_message = Some(format!(
+                    "Bedrock provider {} model {} returned an invalid terminal reason",
+                    model.provider, model.id
+                ));
+            }
+            yield AssistantMessageEvent::Error {
+                reason: partial.stop_reason.clone(),
+                message: partial,
+            };
+            return;
+        }
+
         let reason = partial.stop_reason.clone();
         yield AssistantMessageEvent::Done {
             reason,
@@ -201,6 +241,7 @@ impl EventStreamDecoder {
 struct ProcessState {
     block_map: HashMap<u32, usize>,
     tool_arg_buffers: HashMap<u32, String>,
+    message_stop_observed: bool,
 }
 
 fn handle_event(
@@ -367,6 +408,7 @@ fn handle_event(
 
     if let Some(message_stop) = event.message_stop {
         partial.stop_reason = map_stop_reason(&message_stop.stop_reason);
+        state.message_stop_observed = true;
     }
 
     if let Some(metadata) = event.metadata

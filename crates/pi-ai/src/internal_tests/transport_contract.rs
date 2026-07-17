@@ -1,6 +1,8 @@
+use futures::StreamExt;
 use pi_ai::api::conversation::{AssistantMessage, StopReason};
 use pi_ai::api::hooks::{ProviderResponseInfo, ProviderStreamHooks};
 use pi_ai::api::model::{Model, ModelCost, ModelInput};
+use pi_ai::api::provider::{ProviderRegistry, builtin_provider_apis, register_builtins_into};
 use pi_ai::api::stream::{AssistantMessageEvent, EventStream, StreamOptions, complete};
 use pi_ai::transport::headers::merge_headers;
 use pi_ai::transport::http::send_json_stream;
@@ -9,6 +11,7 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::Arc;
 use std::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
 fn test_model() -> Model {
     Model {
@@ -37,6 +40,10 @@ fn done_stream(api: &'static str) -> EventStream {
     })
 }
 
+fn pending_stream() -> EventStream {
+    Box::pin(futures::stream::pending())
+}
+
 fn start_http_server(responses: Vec<String>) -> (String, mpsc::Receiver<String>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
@@ -53,6 +60,92 @@ fn start_http_server(responses: Vec<String>) -> (String, mpsc::Receiver<String>)
     });
 
     (format!("http://{}", addr), rx)
+}
+
+fn start_stalled_http_server() -> (String, mpsc::Sender<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (release_tx, release_rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let _request = read_http_request(&mut stream);
+        let _ = release_rx.recv();
+    });
+    (format!("http://{addr}"), release_tx)
+}
+
+fn start_observed_stalled_http_server() -> (String, mpsc::Receiver<()>, mpsc::Sender<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let _request = read_http_request(&mut stream);
+        started_tx.send(()).unwrap();
+        let _ = release_rx.recv();
+    });
+    (format!("http://{addr}"), started_rx, release_tx)
+}
+
+fn contract_model(api: &str, base_url: String) -> Model {
+    let provider = match api {
+        "anthropic-messages" => "anthropic",
+        "azure-openai-responses" => "azure-openai-responses",
+        "bedrock-converse-stream" => "amazon-bedrock",
+        "deepseek-chat-completions" => "deepseek",
+        "google-generative-ai" => "google",
+        "mistral-conversations" => "mistral",
+        "openai-codex-responses" => "openai-codex",
+        "openai-completions" | "openai-responses" => "openai",
+        other => panic!("unclassified built-in provider API `{other}`"),
+    };
+    Model {
+        id: "contract-model".into(),
+        name: "Contract Model".into(),
+        api: api.into(),
+        provider: provider.into(),
+        base_url,
+        reasoning: true,
+        thinking_level_map: None,
+        input: vec![ModelInput::Text],
+        cost: ModelCost::default(),
+        context_window: 128_000,
+        max_tokens: 4096,
+        headers: None,
+        compat: None,
+    }
+}
+
+fn contract_options(api: &str, base_url: &str) -> StreamOptions {
+    let mut options = StreamOptions {
+        api_key: Some("contract-api-key".into()),
+        ..Default::default()
+    };
+    if api == "openai-codex-responses" {
+        options.api_key = Some("header.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiY29udHJhY3RfYWNjb3VudCJ9fQ.sig".into());
+    }
+    if api == "azure-openai-responses" {
+        options.azure_base_url = Some(base_url.into());
+        options.azure_api_version = Some("2025-01-01-preview".into());
+        options.azure_deployment_name = Some("contract-deployment".into());
+    }
+    if api == "bedrock-converse-stream" {
+        options.api_key = None;
+        options.bedrock_region = Some("us-east-1".into());
+        options.bedrock_access_key_id = Some("CONTRACT_ACCESS".into());
+        options.bedrock_secret_access_key = Some("CONTRACT_SECRET".into());
+        options.bedrock_session_token = Some("CONTRACT_SESSION".into());
+    }
+    options
+}
+
+fn empty_context() -> pi_ai::api::conversation::Context {
+    pi_ai::api::conversation::Context {
+        system_prompt: None,
+        messages: Vec::new(),
+        tools: None,
+    }
 }
 
 fn read_http_request(stream: &mut std::net::TcpStream) -> String {
@@ -166,6 +259,315 @@ fn retry_config_from_options() {
     assert_eq!(cfg.max_retries, 1);
     assert_eq!(cfg.max_retry_delay_ms, 5_000);
     assert_eq!(cfg.timeout_ms, Some(30_000));
+}
+
+#[test]
+fn provider_option_matrix_rejects_inert_explicit_options() {
+    const SSE_APIS: &[&str] = &[
+        "anthropic-messages",
+        "openai-completions",
+        "openai-responses",
+        "azure-openai-responses",
+        "google-generative-ai",
+        "mistral-conversations",
+        "openai-codex-responses",
+    ];
+    for api in SSE_APIS {
+        let options = StreamOptions {
+            transport: Some("sse".into()),
+            ..Default::default()
+        };
+        assert!(pi_ai::transport::http::validate_options(api, Some(&options)).is_ok());
+        let options = StreamOptions {
+            transport: Some("websocket".into()),
+            ..Default::default()
+        };
+        assert!(pi_ai::transport::http::validate_options(api, Some(&options)).is_err());
+    }
+
+    let deepseek_transport = StreamOptions {
+        transport: Some("sse".into()),
+        ..Default::default()
+    };
+    assert!(
+        pi_ai::transport::http::validate_options(
+            "deepseek-chat-completions",
+            Some(&deepseek_transport)
+        )
+        .is_err()
+    );
+
+    for api in [
+        "openai-responses",
+        "azure-openai-responses",
+        "mistral-conversations",
+        "openai-codex-responses",
+    ] {
+        let options = StreamOptions {
+            session_id: Some("session-1".into()),
+            ..Default::default()
+        };
+        assert!(pi_ai::transport::http::validate_options(api, Some(&options)).is_ok());
+    }
+    let unsupported_session = StreamOptions {
+        session_id: Some("session-1".into()),
+        ..Default::default()
+    };
+    assert!(
+        pi_ai::transport::http::validate_options(
+            "google-generative-ai",
+            Some(&unsupported_session)
+        )
+        .is_err()
+    );
+
+    let azure = StreamOptions {
+        azure_resource_name: Some("resource".into()),
+        ..Default::default()
+    };
+    assert!(
+        pi_ai::transport::http::validate_options("azure-openai-responses", Some(&azure)).is_ok()
+    );
+    assert!(pi_ai::transport::http::validate_options("openai-responses", Some(&azure)).is_err());
+
+    let bedrock = StreamOptions {
+        bedrock_region: Some("us-east-1".into()),
+        cache_retention: Some(serde_json::json!("long")),
+        ..Default::default()
+    };
+    assert!(
+        pi_ai::transport::http::validate_options("bedrock-converse-stream", Some(&bedrock)).is_ok()
+    );
+    assert!(
+        pi_ai::transport::http::validate_options("anthropic-messages", Some(&bedrock)).is_err()
+    );
+
+    let invalid_headers = StreamOptions {
+        headers: Some(serde_json::json!({"x-value": 3})),
+        ..Default::default()
+    };
+    assert!(
+        pi_ai::transport::http::validate_options("openai-responses", Some(&invalid_headers))
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn every_builtin_provider_uses_the_shared_non_retryable_http_failure_contract() {
+    let registry = ProviderRegistry::new();
+    register_builtins_into(&registry);
+    assert_eq!(
+        registry.registered_apis(),
+        builtin_provider_apis()
+            .iter()
+            .map(|api| (*api).to_string())
+            .collect::<Vec<_>>()
+    );
+
+    for api in builtin_provider_apis() {
+        let (base_url, requests) = start_http_server(vec![response(400, &[], "rejected")]);
+        let provider = registry.lookup(api).unwrap();
+        let model = contract_model(api, base_url.clone());
+        let events = provider
+            .stream(
+                &model,
+                empty_context(),
+                Some(contract_options(api, &base_url)),
+            )
+            .collect::<Vec<_>>()
+            .await;
+        assert_eq!(events.len(), 1, "{api} emitted {events:?}");
+        assert!(
+            matches!(events[0], AssistantMessageEvent::Error { .. }),
+            "{api} emitted {events:?}"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, AssistantMessageEvent::Done { .. })),
+            "{api} reported HTTP failure as success"
+        );
+        requests
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap_or_else(|_| panic!("{api} did not issue the expected local request"));
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn every_builtin_provider_cancels_a_stalled_send_with_one_aborted_terminal() {
+    let registry = ProviderRegistry::new();
+    register_builtins_into(&registry);
+
+    for api in builtin_provider_apis() {
+        let (base_url, started, release) = start_observed_stalled_http_server();
+        let provider = registry.lookup(api).unwrap();
+        let model = contract_model(api, base_url.clone());
+        let cancellation = CancellationToken::new();
+        let mut options = contract_options(api, &base_url);
+        options.cancel = Some(cancellation.clone());
+        let task = tokio::spawn(async move {
+            provider
+                .stream(&model, empty_context(), Some(options))
+                .collect::<Vec<_>>()
+                .await
+        });
+        started
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap_or_else(|_| panic!("{api} did not enter the stalled request"));
+        cancellation.cancel();
+        let events = tokio::time::timeout(std::time::Duration::from_secs(1), task)
+            .await
+            .unwrap_or_else(|_| panic!("{api} cancellation did not wake the request"))
+            .unwrap();
+        assert_eq!(events.len(), 1, "{api} emitted {events:?}");
+        assert!(
+            matches!(
+                &events[0],
+                AssistantMessageEvent::Error {
+                    reason: StopReason::Aborted,
+                    ..
+                }
+            ),
+            "{api} emitted {events:?}"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, AssistantMessageEvent::Done { .. })),
+            "{api} reported cancellation as success"
+        );
+        let _ = release.send(());
+    }
+}
+
+#[tokio::test]
+async fn every_builtin_provider_retries_and_applies_hooks_to_the_actual_attempts() {
+    let registry = ProviderRegistry::new();
+    register_builtins_into(&registry);
+
+    for api in builtin_provider_apis() {
+        let (base_url, requests) = start_http_server(vec![
+            response(500, &[("x-attempt", "first")], "retry"),
+            response(400, &[("x-attempt", "second")], "stop"),
+        ]);
+        let (response_tx, response_rx) = mpsc::channel();
+        let hooks = ProviderStreamHooks {
+            on_payload: Some(Arc::new(|_, mut payload| {
+                Box::pin(async move {
+                    payload["contract_hook"] = serde_json::json!(true);
+                    Ok(payload)
+                })
+            })),
+            on_response: Some(Arc::new(move |response| {
+                let response_tx = response_tx.clone();
+                Box::pin(async move {
+                    response_tx.send(response.status).unwrap();
+                    Ok(())
+                })
+            })),
+        };
+        let provider = registry.lookup(api).unwrap();
+        let model = contract_model(api, base_url.clone());
+        let mut options = contract_options(api, &base_url);
+        options.max_retries = Some(1);
+        options.hooks = Some(hooks);
+        let events = provider
+            .stream(&model, empty_context(), Some(options))
+            .collect::<Vec<_>>()
+            .await;
+        assert_eq!(events.len(), 1, "{api} emitted {events:?}");
+        assert!(matches!(events[0], AssistantMessageEvent::Error { .. }));
+
+        let first = requests
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap_or_else(|_| panic!("{api} did not issue its first attempt"));
+        let second = requests
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap_or_else(|_| panic!("{api} did not issue its retry"));
+        assert!(first.contains(r#""contract_hook":true"#), "{api}: {first}");
+        assert!(
+            second.contains(r#""contract_hook":true"#),
+            "{api}: {second}"
+        );
+        assert_eq!(
+            [
+                response_rx
+                    .recv_timeout(std::time::Duration::from_secs(1))
+                    .unwrap(),
+                response_rx
+                    .recv_timeout(std::time::Duration::from_secs(1))
+                    .unwrap(),
+            ],
+            [Some(500), Some(400)],
+            "{api} did not invoke the response hook once per attempt"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn every_builtin_provider_applies_one_deadline_to_a_stalled_send() {
+    let registry = ProviderRegistry::new();
+    register_builtins_into(&registry);
+
+    for api in builtin_provider_apis() {
+        let (base_url, started, release) = start_observed_stalled_http_server();
+        let provider = registry.lookup(api).unwrap();
+        let model = contract_model(api, base_url.clone());
+        let mut options = contract_options(api, &base_url);
+        options.timeout_ms = Some(100);
+        let task = tokio::spawn(async move {
+            provider
+                .stream(&model, empty_context(), Some(options))
+                .collect::<Vec<_>>()
+                .await
+        });
+        started
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap_or_else(|_| panic!("{api} did not enter the stalled request"));
+        let events = tokio::time::timeout(std::time::Duration::from_secs(1), task)
+            .await
+            .unwrap_or_else(|_| panic!("{api} timeout did not wake the request"))
+            .unwrap();
+        assert_eq!(events.len(), 1, "{api} emitted {events:?}");
+        assert!(
+            matches!(
+                &events[0],
+                AssistantMessageEvent::Error {
+                    reason: StopReason::Error,
+                    ..
+                }
+            ),
+            "{api} emitted {events:?}"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, AssistantMessageEvent::Done { .. })),
+            "{api} reported timeout as success"
+        );
+        let _ = release.send(());
+    }
+}
+
+#[tokio::test]
+async fn every_non_bedrock_builtin_provider_rejects_missing_credentials_before_network_io() {
+    let registry = ProviderRegistry::new();
+    register_builtins_into(&registry);
+
+    for api in builtin_provider_apis()
+        .iter()
+        .copied()
+        .filter(|api| *api != "bedrock-converse-stream")
+    {
+        let provider = registry.lookup(api).unwrap();
+        let model = contract_model(api, "http://127.0.0.1:1".into());
+        let events = provider
+            .stream(&model, empty_context(), None)
+            .collect::<Vec<_>>()
+            .await;
+        assert_eq!(events.len(), 1, "{api} emitted {events:?}");
+        assert!(matches!(events[0], AssistantMessageEvent::Error { .. }));
+    }
 }
 
 #[tokio::test]
@@ -313,5 +715,161 @@ async fn payload_hook_mutates_actual_request_body() {
     let request = requests.try_recv().unwrap();
     assert!(request.contains(r#""message":"hooked""#), "{request}");
     assert!(!request.contains(r#""message":"original""#), "{request}");
+}
+
+#[tokio::test]
+async fn cancellation_wakes_a_stalled_request_send() {
+    let (url, release) = start_stalled_http_server();
+    let client = reqwest::Client::new();
+    let model = test_model();
+    let cancel = CancellationToken::new();
+    let opts = StreamOptions {
+        cancel: Some(cancel.clone()),
+        ..Default::default()
+    };
+    let stream = send_json_stream(
+        &client,
+        &model,
+        Some(&opts),
+        "openai-responses",
+        client.post(&url),
+        serde_json::json!({}),
+        |_body, _model, _cancel| done_stream("openai-responses"),
+    );
+    let task = tokio::spawn(complete(stream));
+    tokio::task::yield_now().await;
+    cancel.cancel();
+    let error = tokio::time::timeout(std::time::Duration::from_secs(1), task)
+        .await
+        .expect("cancellation should wake request send")
+        .unwrap()
+        .unwrap_err();
+    assert!(error.contains("cancelled"));
+    let _ = release.send(());
+}
+
+#[tokio::test]
+async fn one_deadline_covers_stalled_send_hook_and_body() {
+    let (url, release) = start_stalled_http_server();
+    let client = reqwest::Client::new();
+    let model = test_model();
+    let opts = StreamOptions {
+        timeout_ms: Some(10),
+        ..Default::default()
+    };
+    let stream = send_json_stream(
+        &client,
+        &model,
+        Some(&opts),
+        "openai-responses",
+        client.post(&url),
+        serde_json::json!({}),
+        |_body, _model, _cancel| done_stream("openai-responses"),
+    );
+    assert!(complete(stream).await.unwrap_err().contains("10ms"));
+    let _ = release.send(());
+
+    let hooks = ProviderStreamHooks {
+        on_payload: Some(Arc::new(|_, _| Box::pin(futures::future::pending()))),
+        on_response: None,
+    };
+    let opts = StreamOptions {
+        timeout_ms: Some(10),
+        hooks: Some(hooks),
+        ..Default::default()
+    };
+    let stream = send_json_stream(
+        &client,
+        &model,
+        Some(&opts),
+        "openai-responses",
+        client.post("http://127.0.0.1:1"),
+        serde_json::json!({}),
+        |_body, _model, _cancel| done_stream("openai-responses"),
+    );
+    assert!(complete(stream).await.unwrap_err().contains("10ms"));
+
+    let (url, _requests) = start_http_server(vec![response(200, &[], "")]);
+    let opts = StreamOptions {
+        timeout_ms: Some(10),
+        ..Default::default()
+    };
+    let stream = send_json_stream(
+        &client,
+        &model,
+        Some(&opts),
+        "openai-responses",
+        client.post(&url),
+        serde_json::json!({}),
+        |_body, _model, _cancel| pending_stream(),
+    );
+    assert!(complete(stream).await.unwrap_err().contains("10ms"));
+}
+
+#[tokio::test]
+async fn cancellation_wakes_pending_hooks_and_body_streams() {
+    for pending_hook in [true, false] {
+        let client = reqwest::Client::new();
+        let model = test_model();
+        let cancel = CancellationToken::new();
+        let hooks = pending_hook.then(|| ProviderStreamHooks {
+            on_payload: Some(Arc::new(|_, _| Box::pin(futures::future::pending()))),
+            on_response: None,
+        });
+        let server = (!pending_hook).then(|| start_http_server(vec![response(200, &[], "")]));
+        let url = server
+            .as_ref()
+            .map(|(url, _)| url.as_str())
+            .unwrap_or("http://127.0.0.1:1");
+        let opts = StreamOptions {
+            cancel: Some(cancel.clone()),
+            hooks,
+            ..Default::default()
+        };
+        let stream = send_json_stream(
+            &client,
+            &model,
+            Some(&opts),
+            "openai-responses",
+            client.post(url),
+            serde_json::json!({}),
+            move |_body, _model, _cancel| {
+                if pending_hook {
+                    done_stream("openai-responses")
+                } else {
+                    pending_stream()
+                }
+            },
+        );
+        let task = tokio::spawn(complete(stream));
+        tokio::task::yield_now().await;
+        cancel.cancel();
+        let error = tokio::time::timeout(std::time::Duration::from_secs(1), task)
+            .await
+            .expect("cancellation should wake the pending phase")
+            .unwrap()
+            .unwrap_err();
+        assert!(error.contains("cancelled"));
+    }
+}
+
+#[tokio::test]
+async fn zero_timeout_is_an_immediate_end_to_end_deadline() {
+    let client = reqwest::Client::new();
+    let model = test_model();
+    let opts = StreamOptions {
+        timeout_ms: Some(0),
+        ..Default::default()
+    };
+    let stream = send_json_stream(
+        &client,
+        &model,
+        Some(&opts),
+        "openai-responses",
+        client.post("http://127.0.0.1:1"),
+        serde_json::json!({}),
+        |_body, _model, _cancel| done_stream("openai-responses"),
+    );
+    assert!(complete(stream).await.unwrap_err().contains("0ms"));
 }
 // Internal transport-contract tests.

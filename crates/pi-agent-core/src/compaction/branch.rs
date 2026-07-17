@@ -368,6 +368,7 @@ fn stored_to_agent_message(entry_id: &str, stored: StoredAgentMessage) -> Option
                     cache_write: usage.cache_write,
                     total_tokens: usage.total,
                     cost: Cost {
+                        known: usage.cost.known,
                         input: usage.cost.input,
                         output: usage.cost.output,
                         cache_read: usage.cost.cache_read,

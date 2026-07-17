@@ -64,15 +64,31 @@ pub(crate) struct ReplayTreeLabel {
     pub(crate) updated_at: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ReplayUsageSummary {
     pub(crate) input: u32,
     pub(crate) output: u32,
     pub(crate) cache_read: u32,
     pub(crate) cache_write: u32,
     pub(crate) cost: f64,
+    pub(crate) cost_known: bool,
     pub(crate) last_context_tokens: Option<u32>,
     pub(crate) last_context_message_id: Option<String>,
+}
+
+impl Default for ReplayUsageSummary {
+    fn default() -> Self {
+        Self {
+            input: 0,
+            output: 0,
+            cache_read: 0,
+            cache_write: 0,
+            cost: 0.0,
+            cost_known: true,
+            last_context_tokens: None,
+            last_context_message_id: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -646,8 +662,14 @@ impl ReplayBuilder {
         self.usage.output = self.usage.output.saturating_add(usage.output);
         self.usage.cache_read = self.usage.cache_read.saturating_add(usage.cache_read);
         self.usage.cache_write = self.usage.cache_write.saturating_add(usage.cache_write);
-        self.usage.cost +=
-            usage.cost.input + usage.cost.output + usage.cost.cache_read + usage.cost.cache_write;
+        if usage.cost.known {
+            self.usage.cost += usage.cost.input
+                + usage.cost.output
+                + usage.cost.cache_read
+                + usage.cost.cache_write;
+        } else {
+            self.usage.cost_known = false;
+        }
 
         let context_tokens = calculate_context_tokens(usage);
         if context_tokens > 0 {

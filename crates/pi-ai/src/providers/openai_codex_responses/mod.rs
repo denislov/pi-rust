@@ -3,7 +3,6 @@ pub mod wire;
 
 use async_stream::stream;
 use base64::Engine;
-use futures::StreamExt;
 use std::collections::BTreeMap;
 
 use crate::protocol::{
@@ -14,6 +13,7 @@ use crate::model::Model;
 use crate::protocol::stream::EventStream;
 use crate::providers::openai::responses;
 use crate::registry::ApiProvider;
+use crate::transport::http::send_json_stream;
 use convert::build_request;
 
 const DEFAULT_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api";
@@ -51,25 +51,6 @@ pub fn resolve_codex_url(base_url: &str) -> String {
     } else {
         format!("{}/codex/responses", normalized)
     }
-}
-
-pub fn resolve_codex_websocket_url(base_url: &str) -> String {
-    let url = resolve_codex_url(base_url);
-    if let Some(rest) = url.strip_prefix("https://") {
-        format!("wss://{}", rest)
-    } else if let Some(rest) = url.strip_prefix("http://") {
-        format!("ws://{}", rest)
-    } else {
-        url
-    }
-}
-
-pub fn build_websocket_frame(body: &wire::RequestBody) -> Result<String, serde_json::Error> {
-    let mut value = serde_json::to_value(body)?;
-    if let Some(obj) = value.as_object_mut() {
-        obj.insert("type".into(), serde_json::json!("response.create"));
-    }
-    serde_json::to_string(&value)
 }
 
 pub fn build_sse_headers(
@@ -147,8 +128,8 @@ impl ApiProvider for OpenAICodexResponsesProvider {
         };
 
         let req_body = build_request(model, &ctx, &opts);
-        let body = match serde_json::to_vec(&req_body) {
-            Ok(body) => body,
+        let payload = match serde_json::to_value(&req_body) {
+            Ok(payload) => payload,
             Err(error) => {
                 let model_id = model.id.clone();
                 let provider = model.provider.clone();
@@ -172,44 +153,27 @@ impl ApiProvider for OpenAICodexResponsesProvider {
         };
 
         let url = resolve_codex_url(&model.base_url);
-        let mut request = self.client.post(url).body(body);
+        let mut request = self.client.post(url);
         for (key, value) in headers {
             request = request.header(key, value);
         }
 
-        let cancel = opts.as_ref().and_then(|o| o.cancel.clone());
-        let model = model.clone();
-        let model_id = model.id.clone();
-        Box::pin(stream! {
-            let response = match request.send().await {
-                Ok(response) => response,
-                Err(error) => {
-                    let mut msg = AssistantMessage::empty("openai-codex-responses", &model_id);
-                    msg.provider = Some(model.provider.clone());
-                    msg.error_message = Some(format!("HTTP request failed: {}", error));
-                    msg.stop_reason = StopReason::Error;
-                    yield AssistantMessageEvent::Error { reason: StopReason::Error, message: msg };
-                    return;
-                }
-            };
-
-            if !response.status().is_success() {
-                let status = response.status().as_u16();
-                let body = response.text().await.unwrap_or_default();
-                let mut msg = AssistantMessage::empty("openai-codex-responses", &model_id);
-                msg.provider = Some(model.provider.clone());
-                msg.error_message = Some(format!("HTTP {} : {}", status, body));
-                msg.stop_reason = StopReason::Error;
-                yield AssistantMessageEvent::Error { reason: StopReason::Error, message: msg };
-                return;
-            }
-
-            let body_stream = response.bytes_stream().map(|r| r.map_err(|e| e.to_string()));
-            let mut event_stream = responses::stream::process(body_stream, model, cancel);
-            while let Some(event) = event_stream.next().await {
-                yield event;
-            }
-        })
+        send_json_stream(
+            &self.client,
+            model,
+            opts.as_ref(),
+            "openai-codex-responses",
+            request,
+            payload,
+            |body, model, cancel| {
+                responses::stream::process_with_api_name(
+                    body,
+                    model,
+                    cancel,
+                    "openai-codex-responses",
+                )
+            },
+        )
     }
 }
 

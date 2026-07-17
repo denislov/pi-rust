@@ -699,7 +699,8 @@ It owns:
   stream options;
 - provider request/response conversion and streaming parsers;
 - HTTP, SSE, headers, retries, and provider error classification;
-- provider compatibility settings and image-generation protocol types;
+- provider compatibility settings with explicit runtime or catalog-only
+  dispositions;
 - deterministic faux providers used by downstream tests.
 
 It does not own:
@@ -755,8 +756,7 @@ crates/pi-ai/
 │   │   ├── retry.rs
 │   │   ├── headers.rs
 │   │   └── error.rs
-│   ├── compatibility/         # cross-provider request compatibility only
-│   ├── images/                # image protocol/client support
+│   ├── compatibility/         # runtime and catalog-only field dispositions
 │   └── testing/               # faux provider and deterministic fixtures
 └── tests/
     ├── provider_contract.rs
@@ -767,6 +767,19 @@ crates/pi-ai/
 Provider folders must use the same vocabulary (`wire`, `convert`, `stream`)
 unless a provider has a documented reason to differ. A provider module must not
 become a home for product-specific model selection or CLI behavior.
+
+The provider-neutral stream contract is fail closed. A built-in provider emits
+`Done` only after its protocol-specific successful terminal marker and only for
+`Stop`, `Length`, or `ToolUse`. Clean EOF before that marker, malformed wire
+data, provider failure, timeout, and cancellation emit exactly one `Error`;
+cancellation uses `StopReason::Aborted`. `StreamOptions.timeout_ms` is one
+end-to-end invocation deadline across hooks, provider-owned credential
+resolution, retry delays, request attempts, and body streaming. Retries are
+permitted only before a provider-neutral response event is exposed.
+
+Standalone image generation is not part of the stable `pi_ai::api` facade in
+`0.3.1`. Internal DTO experiments do not advertise an executable capability;
+multimodal image content in ordinary conversations remains supported.
 
 ### 3.2 `pi-agent-core`: Provider-Neutral Agent Runtime
 

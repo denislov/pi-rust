@@ -43,6 +43,7 @@ pub fn agent_message_to_stored(
                 cache_write: message.usage.cache_write,
                 total: message.usage.total_tokens,
                 cost: StoredUsageCost {
+                    known: message.usage.cost.known,
                     input: message.usage.cost.input,
                     output: message.usage.cost.output,
                     cache_read: message.usage.cost.cache_read,

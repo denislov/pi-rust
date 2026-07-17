@@ -15,6 +15,7 @@ pub fn map_stop_reason(s: &str) -> crate::protocol::StopReason {
 
 /// Convert a Context to an Anthropic Request.
 pub fn build_request(model: &Model, ctx: &Context, opts: &Option<StreamOptions>) -> wire::Request {
+    let compat = crate::compatibility::AnthropicMessagesCompat::from_model(model);
     let max_tokens = opts
         .as_ref()
         .and_then(|o| o.max_tokens)
@@ -46,18 +47,30 @@ pub fn build_request(model: &Model, ctx: &Context, opts: &Option<StreamOptions>)
                 name: t.name.clone(),
                 description: t.description.clone(),
                 input_schema: t.parameters.clone(),
+                cache_control: compat
+                    .supports_cache_control_on_tools
+                    .unwrap_or(false)
+                    .then(|| wire::CacheControl {
+                        cache_type: "ephemeral".into(),
+                    }),
             })
             .collect()
     });
 
-    let temperature = opts.as_ref().and_then(|o| o.temperature);
+    let temperature = if compat.supports_temperature == Some(false) {
+        None
+    } else {
+        opts.as_ref().and_then(|o| o.temperature)
+    };
 
     let thinking = opts.as_ref().and_then(|o| {
         o.thinking
             .as_ref()
             .filter(|t| t.enabled)
             .map(|t| wire::ThinkingConfig {
-                think_type: if t.budget_tokens.is_some() {
+                think_type: if compat.force_adaptive_thinking == Some(true) {
+                    "adaptive".into()
+                } else if t.budget_tokens.is_some() {
                     "enabled".into()
                 } else {
                     "auto".into()
@@ -257,6 +270,7 @@ mod tests {
             thinking_level_map: None,
             input: vec![ModelInput::Text],
             cost: ModelCost {
+                known: true,
                 input: 1.0,
                 output: 5.0,
                 cache_read: 0.0,
@@ -326,6 +340,7 @@ mod tests {
             thinking_level_map: None,
             input: vec![ModelInput::Text],
             cost: ModelCost {
+                known: true,
                 input: 1.0,
                 output: 5.0,
                 cache_read: 0.0,

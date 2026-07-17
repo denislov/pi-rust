@@ -101,6 +101,7 @@ fn stored_to_agent_message(_entry_id: &str, stored: StoredAgentMessage) -> Optio
             timestamp,
         } => {
             let cost = Cost {
+                known: usage.cost.known,
                 input: usage.cost.input,
                 output: usage.cost.output,
                 cache_read: usage.cost.cache_read,

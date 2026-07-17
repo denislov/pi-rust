@@ -13007,7 +13007,7 @@
       "cacheRead": 0.0,
       "cacheWrite": 0.0
     },
-    "contextWindow": 131072,
+    "contextWindow": 163840,
     "maxTokens": 163840
   },
   {
@@ -13218,7 +13218,7 @@
       "cacheRead": 0.0,
       "cacheWrite": 0.0
     },
-    "contextWindow": 4095,
+    "contextWindow": 4096,
     "maxTokens": 4096
   },
   {
@@ -14335,8 +14335,9 @@
       "image"
     ],
     "cost": {
-      "input": -1000000.0,
-      "output": -1000000.0,
+      "known": false,
+      "input": 0.0,
+      "output": 0.0,
       "cacheRead": 0.0,
       "cacheWrite": 0.0
     },

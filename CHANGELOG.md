@@ -1,5 +1,46 @@
 # Changes
 
+## 0.3.1 - Unreleased
+
+### Added
+
+- Added explicit known/unknown model-cost state and propagated it through
+  transcripts, product events, replay, and RPC session statistics.
+- Added AWS standard credential-chain and official SigV4 support for Bedrock,
+  including named profiles, session credentials, cancellation, and redaction.
+- Added a deterministic cross-provider contract matrix for every built-in API.
+
+### Changed
+
+- Provider streams now fail closed on truncation, malformed terminals, timeout,
+  cancellation, and provider-declared failure; all HTTP providers share one
+  retry, hook, option-validation, cancellation, and deadline implementation.
+- SSE and OpenAI Responses parsing now support chunk-safe protocol processing,
+  multiple interleaved outputs, structured failures, and safe unknown events.
+- Compatibility metadata now exposes explicit request/runtime versus
+  catalog-only dispositions, and generated catalog records are validated.
+- RPC advances additively to protocol `2.1`; ProductEvent advances additively
+  to `2.2`; UI Snapshot remains `2.1`.
+
+### Removed
+
+- Removed the DTO-only standalone image-generation category from the stable
+  `pi_ai::api` facade; multimodal conversation images remain supported.
+- Removed unused Codex WebSocket helpers. Explicit WebSocket or unknown
+  transport selection now fails before network I/O.
+
+### Migration
+
+- See `docs/0.3.1-migration-guide.md` for public API, terminal, cost, transport,
+  compatibility, and Bedrock credential changes.
+
+### Release Status
+
+- `PAIR-001` through `PAIR-012` and all completion criteria in
+  `docs/0.3.1-pi-ai-remediation-plan.md` are closed.
+- All workspace packages use version `0.3.1`; formatting, strict Clippy, full
+  workspace tests, and the `0.3.1` public API freeze pass.
+
 ## 0.3.0 - 2026-07-17
 
 ### Added

@@ -1,9 +1,79 @@
 use super::wire::ChatCompletionResponse;
 use crate::model::Model;
 use crate::model::calculate_cost;
+use crate::protocol::stream::EventStream;
 use crate::protocol::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Cost, StopReason, Usage,
 };
+use async_stream::stream;
+use bytes::Bytes;
+use futures::{Stream, StreamExt};
+use tokio_util::sync::CancellationToken;
+
+pub fn process<E>(
+    mut body: impl Stream<Item = Result<Bytes, E>> + Send + Unpin + 'static,
+    model: Model,
+    cancel: Option<CancellationToken>,
+) -> EventStream
+where
+    E: std::fmt::Display + Send + 'static,
+{
+    Box::pin(stream! {
+        let mut bytes = Vec::new();
+        loop {
+            let next = match cancel.as_ref() {
+                Some(token) => tokio::select! {
+                    biased;
+                    _ = token.cancelled() => {
+                        let mut message = AssistantMessage::empty("deepseek-chat-completions", &model.id);
+                        message.provider = Some(model.provider.clone());
+                        message.stop_reason = StopReason::Aborted;
+                        message.error_message = Some("DeepSeek response body read cancelled".into());
+                        yield AssistantMessageEvent::Error {
+                            reason: StopReason::Aborted,
+                            message,
+                        };
+                        return;
+                    }
+                    item = body.next() => item,
+                },
+                None => body.next().await,
+            };
+            match next {
+                Some(Ok(chunk)) => bytes.extend_from_slice(&chunk),
+                Some(Err(error)) => {
+                    let mut message = AssistantMessage::empty("deepseek-chat-completions", &model.id);
+                    message.provider = Some(model.provider.clone());
+                    message.stop_reason = StopReason::Error;
+                    message.error_message = Some(format!("DeepSeek response read error: {error}"));
+                    yield AssistantMessageEvent::Error {
+                        reason: StopReason::Error,
+                        message,
+                    };
+                    return;
+                }
+                None => break,
+            }
+        }
+        let response: ChatCompletionResponse = match serde_json::from_slice(&bytes) {
+            Ok(response) => response,
+            Err(error) => {
+                let mut message = AssistantMessage::empty("deepseek-chat-completions", &model.id);
+                message.provider = Some(model.provider.clone());
+                message.stop_reason = StopReason::Error;
+                message.error_message = Some(format!("DeepSeek response parse error: {error}"));
+                yield AssistantMessageEvent::Error {
+                    reason: StopReason::Error,
+                    message,
+                };
+                return;
+            }
+        };
+        for event in response_to_events(response, &model) {
+            yield event;
+        }
+    })
+}
 
 pub fn response_to_events(
     response: ChatCompletionResponse,
@@ -79,10 +149,24 @@ pub fn response_to_events(
     partial.stop_reason = map_finish_reason(choice.finish_reason.as_deref());
     partial.usage = response_usage(response.usage, model);
 
-    events.push(AssistantMessageEvent::Done {
-        reason: partial.stop_reason.clone(),
-        message: partial,
-    });
+    if matches!(
+        partial.stop_reason,
+        StopReason::Stop | StopReason::Length | StopReason::ToolUse
+    ) {
+        events.push(AssistantMessageEvent::Done {
+            reason: partial.stop_reason.clone(),
+            message: partial,
+        });
+    } else {
+        partial.error_message = Some(format!(
+            "DeepSeek returned unsupported finish reason {:?}",
+            choice.finish_reason
+        ));
+        events.push(AssistantMessageEvent::Error {
+            reason: StopReason::Error,
+            message: partial,
+        });
+    }
     events
 }
 

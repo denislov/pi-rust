@@ -19,6 +19,7 @@ fn test_model() -> Model {
         thinking_level_map: None,
         input: vec![ModelInput::Text, ModelInput::Image],
         cost: ModelCost {
+            known: true,
             input: 2.5,
             output: 10.0,
             cache_read: 0.0,

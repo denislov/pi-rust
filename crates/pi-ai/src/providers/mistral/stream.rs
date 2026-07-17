@@ -6,7 +6,9 @@ use crate::protocol::stream::EventStream;
 use crate::protocol::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Cost, StopReason, Usage,
 };
-use crate::providers::common::{SseEventHandler, SseEventResult, process_sse};
+use crate::providers::common::{
+    SseEventHandler, SseEventResult, SseTransportTerminal, process_sse,
+};
 use bytes::Bytes;
 use futures::Stream;
 use std::collections::HashMap;
@@ -186,14 +188,14 @@ impl SseEventHandler for MistralHandler {
         Ok(SseEventResult::Continue(events))
     }
 
-    fn finalize(
-        &self,
+    fn finish(
+        &mut self,
         partial: &mut AssistantMessage,
         _model: &Model,
-    ) -> Vec<AssistantMessageEvent> {
+    ) -> Result<Vec<AssistantMessageEvent>, String> {
         let mut events = Vec::new();
 
-        if let Some(event) = finish_current_block(partial, &mut self.current_block.clone()) {
+        if let Some(event) = finish_current_block(partial, &mut self.current_block) {
             events.push(event);
         }
 
@@ -217,7 +219,19 @@ impl SseEventHandler for MistralHandler {
 
         partial.stop_reason = map_finish_reason(self.finish_reason.as_deref());
 
-        events
+        Ok(events)
+    }
+
+    fn accept_transport_terminal(&self, terminal: SseTransportTerminal) -> Result<(), String> {
+        match terminal {
+            SseTransportTerminal::DoneMarker if self.finish_reason.is_some() => Ok(()),
+            SseTransportTerminal::DoneMarker => {
+                Err("received [DONE] before a usable finish reason".into())
+            }
+            SseTransportTerminal::Eof => {
+                Err("stream ended before the required [DONE] marker".into())
+            }
+        }
     }
 }
 

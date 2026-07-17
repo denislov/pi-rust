@@ -16,6 +16,7 @@ fn model_serializes_like_ts_generated_shape() {
         thinking_level_map: None,
         input: vec![ModelInput::Text, ModelInput::Image],
         cost: ModelCost {
+            known: true,
             input: 2.0,
             output: 8.0,
             cache_read: 0.5,
@@ -47,6 +48,7 @@ fn cost_calculation_uses_nested_model_cost() {
         thinking_level_map: None,
         input: vec![ModelInput::Text],
         cost: ModelCost {
+            known: true,
             input: 1.0,
             output: 2.0,
             cache_read: 0.25,

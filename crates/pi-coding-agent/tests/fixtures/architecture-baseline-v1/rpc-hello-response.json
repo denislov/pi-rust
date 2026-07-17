@@ -7,12 +7,12 @@
     "protocol": {
       "family": "rpc",
       "major": 2,
-      "minor": 0
+      "minor": 1
     },
     "productEvents": {
       "family": "product_event",
       "major": 2,
-      "minor": 1
+      "minor": 2
     },
     "uiSnapshot": {
       "family": "ui_snapshot",

@@ -11,7 +11,18 @@ use crate::transport::sse::iterate_sse;
 
 pub enum SseEventResult {
     Continue(Vec<AssistantMessageEvent>),
-    Done(Vec<AssistantMessageEvent>),
+    ProviderDone(Vec<AssistantMessageEvent>),
+    ProviderError {
+        events: Vec<AssistantMessageEvent>,
+        reason: StopReason,
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SseTransportTerminal {
+    DoneMarker,
+    Eof,
 }
 
 pub trait SseEventHandler: Send + 'static {
@@ -22,8 +33,22 @@ pub trait SseEventHandler: Send + 'static {
         model: &Model,
     ) -> Result<SseEventResult, String>;
 
-    fn finalize(&self, partial: &mut AssistantMessage, model: &Model)
-    -> Vec<AssistantMessageEvent>;
+    fn finish(
+        &mut self,
+        partial: &mut AssistantMessage,
+        model: &Model,
+    ) -> Result<Vec<AssistantMessageEvent>, String>;
+
+    fn accept_transport_terminal(&self, terminal: SseTransportTerminal) -> Result<(), String> {
+        Err(match terminal {
+            SseTransportTerminal::DoneMarker => {
+                "provider protocol does not accept a [DONE] terminal marker".to_string()
+            }
+            SseTransportTerminal::Eof => {
+                "provider stream ended before a terminal event".to_string()
+            }
+        })
+    }
 }
 
 pub fn process_sse<E, H: SseEventHandler>(
@@ -45,22 +70,34 @@ where
         futures::pin_mut!(sse);
 
         loop {
-            if let Some(ref token) = cancel
-                && token.is_cancelled() {
-                    partial.stop_reason = StopReason::Aborted;
-                    partial.error_message = Some("cancelled".into());
-                    yield AssistantMessageEvent::Error {
-                        reason: StopReason::Aborted,
-                        message: partial.clone(),
-                    };
-                    return;
-                }
+            let next_event = match cancel.as_ref() {
+                Some(token) => tokio::select! {
+                    biased;
+                    _ = token.cancelled() => {
+                        partial.stop_reason = StopReason::Aborted;
+                        partial.error_message = Some(format!(
+                            "{} stream cancelled for provider {} model {}",
+                            api_name, model.provider, model.id
+                        ));
+                        yield AssistantMessageEvent::Error {
+                            reason: StopReason::Aborted,
+                            message: partial.clone(),
+                        };
+                        return;
+                    }
+                    event = sse.next() => event,
+                },
+                None => sse.next().await,
+            };
 
-            let sse_event = match sse.next().await {
+            let sse_event = match next_event {
                 Some(Ok(e)) => e,
                 Some(Err(e)) => {
                     partial.stop_reason = StopReason::Error;
-                    partial.error_message = Some(e.clone());
+                    partial.error_message = Some(format!(
+                        "{} stream error for provider {} model {}: {}",
+                        api_name, model.provider, model.id, e
+                    ));
                     yield AssistantMessageEvent::Error {
                         reason: StopReason::Error,
                         message: partial.clone(),
@@ -71,7 +108,22 @@ where
             };
 
             if sse_event.data == "[DONE]" {
-                break;
+                if let Err(error) = handler
+                    .accept_transport_terminal(SseTransportTerminal::DoneMarker)
+                {
+                    yield terminal_error(&mut partial, &api_name, &model, error);
+                    return;
+                }
+                match handler.finish(&mut partial, &model) {
+                    Ok(events) => {
+                        for event in events {
+                            yield event;
+                        }
+                        yield terminal_event(partial, &api_name, &model);
+                    }
+                    Err(error) => yield terminal_error(&mut partial, &api_name, &model, error),
+                }
+                return;
             }
 
             match handler.handle_event(&sse_event.data, &mut partial, &model) {
@@ -80,33 +132,107 @@ where
                         yield event;
                     }
                 }
-                Ok(SseEventResult::Done(events)) => {
+                Ok(SseEventResult::ProviderDone(events)) => {
                     for event in events {
                         yield event;
                     }
+                    match handler.finish(&mut partial, &model) {
+                        Ok(events) => {
+                            for event in events {
+                                yield event;
+                            }
+                            yield terminal_event(partial, &api_name, &model);
+                        }
+                        Err(error) => {
+                            yield terminal_error(&mut partial, &api_name, &model, error)
+                        }
+                    }
+                    return;
+                }
+                Ok(SseEventResult::ProviderError {
+                    events,
+                    reason,
+                    message,
+                }) => {
+                    for event in events {
+                        yield event;
+                    }
+                    partial.stop_reason = reason.clone();
+                    partial.error_message = Some(format!(
+                        "{} provider {} model {} failed: {}",
+                        api_name, model.provider, model.id, message
+                    ));
+                    yield AssistantMessageEvent::Error {
+                        reason,
+                        message: partial.clone(),
+                    };
                     return;
                 }
                 Err(error) => {
-                    partial.stop_reason = StopReason::Error;
-                    partial.error_message = Some(error);
-                    yield AssistantMessageEvent::Error {
-                        reason: StopReason::Error,
-                        message: partial.clone(),
-                    };
+                    yield terminal_error(&mut partial, &api_name, &model, error);
                     return;
                 }
             }
         }
 
-        for event in handler.finalize(&mut partial, &model) {
-            yield event;
+        if let Err(error) = handler.accept_transport_terminal(SseTransportTerminal::Eof) {
+            yield terminal_error(&mut partial, &api_name, &model, error);
+            return;
         }
-
-        yield AssistantMessageEvent::Done {
-            reason: partial.stop_reason.clone(),
-            message: partial,
-        };
+        match handler.finish(&mut partial, &model) {
+            Ok(events) => {
+                for event in events {
+                    yield event;
+                }
+                yield terminal_event(partial, &api_name, &model);
+            }
+            Err(error) => yield terminal_error(&mut partial, &api_name, &model, error),
+        }
     })
+}
+
+fn terminal_event(
+    mut message: AssistantMessage,
+    api_name: &str,
+    model: &Model,
+) -> AssistantMessageEvent {
+    match &message.stop_reason {
+        StopReason::Stop | StopReason::Length | StopReason::ToolUse => {
+            AssistantMessageEvent::Done {
+                reason: message.stop_reason.clone(),
+                message,
+            }
+        }
+        StopReason::Error | StopReason::Aborted => {
+            if message.error_message.is_none() {
+                message.error_message = Some(format!(
+                    "{} provider {} model {} ended with {:?}",
+                    api_name, model.provider, model.id, message.stop_reason
+                ));
+            }
+            AssistantMessageEvent::Error {
+                reason: message.stop_reason.clone(),
+                message,
+            }
+        }
+    }
+}
+
+fn terminal_error(
+    partial: &mut AssistantMessage,
+    api_name: &str,
+    model: &Model,
+    error: impl std::fmt::Display,
+) -> AssistantMessageEvent {
+    partial.stop_reason = StopReason::Error;
+    partial.error_message = Some(format!(
+        "{} protocol error for provider {} model {}: {}",
+        api_name, model.provider, model.id, error
+    ));
+    AssistantMessageEvent::Error {
+        reason: StopReason::Error,
+        message: partial.clone(),
+    }
 }
 
 /// Normalize a tool-call id to match the `^[a-zA-Z0-9_-]{1,64}$` pattern.
