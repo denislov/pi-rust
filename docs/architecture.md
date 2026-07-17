@@ -7,7 +7,7 @@ the normative source for crate ownership, dependency direction, runtime
 boundaries, durable state, product events, adapters, and the intended source
 tree.
 
-The active `0.2.0` crates have converged to this architecture. Reserved product
+The active `0.3.0` crates have converged to this architecture. Reserved product
 crates and explicitly labeled future contracts remain target definitions, not
 claims that their implementation already exists. To keep that distinction
 explicit, this document uses:

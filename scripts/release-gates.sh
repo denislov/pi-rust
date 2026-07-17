@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-EXPECTED_VERSION="${PI_RUST_EXPECTED_VERSION:-0.2.0}"
+EXPECTED_VERSION="${PI_RUST_EXPECTED_VERSION:-0.3.0}"
 API_BASELINE_MANIFEST="${PI_RUST_API_BASELINE_MANIFEST:-$ROOT/docs/api-snapshots/0.2.0-alpha.1/SHA256SUMS}"
 
 run() {

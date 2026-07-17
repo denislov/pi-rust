@@ -1,5 +1,16 @@
 # Changes
 
+## 0.3.0 - 2026-07-17
+
+### Changed
+
+- Advanced to the workspace `0.3.0` version.
+
+### Status
+
+- This crate remains a placeholder with no cross-session orchestration
+  behavior or stable runtime contract.
+
 ## 0.2.0 - 2026-07-16
 
 ### Changed

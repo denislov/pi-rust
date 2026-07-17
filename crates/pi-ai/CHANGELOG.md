@@ -1,5 +1,18 @@
 # Changes
 
+## 0.3.0 - 2026-07-17
+
+### Changed
+
+- Advanced to the workspace `0.3.0` version.
+
+### Boundaries
+
+- No provider API or wire-contract changes are introduced by this release.
+- Product profiles, delegation policy, authorization, sessions, RPC, and TUI
+  behavior remain outside `pi-ai`; provider requests continue to receive
+  ordinary canonical tool schemas and conversation content.
+
 ## 0.2.0 - 2026-07-16
 
 ### Breaking Changes

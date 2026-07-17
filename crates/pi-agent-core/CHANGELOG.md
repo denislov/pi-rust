@@ -1,5 +1,22 @@
 # Changes
 
+## 0.3.0 - 2026-07-17
+
+### Runtime
+
+- Extended provider-neutral user input handling so product adapters can submit
+  canonical multimodal content without introducing RPC types into the core.
+- Made the asynchronous before-tool hook gate cancellation-aware and associated
+  with the active execution context.
+- Delayed tool-start events until hooks and product authorization complete, so
+  a proposed or blocked call is never reported as executing.
+
+### Boundaries
+
+- Product authorization policy, pending decisions, durable audit facts,
+  operation scheduling, and adapter presentation remain owned by
+  `pi-coding-agent`.
+
 ## 0.2.0 - 2026-07-16
 
 ### Breaking Changes

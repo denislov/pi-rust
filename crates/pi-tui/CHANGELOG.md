@@ -1,5 +1,23 @@
 # Changes
 
+## 0.3.0 - 2026-07-17
+
+### Added
+
+- Added explicit inline and full-screen terminal modes with alternate-screen,
+  mouse-capture, resize, panic-cleanup, and terminal-restoration support.
+- Added rectangular layout, bounded surfaces, clipping, dynamic work areas,
+  responsive split geometry, focus routing, and generic overlay composition.
+- Added normalized SGR mouse input, frame-local hit regions, ANSI-safe width
+  handling, and virtual-terminal coverage for focus, resize, clipping, and
+  overlay behavior.
+
+### Boundaries
+
+- Product panels, transcript semantics, authorization policy, delegation, and
+  plugin actions remain owned by `pi-coding-agent`; this crate exposes only
+  generic terminal, rendering, input, focus, and component primitives.
+
 ## 0.2.0 - 2026-07-16
 
 ### Breaking Changes

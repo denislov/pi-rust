@@ -2,7 +2,7 @@
 
 ## Scope
 
-This document follows an ordinary text prompt through the current `0.2.0`
+This document follows an ordinary text prompt through the current `0.3.0`
 implementation. It is a code-reading guide, not a second architecture contract.
 Ownership and boundary rules remain normative in
 [`architecture.md`](architecture.md).
