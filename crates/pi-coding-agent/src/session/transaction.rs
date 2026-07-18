@@ -62,6 +62,11 @@ enum SessionTransactionWriterCommand {
         updated_at: String,
         active_leaf_id: Option<String>,
     },
+    CommitSessionMutation {
+        events: Vec<SessionEventEnvelope>,
+        manifest_patch: ManifestPatch,
+        operation_id: Option<String>,
+    },
     #[cfg(test)]
     Block {
         entered: SyncSender<()>,
@@ -74,8 +79,9 @@ impl SessionTransactionWriter {
         let (sender, receiver) =
             sync_channel::<SessionTransactionWriterEnvelope>(SESSION_TRANSACTION_WRITER_CAPACITY);
         let worker = std::thread::spawn(move || {
+            let mut handle = handle;
             while let Ok(envelope) = receiver.recv() {
-                let result = execute_writer_command(&store, &handle, envelope.command);
+                let result = execute_writer_command(&store, &mut handle, envelope.command);
                 let _ = envelope.reply.send(result);
             }
         });
@@ -125,6 +131,19 @@ impl SessionTransactionWriter {
         events: Vec<SessionEventEnvelope>,
     ) -> Result<(), CodingSessionError> {
         self.execute(SessionTransactionWriterCommand::Checkpoint { events })
+    }
+
+    pub(crate) fn commit_session_mutation(
+        &self,
+        events: Vec<SessionEventEnvelope>,
+        manifest_patch: ManifestPatch,
+        operation_id: Option<String>,
+    ) -> Result<(), CodingSessionError> {
+        self.execute(SessionTransactionWriterCommand::CommitSessionMutation {
+            events,
+            manifest_patch,
+            operation_id,
+        })
     }
 
     pub(crate) fn shutdown(&self) -> Result<(), CodingSessionError> {
@@ -187,7 +206,7 @@ impl Drop for SessionTransactionWriterInner {
 
 fn execute_writer_command(
     store: &SessionLogStore,
-    handle: &SessionHandle,
+    handle: &mut SessionHandle,
     command: SessionTransactionWriterCommand,
 ) -> Result<(), CodingSessionError> {
     match command {
@@ -207,8 +226,23 @@ fn execute_writer_command(
                         .updated_at(updated_at)
                         .active_leaf_id(active_leaf_id),
                 )?;
+                refresh_writer_handle(store, handle)?;
             }
             Ok(())
+        }
+        SessionTransactionWriterCommand::CommitSessionMutation {
+            events,
+            manifest_patch,
+            operation_id,
+        } => {
+            if !events.is_empty() {
+                store.append_events(handle, &events)?;
+            }
+            store
+                .update_manifest(handle, manifest_patch)
+                .map_err(|error| mutation_commit_error(operation_id.as_deref(), error))?;
+            refresh_writer_handle(store, handle)
+                .map_err(|error| mutation_commit_error(operation_id.as_deref(), error))
         }
         #[cfg(test)]
         SessionTransactionWriterCommand::Block { entered, release } => {
@@ -216,6 +250,28 @@ fn execute_writer_command(
             let _ = release.recv();
             Ok(())
         }
+    }
+}
+
+fn refresh_writer_handle(
+    store: &SessionLogStore,
+    handle: &mut SessionHandle,
+) -> Result<(), CodingSessionError> {
+    let session_id = handle.manifest().session_id.clone();
+    *handle = store.open_session_id(&session_id)?;
+    Ok(())
+}
+
+fn mutation_commit_error(
+    operation_id: Option<&str>,
+    error: CodingSessionError,
+) -> CodingSessionError {
+    match operation_id {
+        Some(operation_id) => CodingSessionError::PartialCommit {
+            operation_id: operation_id.to_owned(),
+            message: error.to_string(),
+        },
+        None => error,
     }
 }
 

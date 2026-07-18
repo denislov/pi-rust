@@ -39,9 +39,13 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   writer carries only the session identity plus the writer port. Last
   writer-handle drop closes the sender and joins the actor; closed writers
   reject commands. RuntimeHost shutdown drains active operations, closes/joins
-  the writer, and only then publishes shutdown. Independently opened
-  same-session coordination and remaining direct session mutations are active
-  `RIF-008` work.
+  the writer, and only then publishes shutdown. The actor now owns a mutable
+  session handle and refreshes it after manifest commits. Tree-label,
+  active-leaf, default-profile, delegation-fact, and startup-recovery mutations
+  use event-plus-manifest writer commands, so the live `SessionService` no
+  longer mutates its own repository handle directly. Target-session bootstrap
+  during copy/fork and independently opened same-session coordination remain
+  active `RIF-008` work.
 - `IntentRouter`, `OperationScheduler`, `OperationControl`, typed operation
   metadata, root/child lineage, capability snapshots, and generation-scoped
   cancellation exist.

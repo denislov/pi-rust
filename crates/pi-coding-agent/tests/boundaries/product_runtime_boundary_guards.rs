@@ -2414,6 +2414,7 @@ fn turn_transaction_stages_through_typed_writer_commands_without_repository_hand
     for command in [
         "SessionTransactionWriterCommand::Checkpoint",
         "SessionTransactionWriterCommand::Finalize",
+        "SessionTransactionWriterCommand::CommitSessionMutation",
     ] {
         assert!(
             transaction.contains(command),
@@ -2427,6 +2428,9 @@ fn turn_transaction_stages_through_typed_writer_commands_without_repository_hand
         "session transaction writer queue is full",
         "impl Drop for SessionTransactionWriterInner",
         "worker.join()",
+        "let mut handle = handle",
+        "execute_writer_command(&store, &mut handle, envelope.command)",
+        "refresh_writer_handle(store, handle)",
     ] {
         assert!(
             transaction.contains(transport),
@@ -2458,6 +2462,24 @@ fn turn_transaction_stages_through_typed_writer_commands_without_repository_hand
         service.contains("self.writer.append_checkpoint_events(events)"),
         "authorization durable facts must use the shared bounded writer"
     );
+    let production_service = production_source(&sanitize_rust_source(&service));
+    assert!(
+        !production_service.contains("self.store.append_events")
+            && !production_service.contains("self.store.update_manifest"),
+        "the live SessionService owner must route its own durable mutations through the writer"
+    );
+    for mutation in [
+        "set_tree_label",
+        "set_default_agent_profile_id",
+        "switch_active_leaf",
+        "apply_startup_recovery",
+        "append_durable_session_event",
+    ] {
+        assert!(
+            service.contains(mutation),
+            "missing expected migrated session mutation: {mutation}"
+        );
+    }
     let connection = fs::read_to_string(scan.crate_root.join("src/runtime/facade/connection.rs"))
         .expect("read runtime shutdown source");
     let drain = connection

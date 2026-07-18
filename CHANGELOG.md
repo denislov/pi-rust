@@ -50,6 +50,11 @@
   bounded actor instead of retaining raw repository handles. Last writer-handle
   drop and drained RuntimeHost shutdown close and join the actor before shutdown
   publication.
+- Made the bounded writer own and refresh its mutable session handle after
+  manifest commits. Tree labels, active-leaf changes, default-profile changes,
+  delegation durable facts, and startup recovery now submit event-plus-manifest
+  mutations through that writer; the live `SessionService` no longer appends or
+  patches its own repository handle directly.
 
 ### Release Status
 

@@ -309,22 +309,12 @@ impl SessionService {
             )
             .with_operation_id(operation_id),
         ];
-        self.store.append_events(&self.handle, &events)?;
-        if let Err(error) = self.store.update_manifest(
-            &self.handle,
+        self.transaction_writer.commit_session_mutation(
+            events,
             ManifestPatch::new().updated_at(updated_at.clone()),
-        ) {
-            return Err(CodingSessionError::PartialCommit {
-                operation_id: operation_id.to_owned(),
-                message: error.to_string(),
-            });
-        }
-        self.handle = self.store.open_session_id(&session_id).map_err(|error| {
-            CodingSessionError::PartialCommit {
-                operation_id: operation_id.to_owned(),
-                message: error.to_string(),
-            }
-        })?;
+            Some(operation_id.to_owned()),
+        )?;
+        self.refresh_read_handle(Some(operation_id))?;
         Ok(SessionTreeLabelUpdate {
             entry_id,
             label,
@@ -375,14 +365,14 @@ impl SessionService {
         &mut self,
         profile_id: ProfileId,
     ) -> Result<(), CodingSessionError> {
-        let session_id = self.session_id().to_owned();
-        self.store.update_manifest(
-            &self.handle,
+        self.transaction_writer.commit_session_mutation(
+            Vec::new(),
             ManifestPatch::new()
                 .updated_at(SystemClock.now_rfc3339())
                 .default_agent_profile_id(profile_id),
+            None,
         )?;
-        self.handle = self.store.open_session_id(&session_id)?;
+        self.refresh_read_handle(None)?;
         Ok(())
     }
 
@@ -500,24 +490,14 @@ impl SessionService {
                 leaf_id: target_leaf_id.clone(),
             },
         );
-        self.store.append_events(&self.handle, &[event])?;
-        if let Err(error) = self.store.update_manifest(
-            &self.handle,
+        self.transaction_writer.commit_session_mutation(
+            vec![event],
             ManifestPatch::new()
                 .updated_at(updated_at)
                 .active_leaf_id(Some(target_leaf_id)),
-        ) {
-            return Err(CodingSessionError::PartialCommit {
-                operation_id: operation_id.to_owned(),
-                message: error.to_string(),
-            });
-        }
-        self.handle = self.store.open_session_id(&session_id).map_err(|error| {
-            CodingSessionError::PartialCommit {
-                operation_id: operation_id.to_owned(),
-                message: error.to_string(),
-            }
-        })?;
+            Some(operation_id.to_owned()),
+        )?;
+        self.refresh_read_handle(Some(operation_id))?;
         Ok(())
     }
 
@@ -1090,10 +1070,12 @@ impl SessionService {
             .with_turn_id(request.turn_id)
         }));
 
-        self.store.append_events(&self.handle, &events)?;
-        self.store
-            .update_manifest(&self.handle, ManifestPatch::new().updated_at(recovered_at))?;
-        self.handle = self.store.open_session_id(&session_id)?;
+        self.transaction_writer.commit_session_mutation(
+            events,
+            ManifestPatch::new().updated_at(recovered_at),
+            None,
+        )?;
+        self.refresh_read_handle(None)?;
         self.startup_recovery_markers.extend(markers);
         Ok(())
     }
@@ -1318,20 +1300,29 @@ impl SessionService {
         );
         event.operation_id = operation_id.clone();
         event.turn_id = turn_id;
-        self.store.append_events(&self.handle, &[event])?;
-        if let Err(error) = self
-            .store
-            .update_manifest(&self.handle, ManifestPatch::new().updated_at(updated_at))
-        {
-            return Err(match operation_id {
+        self.transaction_writer.commit_session_mutation(
+            vec![event],
+            ManifestPatch::new().updated_at(updated_at),
+            operation_id.clone(),
+        )?;
+        self.refresh_read_handle(operation_id.as_deref())?;
+        Ok(())
+    }
+
+    fn refresh_read_handle(
+        &mut self,
+        partial_commit_operation_id: Option<&str>,
+    ) -> Result<(), CodingSessionError> {
+        let session_id = self.session_id().to_owned();
+        self.handle = self.store.open_session_id(&session_id).map_err(|error| {
+            match partial_commit_operation_id {
                 Some(operation_id) => CodingSessionError::PartialCommit {
-                    operation_id,
+                    operation_id: operation_id.to_owned(),
                     message: error.to_string(),
                 },
                 None => error,
-            });
-        }
-        self.handle = self.store.open_session_id(&session_id)?;
+            }
+        })?;
         Ok(())
     }
 
@@ -3044,6 +3035,30 @@ mod tests {
             child_ids,
             vec![branch_leaf.as_str(), alternate_leaf.as_str()]
         );
+    }
+
+    #[test]
+    fn switch_active_leaf_reports_partial_commit_when_manifest_update_fails() {
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_switch_leaf_partial")
+            .with_session_log_root(temp.path());
+        let mut service = SessionService::create(&options).unwrap();
+        let root_leaf = record_prompt(&mut service, "root prompt");
+        let _branch_leaf = record_prompt(&mut service, "branch prompt");
+        service
+            .store
+            .fail_after(StoreFailurePoint::UpdateManifest, 0);
+
+        let error = service
+            .switch_active_leaf(&root_leaf, "op_switch_leaf_partial")
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            CodingSessionError::PartialCommit { operation_id, .. }
+                if operation_id == "op_switch_leaf_partial"
+        ));
     }
 
     #[test]
