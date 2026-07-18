@@ -40,7 +40,7 @@ pub(crate) fn reused_outcome(
         snapshot.operation_id.clone(),
         turn_id,
         session_service.session_id().to_owned(),
-        session_service.active_leaf_id().map(str::to_owned),
+        session_service.current_active_leaf_id(),
         &runtime,
         summary,
     )))
@@ -117,7 +117,7 @@ pub(crate) async fn run(
                 operation_id.clone(),
                 turn_id,
                 session_service.session_id().to_owned(),
-                session_service.active_leaf_id().map(str::to_owned),
+                session_service.current_active_leaf_id(),
                 &runtime,
                 final_text,
             );

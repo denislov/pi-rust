@@ -49,8 +49,10 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   same-session coordination now reuses a canonical-path writer actor through
   per-open owner leases: one RuntimeHost can release its lease without closing
   another open owner, while the final owner closes and joins the actor. Closed
-  actors are excluded from later registry acquisition. Projection/read freshness
-  across independent opens remains active `RIF-008` work.
+  actors are excluded from later registry acquisition. The writer-owned
+  manifest snapshot feeds session view, tree, summary, active-leaf, and
+  default-profile reads across independent opens. Client projection refresh and
+  the remaining writer-pressure/recovery gates remain active `RIF-008` work.
 - `IntentRouter`, `OperationScheduler`, `OperationControl`, typed operation
   metadata, root/child lineage, capability snapshots, and generation-scoped
   cancellation exist.

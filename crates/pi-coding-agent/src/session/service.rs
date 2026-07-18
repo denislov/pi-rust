@@ -257,7 +257,7 @@ impl SessionService {
         let replay = fold_events(&events);
         Ok(build_leaf_tree(
             &events,
-            self.handle.manifest().active_leaf_id.clone(),
+            self.current_active_leaf_id(),
             &replay.tree_labels,
         ))
     }
@@ -361,12 +361,19 @@ impl SessionService {
         &self.handle.manifest().session_id
     }
 
+    #[cfg(test)]
     pub(crate) fn active_leaf_id(&self) -> Option<&str> {
         self.handle.manifest().active_leaf_id.as_deref()
     }
 
-    pub(crate) fn default_agent_profile_id(&self) -> &ProfileId {
-        &self.handle.manifest().default_agent_profile_id
+    pub(crate) fn current_active_leaf_id(&self) -> Option<String> {
+        self.transaction_writer.manifest_snapshot().active_leaf_id
+    }
+
+    pub(crate) fn current_default_agent_profile_id(&self) -> ProfileId {
+        self.transaction_writer
+            .manifest_snapshot()
+            .default_agent_profile_id
     }
 
     pub(crate) fn set_default_agent_profile_id(
@@ -793,21 +800,12 @@ impl SessionService {
             operation_id.clone(),
         )];
         transaction.commit(None)?;
-        self.store
-            .update_manifest(
-                &self.handle,
-                ManifestPatch::new().updated_at(SystemClock.now_rfc3339()),
-            )
-            .map_err(|error| CodingSessionError::PartialCommit {
-                operation_id: operation_id.clone(),
-                message: error.to_string(),
-            })?;
-        self.handle = self.store.open_session_id(&session_id).map_err(|error| {
-            CodingSessionError::PartialCommit {
-                operation_id: operation_id.clone(),
-                message: error.to_string(),
-            }
-        })?;
+        self.transaction_writer.commit_session_mutation(
+            Vec::new(),
+            ManifestPatch::new().updated_at(SystemClock.now_rfc3339()),
+            Some(operation_id.clone()),
+        )?;
+        self.refresh_read_handle(Some(&operation_id))?;
         events.push(EventService::session_write_committed_event(
             operation_id,
             session_id.clone(),
@@ -815,7 +813,7 @@ impl SessionService {
         Ok(FinalizedSessionWrite {
             events,
             session_id: Some(session_id),
-            leaf_id: self.handle.manifest().active_leaf_id.clone(),
+            leaf_id: self.current_active_leaf_id(),
         })
     }
 
@@ -841,21 +839,12 @@ impl SessionService {
             operation_id.clone(),
         )];
         transaction.fail(error_code, message)?;
-        self.store
-            .update_manifest(
-                &self.handle,
-                ManifestPatch::new().updated_at(SystemClock.now_rfc3339()),
-            )
-            .map_err(|error| CodingSessionError::PartialCommit {
-                operation_id: operation_id.clone(),
-                message: error.to_string(),
-            })?;
-        self.handle = self.store.open_session_id(&session_id).map_err(|error| {
-            CodingSessionError::PartialCommit {
-                operation_id: operation_id.clone(),
-                message: error.to_string(),
-            }
-        })?;
+        self.transaction_writer.commit_session_mutation(
+            Vec::new(),
+            ManifestPatch::new().updated_at(SystemClock.now_rfc3339()),
+            Some(operation_id.clone()),
+        )?;
+        self.refresh_read_handle(Some(&operation_id))?;
         events.push(EventService::session_write_committed_event(
             operation_id,
             session_id.clone(),
@@ -863,7 +852,7 @@ impl SessionService {
         Ok(FinalizedSessionWrite {
             events,
             session_id: Some(session_id),
-            leaf_id: self.handle.manifest().active_leaf_id.clone(),
+            leaf_id: self.current_active_leaf_id(),
         })
     }
 
@@ -1096,7 +1085,7 @@ impl SessionService {
     pub(crate) fn view(&self) -> CodingAgentSessionView {
         CodingAgentSessionView {
             session_id: self.session_id().to_owned(),
-            default_agent_profile_id: self.default_agent_profile_id().clone(),
+            default_agent_profile_id: self.current_default_agent_profile_id(),
         }
     }
 
@@ -1142,7 +1131,7 @@ impl SessionService {
             session_dir: self.handle.session_dir().to_path_buf(),
             created_at: self.handle.manifest().created_at.clone(),
             updated_at: self.handle.manifest().updated_at.clone(),
-            active_leaf_id: self.handle.manifest().active_leaf_id.clone(),
+            active_leaf_id: self.current_active_leaf_id(),
         }
     }
 
@@ -1173,7 +1162,7 @@ impl SessionService {
             &mut ids,
             &clock,
             replay.cwd,
-            self.default_agent_profile_id().clone(),
+            self.current_default_agent_profile_id(),
             Some(&operation_id),
         )?;
 
@@ -1979,6 +1968,25 @@ mod tests {
         let fresh = SessionService::open(&options).unwrap();
 
         assert!(!old_writer.shares_actor_for_tests(&fresh.transaction_writer));
+    }
+
+    #[test]
+    fn independently_opened_read_view_uses_shared_writer_snapshot() {
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_shared_snapshot")
+            .with_session_log_root(temp.path());
+        let mut service = SessionService::create(&options).unwrap();
+        let reopened = SessionService::open(&options).unwrap();
+
+        service
+            .set_default_agent_profile_id(ProfileId::from("reviewer"))
+            .unwrap();
+
+        assert_eq!(
+            reopened.view().default_agent_profile_id,
+            ProfileId::from("reviewer")
+        );
     }
 
     #[test]

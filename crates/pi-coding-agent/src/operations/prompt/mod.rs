@@ -89,7 +89,7 @@ pub(crate) fn apply_default_agent_profile(
 pub(crate) fn default_agent_profile_id(persistence: &SessionPersistence) -> ProfileId {
     match persistence {
         SessionPersistence::Persistent(session_service) => {
-            session_service.default_agent_profile_id().clone()
+            session_service.current_default_agent_profile_id()
         }
         SessionPersistence::NonPersistent(state) => state.default_agent_profile_id.clone(),
     }

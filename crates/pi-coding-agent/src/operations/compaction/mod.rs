@@ -53,7 +53,7 @@ pub(crate) async fn run(
                 operation_id.clone(),
                 turn_id.clone(),
                 session_service.session_id().to_owned(),
-                session_service.active_leaf_id().map(str::to_owned),
+                session_service.current_active_leaf_id(),
                 &compaction,
             );
             let finalized = session_service.commit_manual_compaction_transaction(

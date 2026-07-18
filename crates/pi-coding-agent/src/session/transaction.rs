@@ -10,7 +10,6 @@ use pi_ai::api::conversation::Usage;
 use serde_json::Value;
 
 use super::id::{Clock, IdGenerator};
-#[cfg(test)]
 use super::manifest::SessionManifest;
 use super::repository::{ManifestPatch, SessionHandle, SessionLogStore};
 use crate::operations::self_healing_edit::flow::{
@@ -52,6 +51,7 @@ struct SessionTransactionWriterInner {
     sender: Mutex<Option<SyncSender<SessionTransactionWriterEnvelope>>>,
     worker: Mutex<Option<std::thread::JoinHandle<()>>>,
     owners: AtomicUsize,
+    snapshot: Arc<Mutex<SessionManifest>>,
 }
 
 #[derive(Debug)]
@@ -108,10 +108,17 @@ impl SessionTransactionWriter {
 
         let (sender, receiver) =
             sync_channel::<SessionTransactionWriterEnvelope>(SESSION_TRANSACTION_WRITER_CAPACITY);
+        let snapshot = Arc::new(Mutex::new(handle.manifest().clone()));
+        let worker_snapshot = snapshot.clone();
         let worker = std::thread::spawn(move || {
             let mut handle = handle;
             while let Ok(envelope) = receiver.recv() {
                 let result = execute_writer_command(&store, &mut handle, envelope.command);
+                if result.is_ok()
+                    && let Ok(mut snapshot) = worker_snapshot.lock()
+                {
+                    *snapshot = handle.manifest().clone();
+                }
                 let _ = envelope.reply.send(result);
             }
         });
@@ -119,6 +126,7 @@ impl SessionTransactionWriter {
             sender: Mutex::new(Some(sender)),
             worker: Mutex::new(Some(worker)),
             owners: AtomicUsize::new(1),
+            snapshot,
         });
         registry.insert(key, Arc::downgrade(&inner));
         Self::from_owner(inner)
@@ -192,6 +200,14 @@ impl SessionTransactionWriter {
             manifest_patch,
             operation_id,
         })
+    }
+
+    pub(crate) fn manifest_snapshot(&self) -> SessionManifest {
+        self.inner
+            .snapshot
+            .lock()
+            .map(|snapshot| snapshot.clone())
+            .unwrap_or_else(|poisoned| poisoned.into_inner().clone())
     }
 
     pub(crate) fn shutdown(&self) -> Result<(), CodingSessionError> {

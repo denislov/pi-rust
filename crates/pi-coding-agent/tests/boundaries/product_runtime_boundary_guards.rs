@@ -2429,6 +2429,8 @@ fn turn_transaction_stages_through_typed_writer_commands_without_repository_hand
         "owners: AtomicUsize",
         "SessionWriterOwnerLease",
         "release_owner",
+        "manifest_snapshot",
+        "snapshot: Arc<Mutex<SessionManifest>>",
         "const SESSION_TRANSACTION_WRITER_CAPACITY: usize",
         "sync_channel::<SessionTransactionWriterEnvelope>",
         ".try_send(envelope)",

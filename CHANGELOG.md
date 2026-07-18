@@ -63,6 +63,10 @@
   `SessionService::open()` calls for one session reuse one actor; shutting down
   one owner leaves other owners usable, and the last owner closes and joins the
   actor. Closed actors are never reused by a later open.
+- Added a writer-owned manifest snapshot for independent-open reads. Session
+  view, tree, summary, active-leaf, and default-profile reads now observe
+  successful mutations made by another open owner without relying on a stale
+  local manifest handle.
 
 ### Release Status
 
