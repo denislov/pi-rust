@@ -3,6 +3,7 @@ use super::control::{OperationControl, OperationKind};
 use super::intent::{OperationPermit, QueryIntent, QueryIntentMetadata};
 use super::operation::{OperationClass, OperationDispatchMode, OperationExecution};
 use crate::runtime::facade::CodingSessionError;
+use crate::session::id::{IdGenerator, SystemIdGenerator};
 
 /// Typed admission owner for runtime-affecting operations.
 ///
@@ -12,6 +13,11 @@ use crate::runtime::facade::CodingSessionError;
 pub(crate) struct OperationScheduler;
 
 impl OperationScheduler {
+    pub(crate) fn allocate_child_operation_id() -> String {
+        let mut ids = SystemIdGenerator;
+        ids.next_operation_id()
+    }
+
     pub(crate) fn admit(
         control: &OperationControl,
         admission: &OperationExecution,

@@ -21,7 +21,10 @@
   capability generation installation.
 - Began `RIF-001` with immutable permit-owned `OperationExecution` identity,
   freezing descriptor revision, origin, capability/session association, and
-  resolved root/parent lineage at admission.
+  resolved root/parent lineage at admission. Durable PluginLoad,
+  SelfHealingEdit, and BranchSummary transactions now reuse that admitted
+  identity; Agent/Team contexts receive it at construction and obtain nested
+  child IDs through the scheduler.
 - Replaced duplicated internal operation metadata values with one exhaustive
   descriptor table and orthogonal validated claims for lineage, session/runtime
   access, priority, capacity, durability, cancellation, children, outcomes, and

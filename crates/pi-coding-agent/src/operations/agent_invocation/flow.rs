@@ -245,7 +245,6 @@ pub(crate) struct AgentInvocationContext {
     prompt_control_receiver: Option<PromptControlReceiver>,
     prompt_outcome: Option<PromptTurnOutcome>,
     parent_capability_snapshot: Option<OperationCapabilitySnapshot>,
-    scheduler_parent_operation_id: Option<String>,
     child_capability_snapshot: Option<OperationCapabilitySnapshot>,
     child_admission: Option<crate::runtime::intent::OperationPermit>,
     pending_delegation_confirmations: Vec<PendingDelegationConfirmationState>,
@@ -259,6 +258,7 @@ impl AgentInvocationContext {
         plugin_service: PluginService,
         event_service: EventService,
         operation_control: OperationControl,
+        operation_id: String,
     ) -> Self {
         let mut ids = SystemIdGenerator;
         Self {
@@ -267,15 +267,14 @@ impl AgentInvocationContext {
             plugin_service,
             event_service,
             operation_control,
-            operation_id: ids.next_operation_id(),
-            child_operation_id: ids.next_operation_id(),
+            operation_id,
+            child_operation_id: OperationScheduler::allocate_child_operation_id(),
             turn_id: ids.next_turn_id(),
             profile: None,
             child_context: None,
             prompt_control_receiver: None,
             prompt_outcome: None,
             parent_capability_snapshot: None,
-            scheduler_parent_operation_id: None,
             child_capability_snapshot: None,
             child_admission: None,
             pending_delegation_confirmations: Vec::new(),
@@ -289,16 +288,6 @@ impl AgentInvocationContext {
     ) -> Self {
         self.parent_capability_snapshot = Some(snapshot);
         self
-    }
-
-    pub(crate) fn with_scheduler_parent_operation_id(mut self, operation_id: String) -> Self {
-        self.operation_id = operation_id.clone();
-        self.scheduler_parent_operation_id = Some(operation_id);
-        self
-    }
-
-    pub(crate) fn operation_id(&self) -> &str {
-        &self.operation_id
     }
 
     pub(crate) fn take_failure_error(&mut self) -> Option<CodingSessionError> {
@@ -415,11 +404,7 @@ impl AgentInvocationContext {
             None => OperationCapabilitySnapshot::permissive(self.child_operation_id.clone()),
         };
         if self.parent_capability_snapshot.is_none() {
-            capability_snapshot.actor = ActorId::ChildOperation(
-                self.scheduler_parent_operation_id
-                    .clone()
-                    .unwrap_or_else(|| self.operation_id.clone()),
-            );
+            capability_snapshot.actor = ActorId::ChildOperation(self.operation_id.clone());
         }
         let child_admission = OperationScheduler::admit_child(
             &self.operation_control,

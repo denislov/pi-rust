@@ -43,6 +43,7 @@ pub(crate) async fn execute_agent(
     delegation_lineage: Vec<DelegationLineageEntry>,
     parent_capability_snapshot: Option<OperationCapabilitySnapshot>,
 ) -> ApprovedDelegationExecutionOutcome {
+    let child_operation_id = OperationScheduler::allocate_child_operation_id();
     let mut context = AgentInvocationContext::new(
         AgentInvocationOptions::new(
             request.target_id.clone(),
@@ -55,8 +56,8 @@ pub(crate) async fn execute_agent(
         plugin_service,
         event_service.clone(),
         operation_control.clone(),
+        child_operation_id.clone(),
     );
-    let child_operation_id = context.operation_id().to_owned();
     let Some(parent_capability_snapshot) = parent_capability_snapshot else {
         return ApprovedDelegationExecutionOutcome {
             execution: Err(CodingSessionError::UnsupportedCapability {
@@ -133,6 +134,7 @@ pub(crate) async fn execute_team(
     delegation_lineage: Vec<DelegationLineageEntry>,
     parent_capability_snapshot: Option<OperationCapabilitySnapshot>,
 ) -> ApprovedDelegationExecutionOutcome {
+    let child_operation_id = OperationScheduler::allocate_child_operation_id();
     let mut context = AgentTeamContext::new(
         AgentTeamOptions::new(
             request.target_id.clone(),
@@ -145,8 +147,8 @@ pub(crate) async fn execute_team(
         plugin_service,
         event_service.clone(),
         operation_control.clone(),
+        child_operation_id.clone(),
     );
-    let child_operation_id = context.operation_id().to_owned();
     let Some(parent_capability_snapshot) = parent_capability_snapshot else {
         return ApprovedDelegationExecutionOutcome {
             execution: Err(CodingSessionError::UnsupportedCapability {

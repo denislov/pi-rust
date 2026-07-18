@@ -27,9 +27,9 @@ pub(crate) async fn run(
         plugin_service.clone(),
         event_service.clone(),
         operation_control.clone(),
+        scheduler_parent_operation_id,
     )
-    .with_parent_capability_snapshot(parent_capability_snapshot)
-    .with_scheduler_parent_operation_id(scheduler_parent_operation_id);
+    .with_parent_capability_snapshot(parent_capability_snapshot);
     match cancellation {
         Some(cancellation) => {
             flow_service

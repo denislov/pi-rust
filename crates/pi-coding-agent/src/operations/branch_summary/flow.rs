@@ -920,7 +920,8 @@ mod tests {
             usage: Default::default(),
             operation_statuses: Default::default(),
         };
-        let transaction = service.begin_branch_summary_transaction();
+        let transaction = service
+            .begin_branch_summary_transaction(&OperationCapabilitySnapshot::permissive("op_test"));
         let mut context = BranchSummaryContext::new(
             BranchSummaryOptions::new()
                 .with_source_leaf_id("leaf_branch")
@@ -934,6 +935,13 @@ mod tests {
         let outcome = flow.run(&mut context).await.unwrap();
 
         assert_eq!(outcome.last_node.as_str(), "finalize_branch_summary");
+        assert_eq!(context.operation_id(), "op_test");
+        assert!(
+            context
+                .pending_session_events()
+                .iter()
+                .all(|event| event.operation_id.as_deref() == Some("op_test"))
+        );
         let BranchSummaryOutcome::Created {
             summary,
             source_leaf_id,
@@ -977,7 +985,8 @@ mod tests {
                 .with_session_log_root(temp.path()),
         )
         .unwrap();
-        let transaction = service.begin_branch_summary_transaction();
+        let transaction = service
+            .begin_branch_summary_transaction(&OperationCapabilitySnapshot::permissive("op_test"));
         let mut context = BranchSummaryContext::new(
             BranchSummaryOptions::new()
                 .with_source_leaf_id("leaf_branch")
@@ -1020,7 +1029,8 @@ mod tests {
                 .with_session_log_root(temp.path()),
         )
         .unwrap();
-        let transaction = service.begin_branch_summary_transaction();
+        let transaction = service
+            .begin_branch_summary_transaction(&OperationCapabilitySnapshot::permissive("op_test"));
         let mut context = BranchSummaryContext::new(
             BranchSummaryOptions::new()
                 .with_source_leaf_id("leaf_branch")
@@ -1061,7 +1071,8 @@ mod tests {
         )
         .unwrap();
         let replay = service.replay().unwrap();
-        let transaction = service.begin_branch_summary_transaction();
+        let transaction = service
+            .begin_branch_summary_transaction(&OperationCapabilitySnapshot::permissive("op_test"));
         let mut context = BranchSummaryContext::new(
             BranchSummaryOptions::new(),
             replay,

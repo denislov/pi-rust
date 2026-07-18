@@ -42,7 +42,7 @@ pub(crate) async fn run(
     let replacement_count = replacements.len();
     let event_path = path.clone();
     let cwd = session_cwd(session_service).unwrap_or_else(default_cwd);
-    let mut transaction = session_service.begin_self_healing_edit_transaction();
+    let mut transaction = session_service.begin_self_healing_edit_transaction(snapshot);
     let operation_id = transaction.operation_id().to_owned();
     event_service.emit_self_healing_edit_started(
         operation_id.clone(),

@@ -2169,6 +2169,50 @@ fn production_runtime_has_no_permanently_disabled_fallbacks() {
 }
 
 #[test]
+fn durable_operation_paths_consume_admitted_identity_without_regeneration() {
+    let scan = SourceScan::new();
+    let transaction = fs::read_to_string(scan.crate_root.join("src/session/transaction.rs"))
+        .expect("read transaction source");
+    assert!(
+        transaction.contains("begin_admitted_with_runtime_generation"),
+        "production transaction construction must expose the admitted-identity entry point"
+    );
+    assert!(
+        transaction.matches("next_operation_id()").count() == 1,
+        "only the test-only transaction compatibility constructor may mint an identity"
+    );
+    assert_direct_cfg_test(&transaction, "pub(crate) fn begin_with_runtime_generation(");
+
+    for relative in [
+        "src/operations/agent_invocation/flow.rs",
+        "src/operations/team_invocation/flow.rs",
+    ] {
+        let source = fs::read_to_string(scan.crate_root.join(relative))
+            .expect("read invocation flow source");
+        let production = source;
+        assert!(
+            !production.contains("with_scheduler_parent_operation_id"),
+            "invocation contexts must receive their execution identity at construction: {relative}"
+        );
+        assert!(
+            !production.contains("next_operation_id()"),
+            "invocation flows must request child identities from the scheduler: {relative}"
+        );
+        assert!(
+            production.contains("OperationScheduler::allocate_child_operation_id()"),
+            "invocation flows must allocate child identities through the scheduler: {relative}"
+        );
+    }
+
+    let scheduler = fs::read_to_string(scan.crate_root.join("src/runtime/scheduler.rs"))
+        .expect("read scheduler source");
+    assert!(
+        scheduler.contains("pub(crate) fn allocate_child_operation_id()"),
+        "the scheduler must own child operation identity allocation"
+    );
+}
+
+#[test]
 fn delegated_child_flows_require_scheduler_lineage_admission() {
     let scan = SourceScan::new();
     for relative in [

@@ -519,7 +519,7 @@ impl SessionService {
         Ok(())
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn begin_prompt_transaction(&self) -> PromptTurnTransaction {
         TurnTransaction::begin(
             &self.store,
@@ -560,18 +560,22 @@ impl SessionService {
         )
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn begin_branch_summary_transaction(&self) -> PromptTurnTransaction {
-        TurnTransaction::begin(
+    pub(crate) fn begin_branch_summary_transaction(
+        &self,
+        snapshot: &OperationCapabilitySnapshot,
+    ) -> PromptTurnTransaction {
+        TurnTransaction::begin_admitted_with_runtime_generation(
             &self.store,
             self.handle.clone(),
             SystemIdGenerator,
             SystemClock,
             OperationKind::BranchSummary,
+            snapshot.persisted_runtime_generation_ref(),
+            snapshot.operation_id.clone(),
         )
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn begin_plugin_load_transaction(&self) -> PromptTurnTransaction {
         TurnTransaction::begin(
             &self.store,
@@ -586,23 +590,29 @@ impl SessionService {
         &self,
         snapshot: &OperationCapabilitySnapshot,
     ) -> PromptTurnTransaction {
-        TurnTransaction::begin_with_runtime_generation(
+        TurnTransaction::begin_admitted_with_runtime_generation(
             &self.store,
             self.handle.clone(),
             SystemIdGenerator,
             SystemClock,
             OperationKind::PluginLoad,
             snapshot.persisted_runtime_generation_ref(),
+            snapshot.operation_id.clone(),
         )
     }
 
-    pub(crate) fn begin_self_healing_edit_transaction(&self) -> PromptTurnTransaction {
-        TurnTransaction::begin(
+    pub(crate) fn begin_self_healing_edit_transaction(
+        &self,
+        snapshot: &OperationCapabilitySnapshot,
+    ) -> PromptTurnTransaction {
+        TurnTransaction::begin_admitted_with_runtime_generation(
             &self.store,
             self.handle.clone(),
             SystemIdGenerator,
             SystemClock,
             OperationKind::SelfHealingEdit,
+            snapshot.persisted_runtime_generation_ref(),
+            snapshot.operation_id.clone(),
         )
     }
 
@@ -2775,7 +2785,9 @@ mod tests {
         let mut service = SessionService::create(&options).unwrap();
         let target_leaf = record_prompt(&mut service, "keep prompt");
         let abandoned_leaf = record_prompt(&mut service, "drop prompt");
-        let mut transaction = service.begin_branch_summary_transaction();
+        let mut transaction = service.begin_branch_summary_transaction(
+            &OperationCapabilitySnapshot::permissive("op_branch_summary"),
+        );
         let operation_id = transaction.operation_id().to_owned();
         transaction
             .record_branch_summary_created(

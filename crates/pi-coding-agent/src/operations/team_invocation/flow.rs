@@ -265,7 +265,6 @@ pub(crate) struct AgentTeamContext {
     supervisor_result: Option<AgentTeamMemberOutcome>,
     final_text: Option<String>,
     parent_capability_snapshot: Option<OperationCapabilitySnapshot>,
-    scheduler_parent_operation_id: Option<String>,
     child_capability_snapshot: Option<OperationCapabilitySnapshot>,
     pending_delegation_confirmations: Vec<PendingDelegationConfirmationState>,
     failure_error: Option<CodingSessionError>,
@@ -278,15 +277,15 @@ impl AgentTeamContext {
         plugin_service: PluginService,
         event_service: EventService,
         operation_control: OperationControl,
+        operation_id: String,
     ) -> Self {
-        let mut ids = SystemIdGenerator;
         Self {
             options,
             registry,
             plugin_service,
             event_service,
             operation_control,
-            operation_id: ids.next_operation_id(),
+            operation_id,
             team: None,
             member_profiles: Vec::new(),
             supervisor_profile: None,
@@ -294,7 +293,6 @@ impl AgentTeamContext {
             supervisor_result: None,
             final_text: None,
             parent_capability_snapshot: None,
-            scheduler_parent_operation_id: None,
             child_capability_snapshot: None,
             pending_delegation_confirmations: Vec::new(),
             failure_error: None,
@@ -307,16 +305,6 @@ impl AgentTeamContext {
     ) -> Self {
         self.parent_capability_snapshot = Some(snapshot);
         self
-    }
-
-    pub(crate) fn with_scheduler_parent_operation_id(mut self, operation_id: String) -> Self {
-        self.operation_id = operation_id.clone();
-        self.scheduler_parent_operation_id = Some(operation_id);
-        self
-    }
-
-    pub(crate) fn operation_id(&self) -> &str {
-        &self.operation_id
     }
 
     pub(crate) fn take_failure_error(&mut self) -> Option<CodingSessionError> {
@@ -459,7 +447,7 @@ impl AgentTeamContext {
         prompt_text: String,
     ) -> Result<AgentTeamMemberOutcome, CodingSessionError> {
         let mut ids = SystemIdGenerator;
-        let child_operation_id = ids.next_operation_id();
+        let child_operation_id = OperationScheduler::allocate_child_operation_id();
         let turn_id = ids.next_turn_id();
         self.event_service.emit_agent_team_member_started(
             self.operation_id.clone(),
@@ -500,11 +488,7 @@ impl AgentTeamContext {
             None => OperationCapabilitySnapshot::permissive(child_operation_id.clone()),
         };
         if self.parent_capability_snapshot.is_none() {
-            capability_snapshot.actor = ActorId::ChildOperation(
-                self.scheduler_parent_operation_id
-                    .clone()
-                    .unwrap_or_else(|| self.operation_id.clone()),
-            );
+            capability_snapshot.actor = ActorId::ChildOperation(self.operation_id.clone());
         }
         let child_admission = OperationScheduler::admit_child(
             &self.operation_control,
@@ -806,8 +790,8 @@ mod tests {
             PluginService::new(),
             event_service,
             OperationControl::new(),
-        )
-        .with_scheduler_parent_operation_id("op_team".into());
+            "op_team".into(),
+        );
 
         context.fail(CodingSessionError::Cancelled);
         context.fail(CodingSessionError::Provider {

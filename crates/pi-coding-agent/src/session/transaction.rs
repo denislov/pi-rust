@@ -4,6 +4,7 @@ use pi_ai::api::conversation::Usage;
 use serde_json::Value;
 
 use super::id::{Clock, IdGenerator};
+#[cfg(test)]
 use super::manifest::SessionManifest;
 use super::repository::{ManifestPatch, SessionHandle, SessionLogStore};
 use crate::operations::self_healing_edit::flow::{
@@ -18,6 +19,7 @@ use crate::session::event::{
     SessionEventData, SessionEventEnvelope,
 };
 
+#[cfg(test)]
 const BASELINE_CAPABILITY_GENERATION: u64 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,6 +66,7 @@ where
     G: IdGenerator,
     C: Clock,
 {
+    #[cfg(test)]
     pub(crate) fn begin(
         store: &SessionLogStore,
         handle: SessionHandle,
@@ -82,6 +85,7 @@ where
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn begin_with_runtime_generation(
         store: &SessionLogStore,
         handle: SessionHandle,
@@ -596,6 +600,7 @@ where
     }
 }
 
+#[cfg(test)]
 fn runtime_generation_for_operation(
     manifest: &SessionManifest,
     operation: &OperationKind,

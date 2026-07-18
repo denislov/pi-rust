@@ -35,10 +35,9 @@ pub(crate) fn reused_outcome(
         return Ok(None);
     };
     let mut ids = SystemIdGenerator;
-    let operation_id = ids.next_operation_id();
     let turn_id = ids.next_turn_id();
     Ok(Some(branch_summary_success_outcome(
-        operation_id,
+        snapshot.operation_id.clone(),
         turn_id,
         session_service.session_id().to_owned(),
         session_service.active_leaf_id().map(str::to_owned),
@@ -70,7 +69,7 @@ pub(crate) async fn run(
         branch_options = branch_options.with_custom_instructions(custom_instructions);
     }
     let replay = session_service.replay()?;
-    let transaction = session_service.begin_branch_summary_transaction();
+    let transaction = session_service.begin_branch_summary_transaction(snapshot);
     let mut context =
         BranchSummaryContext::new(branch_options, replay, transaction, snapshot.clone());
     let operation_id = context.operation_id().to_owned();
