@@ -48,8 +48,8 @@ function capabilityPrototype() {
 async function wasmIsolationPrototype() {
   // Minimal module exporting one page of memory. It deliberately avoids a
   // compiler/toolchain dependency while proving that two invocations do not
-  // share mutable guest memory. ADR-003 remains Proposed until a real engine
-  // prototype also proves async cancellation, epoch interruption, and fuel.
+  // share mutable guest memory. The separate locked Wasmtime fixture proves
+  // async cancellation, epoch interruption, fuel, and memory-limit behavior.
   const moduleBytes = Uint8Array.from([
     0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
     0x05, 0x03, 0x01, 0x00, 0x01,

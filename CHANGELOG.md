@@ -10,9 +10,9 @@
   extension-platform, dependency, and testing contracts, plus versioned current
   state, ADRs, and migration evidence.
 - Accepted runtime-owner/finalization, `RecoveryPending`, extension grant/lease,
-  state/fact, and Workbench protocol decisions with an offline disposable
-  contract prototype. Isolated Wasm invocation remains Proposed pending real
-  engine cancellation/epoch/fuel/limit evidence.
+  state/fact, Workbench protocol, and isolated Wasm invocation decisions. Their
+  disposable evidence now includes locked real-engine cancellation, epoch, fuel,
+  memory/disposal, and TypeScript-to-WIT Component fixtures.
 
 ### Runtime Integrity
 
@@ -22,8 +22,9 @@
 
 ### Release Status
 
-- `RIF-005` is complete and `RIF-006` is in progress. Workspace packages remain
-  at `0.3.1` until all `0.4.0` implementation, debt, and release gates close.
+- `RIF-005` and `RIF-006` are complete; `RIF-001` and `RIF-007` are next.
+  Workspace packages remain at `0.3.1` until all `0.4.0` implementation, debt,
+  and release gates close.
 
 ## 0.3.1 - 2026-07-18
 

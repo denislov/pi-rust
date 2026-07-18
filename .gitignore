@@ -1,3 +1,9 @@
 /target
 .codegraph
 Cargo.lock
+node_modules/
+
+# Architecture prototypes are independent reproducibility fixtures. Their
+# product-independent lockfiles are committed even though nested Cargo locks are
+# otherwise ignored.
+!tools/architecture-prototypes/wasmtime-harness/Cargo.lock

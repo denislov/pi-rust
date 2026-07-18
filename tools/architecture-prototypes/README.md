@@ -1,7 +1,9 @@
 # 0.4.0 Disposable Architecture Prototypes
 
-These zero-dependency, offline prototypes validate decision semantics without
-adding an extension runtime or production dependency in `0.4.0`.
+These disposable, offline-capable prototypes validate decision semantics without
+adding an extension runtime or production dependency in `0.4.0`. The JavaScript
+contract fixture has no dependencies; the real toolchain fixtures use committed
+lockfiles and remain outside the product workspace.
 
 Run from the project root:
 
@@ -22,9 +24,30 @@ The prototype covers:
 - `ADR-005`: two materially different semantic views, revision-based patches,
   deterministic stale-patch resync, and client-local transient state.
 
-This prototype intentionally does **not** close `ADR-003`. The local environment
-does not currently contain Wasmtime or a TypeScript/WIT componentizer. Acceptance
-still requires a real engine fixture proving async Host API cancellation, Tokio
-deadline integration, epoch interruption, deterministic fuel, memory/output
-limits, and destruction of cancelled/trapped instances. Simulating those
-properties in JavaScript would not be valid evidence.
+The JavaScript fixture alone does **not** close `ADR-003`; its engine simulation
+is intentionally limited to Store/Instance memory isolation.
+
+The separate real-engine harness is excluded from the product workspace and pins
+Wasmtime `46.0.1`. Its runner forces all Cargo output under the project root:
+
+```bash
+bash tools/architecture-prototypes/run-wasmtime.sh
+```
+
+It proves per-Store memory isolation, a memory growth limit, deterministic fuel
+exhaustion, epoch interruption of non-yielding async guest compute, host deadline
+cancellation of a pending async Host API, explicit Store disposal, and successful
+execution only in a fresh replacement Store.
+
+The TypeScript fixture pins Jco, componentize-js, and TypeScript with an npm
+lockfile. Its runner type-checks the guest, emits JavaScript, creates a Wasm
+Component from the WIT world, and verifies the WIT embedded in the result. All
+generated output is forced under the project root:
+
+```bash
+bash tools/architecture-prototypes/run-typescript-component.sh
+```
+
+Together these fixtures close the decision uncertainty needed for `ADR-003`.
+Production Host API generation, budget enforcement, and final toolchain support
+remain `0.4.2` `EKR-004` implementation concerns.

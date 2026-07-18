@@ -20,7 +20,7 @@ failure/security consequences, compatibility, and verification.
 | --- | --- | --- | --- | --- | --- |
 | [ADR-001](ADR-001-runtime-owner-and-finalization.md) | runtime owner graph and typed finalization handoff | Accepted 2026-07-18 | `0.4.0` | owner-edge, identity, writer, outbox, shutdown matrices | `RIF-001`, `RIF-002`, `RIF-007`–`RIF-009` |
 | [ADR-002](ADR-002-extension-grants-and-leases.md) | instance grants and operation leases | Accepted 2026-07-18 | `0.4.0`, implement `0.4.2` | offline revoke/stale-generation prototype passed | `EKR-003` |
-| [ADR-003](ADR-003-isolated-wasm-invocation.md) | isolated per-invocation Wasm Store/Instance | Proposed | `0.4.0`, implement `0.4.2` | real-engine async cancel/fuel/epoch/memory prototype still required | `EKR-004` |
+| [ADR-003](ADR-003-isolated-wasm-invocation.md) | isolated per-invocation Wasm Store/Instance | Accepted 2026-07-18 | `0.4.0`, implement `0.4.2` | locked Wasmtime async cancel/fuel/epoch/memory and TypeScript/WIT component fixtures passed | `EKR-004` |
 | [ADR-004](ADR-004-extension-state-and-facts.md) | extension state/fact scopes and transaction boundaries | Accepted 2026-07-18 | `0.4.0`, complete `0.4.3` | offline state/outbox/activation prototype passed | `ESS-001`–`ESS-003`, `ESS-006` |
 | [ADR-005](ADR-005-workbench-protocol.md) | Workbench retained snapshot/patch/state protocol | Accepted 2026-07-18 | `0.4.0`, freeze `0.4.4` | two-view revision/gap/resync prototype passed | `WAP-001`, `WAP-002` |
 | ADR-006 | Application Profile composition | Scheduled | `0.4.4` before `WAP-002` | base/overlay/conflict/degraded matrix | `WAP-001`, `WAP-004` |

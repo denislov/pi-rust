@@ -60,8 +60,10 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   and background extension services do not exist.
 - `tools/architecture-prototypes/runtime-contracts.mjs` is decision evidence for
   capability generation, state/fact boundaries, per-invocation memory isolation,
-  and Workbench revision/resync. It is not a production runtime; real Wasm engine
-  interruption/limit evidence remains open under `ADR-003`.
+  and Workbench revision/resync. Locked standalone Wasmtime and TypeScript/Jco
+  fixtures add real-engine interruption/limit/disposal and typed WIT Component
+  evidence for accepted `ADR-003`. They are not production runtime dependencies;
+  the full extension kernel remains scheduled for `0.4.2`.
 
 ## Evidence Maintenance
 
