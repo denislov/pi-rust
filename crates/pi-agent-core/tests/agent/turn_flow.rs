@@ -1392,7 +1392,7 @@ async fn decide_node_extracts_tool_calls_and_returns_tools_action() {
 }
 
 #[tokio::test]
-async fn decide_after_assistant_tool_use_without_calls_routes_to_tools() {
+async fn decide_after_assistant_tool_use_without_calls_fails_deterministically() {
     let should_stop_calls = Arc::new(AtomicUsize::new(0));
     let should_stop_calls_for_hook = should_stop_calls.clone();
     let prepare_calls = Arc::new(AtomicUsize::new(0));
@@ -1448,9 +1448,17 @@ async fn decide_after_assistant_tool_use_without_calls_routes_to_tools() {
         )
         .unwrap();
 
-    let outcome = flow.run(&mut context).await.unwrap();
-
-    assert_eq!(outcome.last_node.as_str(), "drain_queued_input");
+    let error = flow.run(&mut context).await.unwrap_err();
+    assert!(matches!(
+        error,
+        pi_agent_core::api::flow::FlowError::MissingTransition { .. }
+    ));
+    assert!(context.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::AgentError { error }
+            if error == "tool-use response contained no tool calls"
+    )));
+    assert!(context.should_finish);
     assert!(context.pending_tool_calls.is_empty());
     assert_eq!(should_stop_calls.load(Ordering::SeqCst), 0);
     assert_eq!(prepare_calls.load(Ordering::SeqCst), 0);

@@ -13,6 +13,10 @@
   now explicitly non-durable and retained only for tests/compatibility and the
   temporary AgentTurn migration scaffold; fixed product workflows are assigned
   to typed pipelines or structured concurrency.
+- Started `AWC-005` correctness convergence: concurrent Agent admission now
+  returns typed `AgentAdmissionError` values without panicking, empty ToolUse
+  terminals fail deterministically, runtime/queue/turn message IDs avoid
+  collisions, and Unicode resource limits count characters rather than bytes.
 
 ## 0.4.0 - 2026-07-19
 

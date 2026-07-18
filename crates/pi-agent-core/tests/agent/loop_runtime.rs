@@ -684,6 +684,47 @@ async fn abort_mid_turn_yields_error() {
 }
 
 #[tokio::test]
+async fn concurrent_prompt_returns_typed_busy_admission_error() {
+    let api_key = "test-concurrent-prompt-admission";
+    let _provider_guard = ProviderGuard::register(api_key, Arc::new(TestProvider::new(vec![])));
+    let agent = Agent::new(test_config(api_key, Some(&_provider_guard)));
+    let first = agent.prompt("first");
+    let error = match agent.try_prompt("second") {
+        Ok(_) => panic!("concurrent prompt should be rejected"),
+        Err(error) => error,
+    };
+    assert!(matches!(
+        error,
+        pi_agent_core::api::agent::AgentAdmissionError::Busy {
+            operation: "prompt"
+        }
+    ));
+    drop(first);
+}
+
+#[test]
+fn queued_message_ids_remain_unique_across_existing_messages_and_queues() {
+    let api_key = "test-queued-message-id-uniqueness";
+    let _provider_guard = ProviderGuard::register(api_key, Arc::new(TestProvider::new(vec![])));
+    let agent = Agent::new(test_config(api_key, Some(&_provider_guard)));
+    agent.add_message(AgentMessage::UserText {
+        message_id: "steer_0".into(),
+        text: "existing".into(),
+    });
+    agent.steer("one");
+    agent.steer("two");
+    let queued = agent.drain_steering_queue();
+    let ids: Vec<_> = queued
+        .iter()
+        .map(|message| match message {
+            AgentMessage::UserText { message_id, .. } => message_id.as_str(),
+            _ => "unexpected",
+        })
+        .collect();
+    assert_eq!(ids, vec!["steer_1", "steer_2"]);
+}
+
+#[tokio::test]
 async fn provider_error_event_preserves_error_message() {
     let api_key = "test-api-provider-error";
     let mut message = AssistantMessage::empty("test", "test-model");

@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -391,7 +392,7 @@ pub async fn maybe_compact_runtime_context(ctx: &mut AgentTurnContext) -> Result
 
     let mut compacted = Vec::with_capacity(1 + keep.len());
     compacted.push(AgentMessage::CompactionSummary {
-        message_id: format!("compaction_{}", tokens_before),
+        message_id: unique_message_id(&ctx.messages, format!("compaction_{}", tokens_before)),
         summary: summary.clone(),
         tokens_before,
     });
@@ -469,8 +470,15 @@ pub fn decide_after_assistant(ctx: &mut AgentTurnContext) -> Result<Action, Stri
         .clone()
         .ok_or_else(|| "assistant message is not available".to_string())?;
 
+    let assistant_id = unique_message_id(
+        &ctx.messages,
+        assistant
+            .response_id
+            .clone()
+            .unwrap_or_else(|| format!("assistant_{}", ctx.turn)),
+    );
     ctx.messages.push(AgentMessage::Assistant {
-        message_id: assistant.response_id.clone().unwrap_or_default(),
+        message_id: assistant_id,
         message: assistant.clone(),
     });
 
@@ -494,13 +502,30 @@ pub fn decide_after_assistant(ctx: &mut AgentTurnContext) -> Result<Action, Stri
         }
         StopReason::ToolUse => {
             let tool_calls = extract_tool_calls(&assistant);
+            if tool_calls.is_empty() {
+                ctx.should_finish = true;
+                ctx.emit(AgentEvent::AgentError {
+                    error: "tool-use response contained no tool calls".into(),
+                });
+                return action(ACTION_ERROR);
+            }
+            let mut used = ctx
+                .messages
+                .iter()
+                .map(AgentMessage::message_id)
+                .map(str::to_owned)
+                .collect::<HashSet<_>>();
             ctx.pending_tool_calls = tool_calls
                 .into_iter()
-                .map(|call| PendingToolCall {
-                    index: call.index,
-                    id: call.tool_call_id,
-                    name: call.tool_name,
-                    arguments: call.arguments,
+                .map(|call| {
+                    let id = unique_id(&used, call.tool_call_id);
+                    used.insert(id.clone());
+                    PendingToolCall {
+                        index: call.index,
+                        id,
+                        name: call.tool_name,
+                        arguments: call.arguments,
+                    }
                 })
                 .collect();
             action(ACTION_TOOLS)
@@ -936,6 +961,29 @@ fn aborted(ctx: &mut AgentTurnContext) -> Result<Action, String> {
         error: "aborted".into(),
     });
     action(ACTION_ABORTED)
+}
+
+fn unique_message_id(messages: &[AgentMessage], preferred: String) -> String {
+    let used = messages
+        .iter()
+        .map(AgentMessage::message_id)
+        .map(str::to_owned)
+        .collect::<HashSet<_>>();
+    unique_id(&used, preferred)
+}
+
+fn unique_id(used: &HashSet<String>, preferred: String) -> String {
+    if !used.contains(&preferred) {
+        return preferred;
+    }
+    let mut suffix = 1u64;
+    loop {
+        let candidate = format!("{preferred}_{suffix}");
+        if !used.contains(&candidate) {
+            return candidate;
+        }
+        suffix += 1;
+    }
 }
 
 fn action(value: &str) -> Result<Action, String> {

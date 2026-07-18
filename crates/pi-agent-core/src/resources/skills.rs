@@ -135,12 +135,10 @@ fn load_skill_file(
         .and_then(|p| p.file_name())
         .map(|n| n.to_string_lossy().to_string());
 
-    let frontmatter_name = meta.get("name").and_then(|v| v.as_str()).map(|s| {
-        let capped: String = s.chars().take(64).collect();
-        capped
-    });
+    let frontmatter_name = meta.get("name").and_then(|v| v.as_str()).map(str::to_owned);
     let name = frontmatter_name
         .clone()
+        .map(|value| value.chars().take(64).collect())
         .unwrap_or_else(|| fallback_name(path));
 
     // Validate name against TS `validateName` rules.
@@ -157,7 +155,7 @@ fn load_skill_file(
             path: path.clone(),
         });
     }
-    for error in validate_skill_name(&name) {
+    for error in validate_skill_name(frontmatter_name.as_deref().unwrap_or(&name)) {
         diagnostics.push(ResourceDiagnostic {
             severity: DiagnosticSeverity::Warning,
             code: "invalid_metadata".into(),
@@ -166,10 +164,13 @@ fn load_skill_file(
         });
     }
 
-    let description = meta.get("description").and_then(|v| v.as_str()).map(|s| {
-        let capped: String = s.chars().take(1024).collect();
-        capped
-    });
+    let description_raw = meta
+        .get("description")
+        .and_then(|v| v.as_str())
+        .map(str::to_owned);
+    let description = description_raw
+        .clone()
+        .map(|value| value.chars().take(1024).collect::<String>());
 
     // Reject skills with empty description (TS behavior).
     if description.as_deref().is_none_or(|d| d.trim().is_empty()) {
@@ -182,13 +183,17 @@ fn load_skill_file(
         return None;
     }
 
-    if let Some(ref desc) = description
-        && desc.len() > 1024
+    if let Some(ref desc) = description_raw
+        && desc.chars().count() > 1024
     {
         diagnostics.push(ResourceDiagnostic {
             severity: DiagnosticSeverity::Warning,
             code: "invalid_metadata".into(),
-            message: format!("description exceeds {} characters ({})", 1024, desc.len()),
+            message: format!(
+                "description exceeds {} characters ({})",
+                1024,
+                desc.chars().count()
+            ),
             path: path.clone(),
         });
     }
@@ -218,8 +223,9 @@ fn load_skill_file(
 /// - max 64 characters
 fn validate_skill_name(name: &str) -> Vec<String> {
     let mut errors = Vec::new();
-    if name.len() > 64 {
-        errors.push(format!("name exceeds 64 characters ({})", name.len()));
+    let character_count = name.chars().count();
+    if character_count > 64 {
+        errors.push(format!("name exceeds 64 characters ({character_count})"));
     }
     if !name
         .chars()
@@ -345,5 +351,30 @@ mod tests {
                 .iter()
                 .any(|d| d.message.contains("invalid characters"))
         );
+    }
+
+    #[test]
+    fn validates_unicode_name_and_description_lengths_by_characters() {
+        let dir = TempDir::new().unwrap();
+        let skill_md = dir.path().join("SKILL.md");
+        let long_name = "a".repeat(65);
+        let long_description = "界".repeat(1025);
+        std::fs::write(
+            &skill_md,
+            format!("---\nname: {long_name}\ndescription: {long_description}\n---\n\ncontent"),
+        )
+        .unwrap();
+        let (skills, diags) = load_skills(&[dir.path().to_path_buf()]);
+        assert_eq!(skills.len(), 1);
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.message.contains("name exceeds 64 characters (65)"))
+        );
+        assert!(diags.iter().any(|d| {
+            d.message
+                .contains("description exceeds 1024 characters (1025)")
+        }));
+        assert_eq!(skills[0].description.chars().count(), 1024);
     }
 }

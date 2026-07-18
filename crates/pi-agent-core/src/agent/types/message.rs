@@ -54,3 +54,18 @@ pub enum AgentMessage {
         timestamp: u64,
     },
 }
+
+impl AgentMessage {
+    pub(crate) fn message_id(&self) -> &str {
+        match self {
+            Self::UserText { message_id, .. }
+            | Self::Assistant { message_id, .. }
+            | Self::ToolResult { message_id, .. }
+            | Self::SystemPrompt { message_id, .. }
+            | Self::CompactionSummary { message_id, .. }
+            | Self::BashExecution { message_id, .. }
+            | Self::Custom { message_id, .. }
+            | Self::BranchSummary { message_id, .. } => message_id,
+        }
+    }
+}

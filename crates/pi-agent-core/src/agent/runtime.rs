@@ -16,6 +16,16 @@ use std::sync::{
 };
 use tokio_util::sync::CancellationToken;
 
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum AgentAdmissionError {
+    #[error("agent is busy while starting {operation}")]
+    Busy { operation: &'static str },
+    #[error("cannot continue: no messages in context")]
+    EmptyContext,
+    #[error("cannot continue from message role: assistant")]
+    AssistantTail,
+}
+
 pub struct AgentState {
     pub messages: Vec<AgentMessage>,
     pub tools: Vec<AgentTool>,
@@ -119,59 +129,47 @@ impl Agent {
     }
 
     pub fn steer(&self, text: impl Into<String>) {
-        let msg_count = self.state.read().unwrap().steering_queue.len();
-        self.state
-            .write()
-            .unwrap()
-            .steering_queue
-            .push_back(AgentMessage::UserText {
-                message_id: format!("steer_{}", msg_count),
-                text: text.into(),
-            });
+        let mut state = self.state.write().unwrap();
+        let message_id = next_message_id(&state, "steer");
+        state.steering_queue.push_back(AgentMessage::UserText {
+            message_id,
+            text: text.into(),
+        });
     }
 
     pub fn steer_content(&self, content: Vec<pi_ai::api::conversation::ContentBlock>) {
-        let msg_count = self.state.read().unwrap().steering_queue.len();
-        self.state
-            .write()
-            .unwrap()
-            .steering_queue
-            .push_back(AgentMessage::Custom {
-                message_id: format!("steer_{}", msg_count),
-                custom_type: "input".into(),
-                content,
-                display: true,
-                details: None,
-                timestamp: 0,
-            });
+        let mut state = self.state.write().unwrap();
+        let message_id = next_message_id(&state, "steer");
+        state.steering_queue.push_back(AgentMessage::Custom {
+            message_id,
+            custom_type: "input".into(),
+            content,
+            display: true,
+            details: None,
+            timestamp: 0,
+        });
     }
 
     pub fn follow_up(&self, text: impl Into<String>) {
-        let msg_count = self.state.read().unwrap().follow_up_queue.len();
-        self.state
-            .write()
-            .unwrap()
-            .follow_up_queue
-            .push_back(AgentMessage::UserText {
-                message_id: format!("followup_{}", msg_count),
-                text: text.into(),
-            });
+        let mut state = self.state.write().unwrap();
+        let message_id = next_message_id(&state, "followup");
+        state.follow_up_queue.push_back(AgentMessage::UserText {
+            message_id,
+            text: text.into(),
+        });
     }
 
     pub fn follow_up_content(&self, content: Vec<pi_ai::api::conversation::ContentBlock>) {
-        let msg_count = self.state.read().unwrap().follow_up_queue.len();
-        self.state
-            .write()
-            .unwrap()
-            .follow_up_queue
-            .push_back(AgentMessage::Custom {
-                message_id: format!("followup_{}", msg_count),
-                custom_type: "input".into(),
-                content,
-                display: true,
-                details: None,
-                timestamp: 0,
-            });
+        let mut state = self.state.write().unwrap();
+        let message_id = next_message_id(&state, "followup");
+        state.follow_up_queue.push_back(AgentMessage::Custom {
+            message_id,
+            custom_type: "input".into(),
+            content,
+            display: true,
+            details: None,
+            timestamp: 0,
+        });
     }
 
     pub fn clear_queues(&self) {
@@ -209,7 +207,8 @@ impl Agent {
             &skill.content,
             additional_instructions,
         );
-        Ok(self.prompt_internal(prompt))
+        self.try_prompt_internal(prompt)
+            .map_err(|error| error.to_string())
     }
 
     pub fn prompt_from_template(&self, name: &str, args: &[String]) -> Result<AgentStream, String> {
@@ -220,25 +219,26 @@ impl Agent {
             .find(|t| t.name == name)
             .ok_or_else(|| format!("prompt template '{name}' not found"))?;
         let prompt = format_prompt_template_invocation(&template.name, &template.content, args);
-        Ok(self.prompt_internal(prompt))
+        self.try_prompt_internal(prompt)
+            .map_err(|error| error.to_string())
     }
 
-    fn prompt_internal(&self, text: String) -> AgentStream {
-        if self.running.swap(true, Ordering::SeqCst) {
-            panic!("prompt() called while agent is already running");
-        }
-
+    fn try_prompt_internal(&self, text: String) -> Result<AgentStream, AgentAdmissionError> {
+        self.running
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .map_err(|_| AgentAdmissionError::Busy {
+                operation: "prompt",
+            })?;
         {
             let mut state = self.state.write().unwrap();
             state.cancel_token = CancellationToken::new();
-            let msg_count = state.messages.len();
-            state.messages.push(AgentMessage::UserText {
-                message_id: format!("user_{}", msg_count),
-                text,
-            });
+            let message_id = next_message_id(&state, "user");
+            state
+                .messages
+                .push(AgentMessage::UserText { message_id, text });
         }
 
-        self.run_locked()
+        Ok(self.run_locked())
     }
 
     fn run_locked(&self) -> AgentStream {
@@ -260,7 +260,14 @@ impl Agent {
     /// Returns an AgentStream that yields events until the model stops
     /// or an error occurs.
     pub fn prompt(&self, text: &str) -> AgentStream {
-        self.prompt_internal(text.to_string())
+        match self.try_prompt(text) {
+            Ok(stream) => stream,
+            Err(error) => error_stream(error.to_string()),
+        }
+    }
+
+    pub fn try_prompt(&self, text: &str) -> Result<AgentStream, AgentAdmissionError> {
+        self.try_prompt_internal(text.to_string())
     }
 
     /// Runs the model/tool loop with the messages already present on the agent.
@@ -270,19 +277,23 @@ impl Agent {
     /// Mirrors TS `agentLoopContinue`: returns `Err` if `messages` is empty or
     /// the last message is an assistant message.
     pub fn run(&self) -> Result<AgentStream, String> {
+        self.try_run().map_err(|error| error.to_string())
+    }
+
+    pub fn try_run(&self) -> Result<AgentStream, AgentAdmissionError> {
         {
             let s = self.state.read().unwrap();
             if s.messages.is_empty() {
-                return Err("Cannot continue: no messages in context".into());
+                return Err(AgentAdmissionError::EmptyContext);
             }
             if matches!(s.messages.last(), Some(AgentMessage::Assistant { .. })) {
-                return Err("Cannot continue from message role: assistant".into());
+                return Err(AgentAdmissionError::AssistantTail);
             }
         }
 
-        if self.running.swap(true, Ordering::SeqCst) {
-            panic!("run() called while agent is already running");
-        }
+        self.running
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .map_err(|_| AgentAdmissionError::Busy { operation: "run" })?;
 
         {
             self.state.write().unwrap().cancel_token = CancellationToken::new();
@@ -326,5 +337,28 @@ impl Agent {
     /// Cancels an in-flight loop. Safe to call from another task.
     pub fn abort(&self) {
         self.state.read().unwrap().cancel_token.cancel();
+    }
+}
+
+fn error_stream(error: String) -> AgentStream {
+    Box::pin(async_stream::stream! {
+        yield crate::agent::types::AgentEvent::AgentError { error };
+    })
+}
+
+fn next_message_id(state: &AgentState, prefix: &str) -> String {
+    let mut index = 0u64;
+    loop {
+        let candidate = format!("{prefix}_{index}");
+        let used = state
+            .messages
+            .iter()
+            .chain(state.steering_queue.iter())
+            .chain(state.follow_up_queue.iter())
+            .any(|message| message.message_id() == candidate);
+        if !used {
+            return candidate;
+        }
+        index += 1;
     }
 }

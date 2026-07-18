@@ -524,8 +524,9 @@ impl AgentHarness {
 
     pub fn prompt(&self, text: &str) -> AgentHarnessStream {
         let mut messages = self.agent.messages();
+        let message_id = next_message_id(&messages, "user");
         messages.push(AgentMessage::UserText {
-            message_id: format!("user_{}", messages.len()),
+            message_id,
             text: text.to_string(),
         });
         let agent = self.agent.clone();
@@ -679,6 +680,20 @@ impl AgentHarness {
             }
             yield emit!(AgentHarnessEvent::Settled);
         })
+    }
+}
+
+fn next_message_id(messages: &[AgentMessage], prefix: &str) -> String {
+    let mut index = 0u64;
+    loop {
+        let candidate = format!("{prefix}_{index}");
+        if !messages
+            .iter()
+            .any(|message| message.message_id() == candidate)
+        {
+            return candidate;
+        }
+        index += 1;
     }
 }
 
