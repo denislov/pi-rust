@@ -100,6 +100,9 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   client projection, print/JSON, RPC, and interactive adapters exist.
 - A durable ProductEvent outbox sharing the SessionEvent commit point does not yet
   exist; `RIF-009` owns it.
+- The retained broadcast window is live delivery/replay state, not durable
+  evidence. `RIF-009-001` must define an outbox record and semantic identity
+  before a writer batch can claim session/outbox atomicity.
 - The current transaction may append facts and then fail a manifest refresh,
   producing partial-commit uncertainty that startup recovery can inspect.
 
