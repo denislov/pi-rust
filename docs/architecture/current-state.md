@@ -165,13 +165,14 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   success/failure/abort and non-leaf commit/failure paths. Remaining
   operation-terminal publication stays open under `RIF-002`; recovery
   publication now persists
-  `Recovery` outbox records atomically with `OperationRecovered` facts, while
-  broader restart reconciliation remains open under `RIF-009-004`.
+  `Recovery` outbox records atomically with non-terminal
+  `OperationRecoveryPending` facts, while broader restart reconciliation remains
+  open under `RIF-009-004`.
   Prompt terminal publication now occurs only after the terminal fact/outbox
   commit succeeds. Compact success/failure, PluginLoad success/failure/abort,
   and SelfHealingEdit success/failure/abort now use the same ordering and an
-  outbox operation-kind hint for correct restart redelivery; remaining
-  session terminal families remain open. Standalone AgentInvocation/AgentTeam
+  outbox operation-kind hint for correct restart redelivery. BranchSummary is
+  intentionally outcome-acknowledged. Standalone AgentInvocation/AgentTeam
   are non-session ProductEvent terminals and do not create session outbox rows.
   `RIF-009-004` now owns the next
   restart/reconnect/redelivery consistency slice. The completed cursor work:
