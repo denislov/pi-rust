@@ -5754,6 +5754,11 @@ runtime = "lua"
                 CodingAgentWorkflowProductEvent::PromptFailed { .. } => "prompt_failed",
                 CodingAgentWorkflowProductEvent::PromptAborted { .. } => "prompt_aborted",
                 CodingAgentWorkflowProductEvent::OperationRecovered { .. } => "operation_recovered",
+                CodingAgentWorkflowProductEvent::PluginLoadCompleted { .. } => {
+                    "plugin_load_completed"
+                }
+                CodingAgentWorkflowProductEvent::PluginLoadFailed { .. } => "plugin_load_failed",
+                CodingAgentWorkflowProductEvent::PluginLoadAborted { .. } => "plugin_load_aborted",
             },
             CodingAgentProductEventKind::Diagnostic(
                 CodingAgentDiagnosticProductEvent::Diagnostic { .. },

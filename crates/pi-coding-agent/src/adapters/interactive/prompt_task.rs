@@ -1671,9 +1671,11 @@ async fn run_coding_plugin_reload_task(
         }
         }?;
 
-    while let Ok(Some(event)) = receiver.try_recv() {
-        let _ = event_tx.send(PromptTaskEvent::Coding(event));
-    }
+        while let Ok(Some(event)) = receiver.try_recv() {
+            let _ = event_tx.send(PromptTaskEvent::Coding(event));
+        }
+
+        send_ui_snapshot(&event_tx, &session);
 
         Ok(outcome)
     }

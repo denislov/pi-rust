@@ -458,6 +458,11 @@ fn inferred_event_operation_kind(event: &CodingAgentProductEventKind) -> &'stati
         ) => "prompt",
         CodingAgentProductEventKind::Team(_) => "agent_team",
         CodingAgentProductEventKind::Workflow(
+            CodingAgentWorkflowProductEvent::PluginLoadCompleted { .. }
+            | CodingAgentWorkflowProductEvent::PluginLoadFailed { .. }
+            | CodingAgentWorkflowProductEvent::PluginLoadAborted { .. },
+        ) => "plugin_load",
+        CodingAgentProductEventKind::Workflow(
             CodingAgentWorkflowProductEvent::SelfHealingEditStarted { .. }
             | CodingAgentWorkflowProductEvent::SelfHealingEditRepairAttempted { .. }
             | CodingAgentWorkflowProductEvent::SelfHealingEditCompleted { .. }

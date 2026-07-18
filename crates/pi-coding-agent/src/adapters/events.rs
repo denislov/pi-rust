@@ -306,6 +306,15 @@ impl CodingProtocolEventAdapter {
                 reason: reason.clone(),
             }],
             CodingAgentProductEventKind::Workflow(
+                CodingAgentWorkflowProductEvent::PluginLoadCompleted { .. },
+            )
+            | CodingAgentProductEventKind::Workflow(
+                CodingAgentWorkflowProductEvent::PluginLoadFailed { .. },
+            )
+            | CodingAgentProductEventKind::Workflow(
+                CodingAgentWorkflowProductEvent::PluginLoadAborted { .. },
+            ) => Vec::new(),
+            CodingAgentProductEventKind::Workflow(
                 CodingAgentWorkflowProductEvent::SelfHealingEditStarted {
                     operation_id,
                     path,

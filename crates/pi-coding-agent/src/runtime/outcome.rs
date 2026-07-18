@@ -165,6 +165,9 @@ pub(crate) enum OperationRootTerminalEvidence {
     AgentTeamCompleted,
     AgentTeamFailed,
     AgentTeamAborted,
+    PluginLoadCompleted,
+    PluginLoadFailed,
+    PluginLoadAborted,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -219,6 +222,11 @@ const AGENT_TEAM_ROOT_EVIDENCE: &[OperationRootTerminalEvidence] = &[
     OperationRootTerminalEvidence::AgentTeamFailed,
     OperationRootTerminalEvidence::AgentTeamAborted,
 ];
+const PLUGIN_LOAD_ROOT_EVIDENCE: &[OperationRootTerminalEvidence] = &[
+    OperationRootTerminalEvidence::PluginLoadCompleted,
+    OperationRootTerminalEvidence::PluginLoadFailed,
+    OperationRootTerminalEvidence::PluginLoadAborted,
+];
 
 pub(crate) fn product_terminal_operation(
     kind: OperationKind,
@@ -231,8 +239,8 @@ pub(crate) fn product_terminal_operation(
         OperationKind::SelfHealingEdit => SELF_HEALING_EDIT_ROOT_EVIDENCE,
         OperationKind::AgentInvocation => AGENT_INVOCATION_ROOT_EVIDENCE,
         OperationKind::AgentTeam => AGENT_TEAM_ROOT_EVIDENCE,
-        OperationKind::PluginLoad
-        | OperationKind::PluginCommand
+        OperationKind::PluginLoad => PLUGIN_LOAD_ROOT_EVIDENCE,
+        OperationKind::PluginCommand
         | OperationKind::BranchSummary
         | OperationKind::DelegationConfirmation
         | OperationKind::ForkSession
@@ -254,8 +262,8 @@ pub(crate) fn product_terminal_operation(
             CodingAgentProductEventTerminalOperationKind::AgentInvocation
         }
         OperationKind::AgentTeam => CodingAgentProductEventTerminalOperationKind::AgentTeam,
-        OperationKind::PluginLoad
-        | OperationKind::PluginCommand
+        OperationKind::PluginLoad => CodingAgentProductEventTerminalOperationKind::PluginLoad,
+        OperationKind::PluginCommand
         | OperationKind::BranchSummary
         | OperationKind::DelegationConfirmation
         | OperationKind::ForkSession
@@ -280,8 +288,8 @@ pub(crate) fn terminal_operation_kind(
             Some(CodingAgentProductEventTerminalOperationKind::AgentInvocation)
         }
         OperationKind::AgentTeam => Some(CodingAgentProductEventTerminalOperationKind::AgentTeam),
-        OperationKind::PluginLoad
-        | OperationKind::PluginCommand
+        OperationKind::PluginLoad => Some(CodingAgentProductEventTerminalOperationKind::PluginLoad),
+        OperationKind::PluginCommand
         | OperationKind::BranchSummary
         | OperationKind::DelegationConfirmation
         | OperationKind::ForkSession
@@ -382,8 +390,8 @@ impl CodingAgentOperation {
                 OperationClass::RuntimeWrite,
                 OperationDispatchMode::Async,
                 OperationOutcomeFamily::PluginLoad,
-                OperationTerminalPolicy::OutcomeAcknowledgement,
-                &[][..],
+                OperationTerminalPolicy::ProductEvent,
+                PLUGIN_LOAD_ROOT_EVIDENCE,
             ),
             Self::PluginCommand { .. } => (
                 OperationKind::PluginCommand,
@@ -777,8 +785,12 @@ mod tests {
                 expected_dispatch: OperationDispatchMode::Async,
                 expected_outcome: ExpectedPublicOutcomeFamily::PluginLoad,
                 expected_submitted_kind: OperationKind::PluginLoad,
-                expected_terminal_policy: OperationTerminalPolicy::OutcomeAcknowledgement,
-                expected_root_evidence: &[],
+                expected_terminal_policy: OperationTerminalPolicy::ProductEvent,
+                expected_root_evidence: &[
+                    OperationRootTerminalEvidence::PluginLoadCompleted,
+                    OperationRootTerminalEvidence::PluginLoadFailed,
+                    OperationRootTerminalEvidence::PluginLoadAborted,
+                ],
             },
             OperationContractCase {
                 public_variant: "PluginCommand",
@@ -1279,8 +1291,8 @@ mod tests {
 
         assert_eq!(cases.len(), 16);
         assert_eq!(public_variants.len(), 16);
-        assert_eq!(terminal_associated, 5);
-        assert_eq!(outcome_only, 11);
+        assert_eq!(terminal_associated, 6);
+        assert_eq!(outcome_only, 10);
     }
 
     #[test]

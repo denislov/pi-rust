@@ -27,16 +27,13 @@ pub(crate) async fn run(
     cancellation_handle: Option<OperationCancellationHandle>,
 ) -> Result<PluginLoadExecution, CodingSessionError> {
     SessionWriteCapability::require(snapshot.session_write.as_ref())?;
+    let operation_id = snapshot.operation_id.clone();
     let mut transaction = match persistence {
         SessionPersistence::Persistent(session_service) => {
             Some(session_service.begin_plugin_load_transaction_with_snapshot(snapshot))
         }
         SessionPersistence::NonPersistent(_) => None,
     };
-    let operation_id = transaction
-        .as_ref()
-        .map(|transaction| transaction.operation_id().to_owned())
-        .unwrap_or_else(|| "plugin_load".to_owned());
     let mut context = PluginLoadContext::new(options);
     let outcome = match match cancellation.as_ref() {
         Some(cancellation) => {
@@ -53,12 +50,13 @@ pub(crate) async fn run(
             {
                 let finalized = session_service.fail_plugin_load_transaction(
                     Some(transaction),
-                    operation_id,
+                    &operation_id,
                     error.code(),
                     error.to_string(),
                 )?;
                 event_service.emit_session_write_events(&finalized);
             }
+            event_service.emit_plugin_load_error(&operation_id, &error);
             return Err(error);
         }
     };
@@ -70,18 +68,32 @@ pub(crate) async fn run(
         {
             let finalized = session_service.fail_plugin_load_transaction(
                 Some(transaction),
-                operation_id,
+                &operation_id,
                 error.code(),
                 error.to_string(),
             )?;
             event_service.emit_session_write_events(&finalized);
         }
+        event_service.emit_plugin_load_error(&operation_id, &error);
         return Err(error);
     } else if cancellation
         .as_ref()
         .is_some_and(CancellationToken::is_cancelled)
     {
-        return Err(CodingSessionError::Cancelled);
+        let error = CodingSessionError::Cancelled;
+        if let Some(transaction) = transaction.take()
+            && let SessionPersistence::Persistent(session_service) = persistence
+        {
+            let finalized = session_service.fail_plugin_load_transaction(
+                Some(transaction),
+                &operation_id,
+                error.code(),
+                error.to_string(),
+            )?;
+            event_service.emit_session_write_events(&finalized);
+        }
+        event_service.emit_plugin_load_error(&operation_id, &error);
+        return Err(error);
     }
     if let Some(transaction) = transaction.as_mut() {
         SessionService::record_plugin_load_completed(
@@ -95,11 +107,10 @@ pub(crate) async fn run(
         && let SessionPersistence::Persistent(session_service) = persistence
     {
         let finalized =
-            session_service.commit_plugin_load_transaction(Some(transaction), operation_id)?;
+            session_service.commit_plugin_load_transaction(Some(transaction), &operation_id)?;
         event_service.emit_session_write_events(&finalized);
     }
     let loaded_plugin_service = context.take_loaded_plugin_service();
-    event_service.emit_plugin_load_outcome(&outcome);
     Ok(PluginLoadExecution {
         outcome,
         loaded_plugin_service,

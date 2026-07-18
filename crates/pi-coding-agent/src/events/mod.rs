@@ -554,6 +554,17 @@ pub enum CodingAgentWorkflowProductEvent {
         recovery_id: String,
         reason: String,
     },
+    PluginLoadCompleted {
+        operation_id: String,
+    },
+    PluginLoadFailed {
+        operation_id: String,
+        error: CodingAgentProductEventError,
+    },
+    PluginLoadAborted {
+        operation_id: String,
+        reason: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -705,6 +716,15 @@ impl CodingAgentProductEventKind {
             }
             Self::Workflow(CodingAgentWorkflowProductEvent::OperationRecovered { .. }) => {
                 "operation_recovered"
+            }
+            Self::Workflow(CodingAgentWorkflowProductEvent::PluginLoadCompleted { .. }) => {
+                "plugin_load_completed"
+            }
+            Self::Workflow(CodingAgentWorkflowProductEvent::PluginLoadFailed { .. }) => {
+                "plugin_load_failed"
+            }
+            Self::Workflow(CodingAgentWorkflowProductEvent::PluginLoadAborted { .. }) => {
+                "plugin_load_aborted"
             }
             Self::Diagnostic(CodingAgentDiagnosticProductEvent::Diagnostic { .. }) => "diagnostic",
             Self::Capability(CodingAgentCapabilityProductEvent::Changed { .. }) => "changed",

@@ -21,7 +21,7 @@ use crate::events::runtime::RuntimeEvent;
 use crate::events::session::{SessionCompactionEvent, SessionLifecycleEvent, SessionWriteEvent};
 use crate::events::team::TeamEvent;
 use crate::events::tool::ToolEvent;
-use crate::events::workflow::SelfHealingEditEvent;
+use crate::events::workflow::{PluginLoadEvent, SelfHealingEditEvent};
 use crate::events::{ProductEvent, ProductEventSequence};
 use crate::operations::compaction::flow::ManualCompactionOutcome;
 use crate::operations::plugin_load::flow::PluginLoadOutcome;
@@ -480,6 +480,25 @@ impl EventService {
         )
     }
 
+    fn publish_plugin_load_event(&self, event: PluginLoadEvent) -> ProductEvent {
+        let evidence = event.root_terminal_evidence();
+        self.publish(
+            event.into_product_draft(),
+            ProductEventEmissionContext::default(),
+            move |operation_kind, terminal_status| {
+                terminal_status.and_then(|status| {
+                    operation_kind.and_then(|kind| {
+                        evidence.and_then(|evidence| {
+                            crate::runtime::outcome::product_terminal_operation(
+                                kind, evidence, status,
+                            )
+                        })
+                    })
+                })
+            },
+        )
+    }
+
     pub(crate) fn publish_prompt_stream_event(&self, event: PromptStreamEvent) -> ProductEvent {
         self.publish_without_root_terminal(event.into_product_draft())
     }
@@ -615,9 +634,34 @@ impl EventService {
         });
     }
 
-    pub(crate) fn emit_plugin_load_outcome(&self, outcome: &PluginLoadOutcome) {
+    pub(crate) fn emit_plugin_load_outcome(&self, operation_id: &str, outcome: &PluginLoadOutcome) {
         for diagnostic in &outcome.diagnostics {
             self.emit_diagnostic(None::<String>, diagnostic.message.clone());
+        }
+        self.publish_plugin_load_event(PluginLoadEvent::Completed {
+            operation_id: operation_id.to_owned(),
+        });
+    }
+
+    pub(crate) fn emit_plugin_load_failed(&self, operation_id: &str, error: &CodingSessionError) {
+        self.publish_plugin_load_event(PluginLoadEvent::Failed {
+            operation_id: operation_id.to_owned(),
+            error: error.clone(),
+        });
+    }
+
+    pub(crate) fn emit_plugin_load_aborted(&self, operation_id: &str, reason: impl Into<String>) {
+        self.publish_plugin_load_event(PluginLoadEvent::Aborted {
+            operation_id: operation_id.to_owned(),
+            reason: reason.into(),
+        });
+    }
+
+    pub(crate) fn emit_plugin_load_error(&self, operation_id: &str, error: &CodingSessionError) {
+        if error == &CodingSessionError::Cancelled {
+            self.emit_plugin_load_aborted(operation_id, error.to_string());
+        } else {
+            self.emit_plugin_load_failed(operation_id, error);
         }
     }
 
@@ -2353,8 +2397,20 @@ mod tests {
 
     #[test]
     fn event_service_emits_plugin_load_outcome_events() {
-        let service = EventService::new();
+        use crate::runtime::capability::CapabilityGeneration;
+        use crate::runtime::control::OperationKind;
+        use crate::runtime::snapshot::SnapshotCoordinator;
+
+        let coordinator = SnapshotCoordinator::new();
+        let service = EventService::with_snapshot_coordinator(coordinator.clone());
         let mut receiver = service.subscribe_product_events();
+        coordinator.register_operation_event_context(
+            "op_plugin_load".into(),
+            OperationKind::PluginLoad,
+            CapabilityGeneration::new(1),
+            None,
+            "op_plugin_load".into(),
+        );
         let outcome = crate::operations::plugin_load::flow::PluginLoadOutcome {
             loaded_plugin_ids: vec!["lua".into()],
             diagnostics: vec![crate::services::plugin::PluginDiagnostic {
@@ -2365,7 +2421,7 @@ mod tests {
             capability_changed: true,
         };
 
-        service.emit_plugin_load_outcome(&outcome);
+        service.emit_plugin_load_outcome("op_plugin_load", &outcome);
 
         assert_diagnostic_event_eq(
             receiver.try_recv().unwrap(),
@@ -2373,6 +2429,66 @@ mod tests {
                 operation_id: None,
                 message: "loaded with warning".into(),
             },
+        );
+        let terminal = receiver.try_recv().unwrap().unwrap();
+        assert_eq!(
+            terminal.event(),
+            &crate::events::CodingAgentProductEventKind::Workflow(
+                crate::events::CodingAgentWorkflowProductEvent::PluginLoadCompleted {
+                    operation_id: "op_plugin_load".into(),
+                },
+            ),
+        );
+        assert_eq!(
+            terminal.terminal_operation().unwrap().kind,
+            crate::events::CodingAgentProductEventTerminalOperationKind::PluginLoad,
+        );
+        assert_eq!(
+            terminal.terminal_status().unwrap(),
+            crate::events::CodingAgentProductEventTerminalStatus::Completed,
+        );
+        assert_eq!(receiver.try_recv().unwrap(), None);
+    }
+
+    #[test]
+    fn event_service_emits_plugin_load_aborted_terminal() {
+        use crate::runtime::capability::CapabilityGeneration;
+        use crate::runtime::control::OperationKind;
+        use crate::runtime::snapshot::SnapshotCoordinator;
+
+        let coordinator = SnapshotCoordinator::new();
+        let service = EventService::with_snapshot_coordinator(coordinator.clone());
+        let mut receiver = service.subscribe_product_events();
+        coordinator.register_operation_event_context(
+            "op_plugin_load_abort".into(),
+            OperationKind::PluginLoad,
+            CapabilityGeneration::new(1),
+            None,
+            "op_plugin_load_abort".into(),
+        );
+
+        service.emit_plugin_load_error(
+            "op_plugin_load_abort",
+            &crate::runtime::facade::CodingSessionError::Cancelled,
+        );
+
+        let terminal = receiver.try_recv().unwrap().unwrap();
+        assert_eq!(
+            terminal.event(),
+            &crate::events::CodingAgentProductEventKind::Workflow(
+                crate::events::CodingAgentWorkflowProductEvent::PluginLoadAborted {
+                    operation_id: "op_plugin_load_abort".into(),
+                    reason: "cancelled".into(),
+                },
+            ),
+        );
+        assert_eq!(
+            terminal.terminal_operation().unwrap().kind,
+            crate::events::CodingAgentProductEventTerminalOperationKind::PluginLoad,
+        );
+        assert_eq!(
+            terminal.terminal_status().unwrap(),
+            crate::events::CodingAgentProductEventTerminalStatus::Aborted,
         );
         assert_eq!(receiver.try_recv().unwrap(), None);
     }

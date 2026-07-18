@@ -335,6 +335,8 @@ impl CodingAgentSession {
                             self.refresh_snapshot_projection();
                             self.event_service.emit_capability_changed(installed);
                         }
+                        self.event_service
+                            .emit_plugin_load_outcome(&snapshot.operation_id, &execution.outcome);
                         Ok(OperationOutcome::PluginLoad(execution.outcome))
                     }
                     Operation::BranchSummary {

@@ -165,3 +165,72 @@ fn product_check_output(value: SelfHealingEditCheckOutput) -> CodingAgentProduct
         exit_code: value.exit_code,
     }
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum PluginLoadEvent {
+    Completed {
+        operation_id: String,
+    },
+    Failed {
+        operation_id: String,
+        error: CodingSessionError,
+    },
+    Aborted {
+        operation_id: String,
+        reason: String,
+    },
+}
+
+impl PluginLoadEvent {
+    pub(crate) fn root_terminal_evidence(&self) -> Option<OperationRootTerminalEvidence> {
+        match self {
+            Self::Completed { .. } => Some(OperationRootTerminalEvidence::PluginLoadCompleted),
+            Self::Failed { .. } => Some(OperationRootTerminalEvidence::PluginLoadFailed),
+            Self::Aborted { .. } => Some(OperationRootTerminalEvidence::PluginLoadAborted),
+        }
+    }
+
+    pub(crate) fn into_product_draft(self) -> ProductEventDraft {
+        let (event, operation_id, terminal_status) = match self {
+            Self::Completed { operation_id } => (
+                CodingAgentWorkflowProductEvent::PluginLoadCompleted {
+                    operation_id: operation_id.clone(),
+                },
+                operation_id,
+                Some(CodingAgentProductEventTerminalStatus::Completed),
+            ),
+            Self::Failed {
+                operation_id,
+                error,
+            } => (
+                CodingAgentWorkflowProductEvent::PluginLoadFailed {
+                    operation_id: operation_id.clone(),
+                    error: CodingAgentProductEventError {
+                        code: error.code().to_owned(),
+                        message: error.to_string(),
+                    },
+                },
+                operation_id,
+                Some(CodingAgentProductEventTerminalStatus::Failed),
+            ),
+            Self::Aborted {
+                operation_id,
+                reason,
+            } => (
+                CodingAgentWorkflowProductEvent::PluginLoadAborted {
+                    operation_id: operation_id.clone(),
+                    reason,
+                },
+                operation_id,
+                Some(CodingAgentProductEventTerminalStatus::Aborted),
+            ),
+        };
+        ProductEventDraft {
+            event: CodingAgentProductEventKind::Workflow(event),
+            operation_id: Some(operation_id),
+            session_id: None,
+            terminal_status,
+            durability: CodingAgentProductEventDurability::LiveOnly,
+        }
+    }
+}
