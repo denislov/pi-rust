@@ -109,6 +109,13 @@ pub struct CodingAgentSessionView {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodingAgentRecoveryPending {
+    pub operation_id: String,
+    pub recovery_id: String,
+    pub operation_kind: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodingAgentSessionSummary {
     pub session_id: String,
     pub session_dir: PathBuf,

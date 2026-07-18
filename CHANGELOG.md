@@ -143,6 +143,9 @@
   operation families still need the same terminal draft migration. Standalone
   AgentInvocation/AgentTeam roots now publish terminal ProductEvents after
   supervisor finalization while delegated child ownership remains explicit.
+  Added a read-only `recovery_pending()` session inspection surface that reports
+  stable recovery IDs and persisted operation kinds without synthesizing a
+  terminal outcome. Retry/resolve operator controls remain pending.
 
 ### Release Status
 

@@ -97,6 +97,9 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   EventHub emits typed `OperationRecoveryPending` evidence without terminal
   fields. Missing evidence preserves the original `PartialCommit`; retry,
   operator resolution, and final operation-terminal outbox commit remain open.
+  The public session facade now exposes a read-only `recovery_pending()` list
+  with stable recovery IDs and persisted operation-kind hints; retry/resolve
+  controls are not yet exposed.
 - Commit uncertainty is represented by `PartialCommit`, but supervisor-owned
   durable `RecoveryPending` lifetime across caller exit/restart is not complete.
 

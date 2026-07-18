@@ -75,8 +75,8 @@ pub(crate) use crate::runtime::client::state::{ClientDraft, UiSnapshot};
 pub use crate::runtime::error::{CodingAgentLifecycleRejection, CodingSessionError};
 pub use crate::runtime::execution::CodingAgentOperationTask;
 pub use crate::runtime::facade::context::{
-    CapabilityStatus, CodingAgentCapabilities, CodingAgentSessionOptions,
-    CodingAgentSessionSummary, CodingAgentSessionView,
+    CapabilityStatus, CodingAgentCapabilities, CodingAgentRecoveryPending,
+    CodingAgentSessionOptions, CodingAgentSessionSummary, CodingAgentSessionView,
 };
 pub(crate) use crate::runtime::facade::context::{
     CodingAgentSessionDiagnostic, CodingAgentSessionHydration, CodingAgentSessionTranscriptItem,

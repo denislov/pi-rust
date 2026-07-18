@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use pi_agent_core::api::transcript::{SessionEntry, SessionTreeNode, StoredAgentMessage};
 use pi_ai::api::conversation::ContentBlock;
 
+use crate::events::CodingAgentProductEventDurability;
 use crate::events::CodingAgentSessionWriteFailureStatus;
 use crate::events::emission::ProductEventDraft;
 use crate::events::outbox::{
@@ -54,6 +55,13 @@ pub(crate) struct StartupRecoveryMarker {
     pub(crate) session_id: String,
     pub(crate) operation_kind: Option<crate::session::event::OperationKind>,
     pub(crate) capability_generation: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RecoveryPendingInspection {
+    pub(crate) operation_id: String,
+    pub(crate) recovery_id: String,
+    pub(crate) operation_kind: Option<String>,
 }
 
 #[derive(Debug)]
@@ -1122,6 +1130,65 @@ impl SessionService {
         Ok(self.replay()?.recovery_summary())
     }
 
+    pub(crate) fn inspect_recovery_pending(
+        &self,
+    ) -> Result<Vec<RecoveryPendingInspection>, CodingSessionError> {
+        let replay = self.replay()?;
+        let outbox = self.store.read_outbox(&self.handle)?;
+        let mut pending_operation_ids = replay
+            .recovery_summary()
+            .in_doubt_operations
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        for record in outbox.iter().filter(|record| {
+            record.kind == DurableOutboxRecordKind::SessionWrite
+                && matches!(
+                    record.draft.durability,
+                    CodingAgentProductEventDurability::PersistenceUncertain { .. }
+                )
+        }) {
+            if replay
+                .operation_statuses
+                .get(record.operation_id.as_deref().unwrap_or_default())
+                .is_none_or(|status| {
+                    !matches!(
+                        status,
+                        crate::session::replay::OperationReplayStatus::Recovered
+                            | crate::session::replay::OperationReplayStatus::Committed
+                    )
+                })
+                && let Some(operation_id) = &record.operation_id
+            {
+                pending_operation_ids.insert(operation_id.clone());
+            }
+        }
+        let operation_kinds = self
+            .store
+            .read_events(&self.handle)?
+            .into_iter()
+            .filter_map(|event| match event.data {
+                SessionEventData::OperationStarted { operation, .. } => {
+                    event.operation_id.map(|id| (id, operation))
+                }
+                _ => None,
+            })
+            .collect::<std::collections::HashMap<_, _>>();
+        pending_operation_ids
+            .into_iter()
+            .map(|operation_id| {
+                let recovery_id = self.recovery_id_for_uncertain_operation(&operation_id)?;
+                let operation_kind = operation_kinds
+                    .get(&operation_id)
+                    .map(persisted_operation_kind_name);
+                Ok(RecoveryPendingInspection {
+                    operation_id,
+                    recovery_id,
+                    operation_kind,
+                })
+            })
+            .collect()
+    }
+
     fn apply_startup_recovery(&mut self) -> Result<(), CodingSessionError> {
         let replay = self.replay()?;
         let in_doubt_operations = replay.recovery_summary().in_doubt_operations;
@@ -1518,6 +1585,19 @@ impl SessionService {
     fn next_leaf_id() -> String {
         let mut ids = SystemIdGenerator;
         ids.next_leaf_id()
+    }
+}
+
+fn persisted_operation_kind_name(kind: &OperationKind) -> String {
+    match kind {
+        OperationKind::Prompt => "prompt".into(),
+        OperationKind::ManualCompaction => "compact".into(),
+        OperationKind::BranchSummary => "branch_summary".into(),
+        OperationKind::Export => "export".into(),
+        OperationKind::PluginLoad => "plugin_load".into(),
+        OperationKind::SelfHealingEdit => "self_healing_edit".into(),
+        OperationKind::SessionTreeLabel => "session_tree_label".into(),
+        OperationKind::Other { name } => name.clone(),
     }
 }
 

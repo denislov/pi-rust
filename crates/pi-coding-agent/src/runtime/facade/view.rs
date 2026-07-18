@@ -66,6 +66,27 @@ impl CodingAgentSession {
         }
     }
 
+    pub fn recovery_pending(&self) -> Result<Vec<CodingAgentRecoveryPending>, CodingSessionError> {
+        IntentRouter::admit_query(
+            &self.runtime_host.operation_supervisor.control,
+            QueryIntent::SessionView,
+        );
+        let SessionPersistence::Persistent(service) =
+            &self.runtime_host.session_coordinator.persistence
+        else {
+            return Ok(Vec::new());
+        };
+        Ok(service
+            .inspect_recovery_pending()?
+            .into_iter()
+            .map(|pending| CodingAgentRecoveryPending {
+                operation_id: pending.operation_id,
+                recovery_id: pending.recovery_id,
+                operation_kind: pending.operation_kind,
+            })
+            .collect())
+    }
+
     pub fn agent_profiles(&self) -> Vec<AgentProfile> {
         IntentRouter::admit_query(
             &self.runtime_host.operation_supervisor.control,
