@@ -1,7 +1,9 @@
 use super::capability::{ActorId, OperationCapabilitySnapshot};
 use super::control::{OperationControl, OperationKind};
 use super::intent::{OperationPermit, QueryIntent, QueryIntentMetadata};
-use super::operation::{OperationAdmission, OperationClass, OperationDispatchMode};
+use super::operation::{
+    OperationClass, OperationDispatchMode, OperationExecution, OperationMetadata, OperationOrigin,
+};
 use crate::runtime::facade::CodingSessionError;
 
 /// Typed admission owner for runtime-affecting operations.
@@ -14,7 +16,7 @@ pub(crate) struct OperationScheduler;
 impl OperationScheduler {
     pub(crate) fn admit(
         control: &OperationControl,
-        admission: &OperationAdmission,
+        admission: &OperationExecution,
         expected_dispatch: OperationDispatchMode,
     ) -> Result<OperationPermit, AdmissionRejection> {
         if admission.metadata.dispatch_mode != expected_dispatch {
@@ -36,7 +38,7 @@ impl OperationScheduler {
                 return Ok(OperationPermit::unguarded(
                     admission.kind,
                     admission.metadata.class,
-                    admission.capability_snapshot.clone(),
+                    admission.clone(),
                 ));
             }
             OperationClass::SessionWriteRoot
@@ -56,7 +58,7 @@ impl OperationScheduler {
                     admission.kind,
                     admission.metadata.class,
                     guard,
-                    admission.capability_snapshot.clone(),
+                    admission.clone(),
                 )
             })
             .map_err(AdmissionRejection::Control)
@@ -75,15 +77,32 @@ impl OperationScheduler {
         capability_snapshot: OperationCapabilitySnapshot,
     ) -> Result<OperationPermit, AdmissionRejection> {
         match &capability_snapshot.actor {
-            ActorId::ChildOperation(parent_id) if !parent_id.is_empty() => control
-                .begin_child_with_capability_generation(
-                    kind,
-                    capability_snapshot.operation_id.clone(),
-                    parent_id.clone(),
-                    capability_snapshot.generation,
-                )
-                .map(|guard| OperationPermit::child(kind, capability_snapshot, guard))
-                .map_err(AdmissionRejection::Control),
+            ActorId::ChildOperation(parent_id) if !parent_id.is_empty() => {
+                let parent_id = parent_id.clone();
+                control
+                    .begin_child_with_capability_generation(
+                        kind,
+                        capability_snapshot.operation_id.clone(),
+                        parent_id,
+                        capability_snapshot.generation,
+                    )
+                    .map(|guard| {
+                        let execution = OperationExecution::child(
+                            kind,
+                            OperationMetadata {
+                                static_kind: Some(kind),
+                                origin: OperationOrigin::ParentChild,
+                                class: OperationClass::Child,
+                                dispatch_mode: OperationDispatchMode::Async,
+                            },
+                            capability_snapshot,
+                            guard.parent_operation_id().to_owned(),
+                            guard.root_operation_id().to_owned(),
+                        );
+                        OperationPermit::child(kind, execution, guard)
+                    })
+                    .map_err(AdmissionRejection::Control)
+            }
             _ => Err(AdmissionRejection::ChildLineageMissing { kind }),
         }
     }
@@ -94,8 +113,8 @@ impl OperationScheduler {
         class: OperationClass,
         dispatch: OperationDispatchMode,
         capability_snapshot: OperationCapabilitySnapshot,
-    ) -> OperationAdmission {
-        OperationAdmission::new(
+    ) -> OperationExecution {
+        OperationExecution::root(
             kind,
             super::operation::OperationMetadata {
                 static_kind: Some(kind),
@@ -104,6 +123,7 @@ impl OperationScheduler {
                 dispatch_mode: dispatch,
             },
             None,
+            Some("scheduler-test-session".into()),
             capability_snapshot,
         )
     }
@@ -166,7 +186,7 @@ mod tests {
     use super::*;
     use crate::runtime::operation::OperationOrigin;
 
-    fn admission(class: OperationClass, dispatch: OperationDispatchMode) -> OperationAdmission {
+    fn admission(class: OperationClass, dispatch: OperationDispatchMode) -> OperationExecution {
         OperationScheduler::classify(
             OperationKind::Export,
             class,
@@ -373,6 +393,15 @@ mod tests {
             .expect("child actor with active parent lineage should be admitted");
         assert!(permit.is_guarded());
         assert_eq!(permit.class(), OperationClass::Child);
+        assert_eq!(permit.execution().operation_id, "child-op");
+        assert_eq!(
+            permit.execution().parent_operation_id.as_deref(),
+            Some("parent-op")
+        );
+        assert_eq!(
+            permit.execution().root_operation_id.as_deref(),
+            Some("parent-op")
+        );
         assert_eq!(control.child_count(), 1);
         drop(permit);
         assert_eq!(control.child_count(), 0);

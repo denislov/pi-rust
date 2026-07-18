@@ -1054,10 +1054,10 @@ fn product_events_use_operation_bound_capability_generation() {
 
     assert_eq!(
         intent
-            .matches("bind_capability_generation(capability_snapshot.generation)")
+            .matches("bind_capability_generation(execution.capability_generation)")
             .count(),
         2,
-        "root and child permits must bind their frozen capability generation"
+        "root and child permits must bind their permit-owned execution generation"
     );
     assert!(control.contains("register_operation_event_context("));
     assert!(control.contains("clear_operation_event_context_if("));

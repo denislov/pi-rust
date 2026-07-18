@@ -19,6 +19,9 @@
 - Converged PluginLoad on the admitted operation identity and typed
   Completed/Failed/Aborted ProductEvent terminal evidence, with completion after
   capability generation installation.
+- Began `RIF-001` with immutable permit-owned `OperationExecution` identity,
+  freezing descriptor revision, origin, capability/session association, and
+  resolved root/parent lineage at admission.
 
 ### Release Status
 

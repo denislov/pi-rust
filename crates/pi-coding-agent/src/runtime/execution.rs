@@ -83,8 +83,9 @@ impl CodingAgentSession {
             guard.commit(operation_permit.capability_snapshot().operation_id.clone())?;
         }
 
-        let snapshot = operation_permit.capability_snapshot().clone();
-        let operation_id = snapshot.operation_id.clone();
+        let execution = operation_permit.execution().clone();
+        let snapshot = execution.capability_snapshot.clone();
+        let operation_id = execution.operation_id.clone();
         let operation_cancellation = operation_permit.cancellation_token();
         let cancellation_handle = operation_permit
             .cancellation_handle()

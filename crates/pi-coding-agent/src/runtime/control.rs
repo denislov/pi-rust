@@ -1414,6 +1414,14 @@ pub(crate) struct ChildOperationGuard {
 }
 
 impl ChildOperationGuard {
+    pub(crate) fn parent_operation_id(&self) -> &str {
+        &self.parent_operation_id
+    }
+
+    pub(crate) fn root_operation_id(&self) -> &str {
+        &self.root_operation_id
+    }
+
     pub(crate) fn cancellation_token(&self) -> CancellationToken {
         self.cancellation.clone()
     }

@@ -259,10 +259,12 @@ impl OperationMetadata {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct OperationAdmission {
+pub(crate) struct OperationExecution {
     pub(crate) kind: OperationKind,
     pub(crate) metadata: OperationMetadata,
+    pub(crate) descriptor_revision: u16,
     pub(crate) admitted_at: Option<String>,
+    pub(crate) session_identity: Option<String>,
     pub(crate) capability_snapshot: OperationCapabilitySnapshot,
     pub(crate) operation_id: String,
     pub(crate) capability_generation: CapabilityGeneration,
@@ -271,30 +273,61 @@ pub(crate) struct OperationAdmission {
     pub(crate) idempotency_key: Option<OperationIdempotencyKey>,
 }
 
-impl OperationAdmission {
-    pub(crate) fn new(
+impl OperationExecution {
+    pub(crate) const DESCRIPTOR_REVISION: u16 = 1;
+
+    pub(crate) fn root(
         kind: OperationKind,
         metadata: OperationMetadata,
         admitted_at: Option<String>,
+        session_identity: Option<String>,
         capability_snapshot: OperationCapabilitySnapshot,
     ) -> Self {
         let operation_id = capability_snapshot.operation_id.clone();
         let capability_generation = capability_snapshot.generation;
-        let (parent_operation_id, root_operation_id) = match &capability_snapshot.actor {
-            super::capability::ActorId::Client => (None, Some(operation_id.clone())),
-            super::capability::ActorId::ChildOperation(parent_id) => {
-                (Some(parent_id.clone()), None)
-            }
-        };
+        debug_assert!(matches!(
+            capability_snapshot.actor,
+            super::capability::ActorId::Client
+        ));
         Self {
             kind,
             metadata,
+            descriptor_revision: Self::DESCRIPTOR_REVISION,
             admitted_at,
+            session_identity,
+            capability_snapshot,
+            operation_id: operation_id.clone(),
+            capability_generation,
+            parent_operation_id: None,
+            root_operation_id: Some(operation_id),
+            idempotency_key: None,
+        }
+    }
+
+    pub(crate) fn child(
+        kind: OperationKind,
+        metadata: OperationMetadata,
+        capability_snapshot: OperationCapabilitySnapshot,
+        parent_operation_id: String,
+        root_operation_id: String,
+    ) -> Self {
+        let operation_id = capability_snapshot.operation_id.clone();
+        let capability_generation = capability_snapshot.generation;
+        debug_assert!(matches!(
+            capability_snapshot.actor,
+            super::capability::ActorId::ChildOperation(_)
+        ));
+        Self {
+            kind,
+            metadata,
+            descriptor_revision: Self::DESCRIPTOR_REVISION,
+            admitted_at: None,
+            session_identity: None,
             capability_snapshot,
             operation_id,
             capability_generation,
-            parent_operation_id,
-            root_operation_id,
+            parent_operation_id: Some(parent_operation_id),
+            root_operation_id: Some(root_operation_id),
             idempotency_key: None,
         }
     }
@@ -426,18 +459,21 @@ mod tests {
     #[test]
     fn admission_carries_root_identity_and_capability_generation() {
         let snapshot = OperationCapabilitySnapshot::permissive("op-root");
-        let admission = OperationAdmission::new(
+        let admission = OperationExecution::root(
             OperationKind::Prompt,
             Operation::Prompt(PromptTurnOptions::new(PromptInvocation::Text(
                 "hello".into(),
             )))
             .metadata(),
             None,
+            Some("session-root".into()),
             snapshot,
         )
         .with_idempotency_key(OperationIdempotencyKey::parse("client-root:prompt-1").unwrap());
 
         assert_eq!(admission.operation_id, "op-root");
+        assert_eq!(admission.descriptor_revision, 1);
+        assert_eq!(admission.session_identity.as_deref(), Some("session-root"));
         assert_eq!(admission.capability_generation.get(), 1);
         assert_eq!(admission.parent_operation_id, None);
         assert_eq!(admission.root_operation_id.as_deref(), Some("op-root"));
@@ -454,7 +490,7 @@ mod tests {
     fn child_actor_admission_preserves_parent_lineage() {
         let mut snapshot = OperationCapabilitySnapshot::permissive("op-child");
         snapshot.actor = super::super::capability::ActorId::ChildOperation("op-parent".into());
-        let admission = OperationAdmission::new(
+        let admission = OperationExecution::child(
             OperationKind::AgentInvocation,
             OperationMetadata::new(
                 Some(OperationKind::AgentInvocation),
@@ -462,12 +498,13 @@ mod tests {
                 OperationClass::Child,
                 OperationDispatchMode::Async,
             ),
-            None,
             snapshot,
+            "op-parent".into(),
+            "op-root".into(),
         );
 
         assert_eq!(admission.parent_operation_id.as_deref(), Some("op-parent"));
-        assert_eq!(admission.root_operation_id, None);
+        assert_eq!(admission.root_operation_id.as_deref(), Some("op-root"));
     }
 
     #[test]
@@ -773,10 +810,11 @@ mod tests {
             plugin: PluginCapabilitySet::default(),
         };
 
-        let admission = OperationAdmission::new(
+        let admission = OperationExecution::root(
             OperationKind::Prompt,
             metadata,
             Some("2026-07-09T00:00:00Z".into()),
+            Some("session-test".into()),
             snapshot.clone(),
         );
 

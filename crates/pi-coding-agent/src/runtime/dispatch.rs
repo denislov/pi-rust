@@ -222,7 +222,8 @@ impl CodingAgentSession {
         if let Some(guard) = submission.as_mut() {
             guard.commit(operation_permit.capability_snapshot().operation_id.clone())?;
         }
-        let snapshot = operation_permit.capability_snapshot().clone();
+        let execution = operation_permit.execution().clone();
+        let snapshot = execution.capability_snapshot.clone();
         let operation_cancellation = operation_permit.cancellation_token();
         let operation_cancellation_handle = operation_permit.cancellation_handle();
         if let (Some(submission), Some(cancellation)) =

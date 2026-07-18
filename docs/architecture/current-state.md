@@ -27,6 +27,12 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
 - `IntentRouter`, `OperationScheduler`, `OperationControl`, typed operation
   metadata, root/child lineage, capability snapshots, and generation-scoped
   cancellation exist.
+- Admission now freezes an internal `OperationExecution`, and operation permits
+  retain that immutable identity. Root executions carry descriptor revision,
+  origin, capability generation, admitted session identity, and root lineage;
+  child executions retain resolved parent/root lineage. Full downstream identity
+  propagation and removal of remaining workflow-local generators are still open
+  under `RIF-001`.
 - SessionWriteRoot, NonSessionRoot, RuntimeWrite, Query, ReadOnly, Child, and
   Control admission classes exist; the scheduler has no general work queue.
 - PluginCommand, AgentInvocation, and AgentTeam have runtime-owned submitted task

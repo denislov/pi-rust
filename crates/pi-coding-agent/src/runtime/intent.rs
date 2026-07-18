@@ -5,7 +5,7 @@ use super::control::{
 };
 #[cfg(test)]
 use super::operation::Operation;
-use super::operation::{OperationAdmission, OperationClass};
+use super::operation::{OperationClass, OperationExecution};
 use super::scheduler::OperationScheduler;
 use crate::runtime::facade::CodingSessionError;
 use tokio_util::sync::CancellationToken;
@@ -42,7 +42,7 @@ pub(crate) struct QueryIntentMetadata {
 pub(crate) struct OperationPermit {
     guard: Option<OperationGuard>,
     _child_guard: Option<ChildOperationGuard>,
-    capability_snapshot: OperationCapabilitySnapshot,
+    execution: OperationExecution,
     cancellation: Option<CancellationToken>,
     cancellation_handle: Option<OperationCancellationHandle>,
     #[cfg(test)]
@@ -76,9 +76,9 @@ impl OperationPermit {
         kind: OperationKind,
         class: OperationClass,
         mut guard: OperationGuard,
-        capability_snapshot: OperationCapabilitySnapshot,
+        execution: OperationExecution,
     ) -> Self {
-        guard.bind_capability_generation(capability_snapshot.generation);
+        guard.bind_capability_generation(execution.capability_generation);
         let cancellation = guard.cancellation_token();
         let cancellation_handle = Some(guard.cancellation_handle());
         #[cfg(not(test))]
@@ -87,7 +87,7 @@ impl OperationPermit {
         Self {
             guard: Some(guard),
             _child_guard: None,
-            capability_snapshot,
+            execution,
             cancellation,
             cancellation_handle,
             #[cfg(test)]
@@ -100,7 +100,7 @@ impl OperationPermit {
     pub(crate) fn unguarded(
         kind: OperationKind,
         class: OperationClass,
-        capability_snapshot: OperationCapabilitySnapshot,
+        execution: OperationExecution,
     ) -> Self {
         #[cfg(not(test))]
         let _ = (kind, class);
@@ -108,7 +108,7 @@ impl OperationPermit {
         Self {
             guard: None,
             _child_guard: None,
-            capability_snapshot,
+            execution,
             cancellation: None,
             cancellation_handle: None,
             #[cfg(test)]
@@ -120,10 +120,10 @@ impl OperationPermit {
 
     pub(crate) fn child(
         kind: OperationKind,
-        capability_snapshot: OperationCapabilitySnapshot,
+        execution: OperationExecution,
         mut guard: ChildOperationGuard,
     ) -> Self {
-        guard.bind_capability_generation(capability_snapshot.generation);
+        guard.bind_capability_generation(execution.capability_generation);
         let cancellation = Some(guard.cancellation_token());
         let cancellation_handle = Some(guard.cancellation_handle());
         #[cfg(not(test))]
@@ -132,7 +132,7 @@ impl OperationPermit {
         Self {
             guard: None,
             _child_guard: Some(guard),
-            capability_snapshot,
+            execution,
             cancellation,
             cancellation_handle,
             #[cfg(test)]
@@ -144,7 +144,11 @@ impl OperationPermit {
 
     #[allow(dead_code)]
     pub(crate) fn capability_snapshot(&self) -> &OperationCapabilitySnapshot {
-        &self.capability_snapshot
+        &self.execution.capability_snapshot
+    }
+
+    pub(crate) fn execution(&self) -> &OperationExecution {
+        &self.execution
     }
 
     pub(crate) fn cancellation_token(&self) -> Option<CancellationToken> {
@@ -183,7 +187,7 @@ impl IntentRouter {
     #[cfg(test)]
     pub(crate) fn static_admission(
         operation: &Operation,
-    ) -> Result<OperationAdmission, CodingSessionError> {
+    ) -> Result<OperationExecution, CodingSessionError> {
         let metadata = operation.metadata();
         if operation.static_kind().is_none() {
             return Err(CodingSessionError::UnsupportedCapability {
@@ -191,10 +195,11 @@ impl IntentRouter {
             });
         }
         let snapshot = OperationCapabilitySnapshot::permissive("op_static_admission");
-        Ok(OperationAdmission::new(
+        Ok(OperationExecution::root(
             operation.kind(),
             metadata,
             None,
+            Some("static-test-session".into()),
             snapshot,
         ))
     }
@@ -220,7 +225,7 @@ impl IntentRouter {
         metadata
     }
 
-    pub(crate) fn unsupported_dispatch(admission: &OperationAdmission) -> CodingSessionError {
+    pub(crate) fn unsupported_dispatch(admission: &OperationExecution) -> CodingSessionError {
         CodingSessionError::UnsupportedCapability {
             capability: format!(
                 "{} operation requires {} dispatcher",
@@ -450,8 +455,13 @@ mod tests {
             ui: None,
             plugin: PluginCapabilitySet::default(),
         };
-        let admission =
-            OperationAdmission::new(OperationKind::Export, metadata, None, snapshot.clone());
+        let admission = OperationExecution::root(
+            OperationKind::Export,
+            metadata,
+            None,
+            Some("intent-test-session".into()),
+            snapshot.clone(),
+        );
 
         let permit =
             OperationScheduler::admit(&control, &admission, OperationDispatchMode::SyncReadOnly)
@@ -490,10 +500,11 @@ mod tests {
             ui: None,
             plugin: PluginCapabilitySet::default(),
         };
-        let admission = OperationAdmission::new(
+        let admission = OperationExecution::root(
             OperationKind::PluginCommand,
             metadata,
             None,
+            Some("intent-test-session".into()),
             snapshot.clone(),
         );
 
