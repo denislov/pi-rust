@@ -2582,6 +2582,7 @@ mod tests {
         ToolAuthorizationDecision, ToolAuthorizationPreview, ToolAuthorizationRequest,
         ToolAuthorizationRisk, ToolAuthorizationScope,
     };
+    use crate::events::CodingAgentWorkflowProductEvent;
     use crate::events::delegation::{DelegationEvent, DelegationEventContext};
     use crate::events::message::MessageEvent;
     use crate::events::prompt_stream::PromptStreamEvent;
@@ -2592,8 +2593,8 @@ mod tests {
     use crate::runtime::facade::{
         CapabilityStatus, CodingAgentCapabilities, CodingAgentProductEventKind, CodingAgentSession,
         CodingAgentSessionOptions, CodingAgentSessionProductEvent, CodingAgentSessionView,
-        CodingAgentWorkflowProductEvent, CodingSessionError, PendingDelegationConfirmation,
-        ProductEvent, ProductEventSequence, ProfileId, ProfileKind, UiSnapshot, UiSnapshotCursor,
+        CodingSessionError, PendingDelegationConfirmation, ProductEvent, ProductEventSequence,
+        ProfileId, ProfileKind, UiSnapshot, UiSnapshotCursor,
     };
     use pi_ai::api::conversation::Usage;
     use pi_ai::api::model::{Model, ModelCost, ModelInput};
@@ -3322,8 +3323,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn real_prompt_partial_commit_returns_completed_failed_outcome_through_prompt_task_done()
-    {
+    async fn real_prompt_partial_commit_returns_recovery_pending_without_terminal_event() {
         let api = "interactive-real-prompt-partial-commit";
         let _provider_guard = crate::test_support::ProviderGuard::register(
             api,
@@ -3374,18 +3374,32 @@ mod tests {
                 .any(|durable_id| durable_id == &partial_commit_operation_id),
             "the failed prompt transaction must retain its durable operation id"
         );
-        assert!(events.iter().any(|event| {
+        assert!(!events.iter().any(|event| {
             matches!(
                 event,
                 PromptTaskEvent::Coding(event)
-                    if matches!(
-                        event.event(),
-                        CodingAgentProductEventKind::Workflow(CodingAgentWorkflowProductEvent::PromptFailed { operation_id, error })
-                            if operation_id == &partial_commit_operation_id
-                                && error.message == expected_error.to_string()
-                    )
+                    if event.operation_id() == Some(partial_commit_operation_id.as_str())
+                        && event.terminal_operation().is_some()
             )
         }));
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| {
+                    matches!(
+                        event,
+                        PromptTaskEvent::Coding(event)
+                            if matches!(
+                                event.event(),
+                                CodingAgentProductEventKind::Workflow(
+                                    CodingAgentWorkflowProductEvent::OperationRecoveryPending { .. }
+                                )
+                            )
+                    )
+                })
+                .count(),
+            1
+        );
 
         let (mut tui, root_id) = test_tui();
         let mut projection = UiProjection::new();
@@ -3394,7 +3408,7 @@ mod tests {
         }
         let expected_error_text = expected_error.to_string();
         let projected_before_finish = transcript_error_count(&tui, root_id, &expected_error_text);
-        assert_eq!(projected_before_finish, 1);
+        assert_eq!(projected_before_finish, 0);
 
         let mut coding_session = None;
         let mut session_target = sentinel_target();
@@ -3411,7 +3425,7 @@ mod tests {
         assert_eq!(
             transcript_error_count(&tui, root_id, &expected_error_text),
             projected_before_finish,
-            "finish_prompt must not duplicate the prompt failure projection"
+            "finish_prompt must not synthesize a terminal error for recovery pending"
         );
         assert_restored_owner_supports_plugin_load(&mut coding_session, session_id).await;
     }

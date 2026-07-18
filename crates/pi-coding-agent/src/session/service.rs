@@ -989,6 +989,39 @@ impl SessionService {
         self.committed_session_sequence.load(Ordering::Acquire)
     }
 
+    pub(crate) fn recovery_id_for_uncertain_operation(
+        &self,
+        operation_id: &str,
+    ) -> Result<String, CodingSessionError> {
+        if let Some(record) = self
+            .store
+            .read_outbox(&self.handle)?
+            .into_iter()
+            .find(|record| {
+                record.operation_id.as_deref() == Some(operation_id)
+                    && record.kind == DurableOutboxRecordKind::SessionWrite
+            })
+        {
+            return Ok(format!("recovery_pending:{}", record.record_id));
+        }
+        let has_durable_fact = self
+            .store
+            .read_events(&self.handle)?
+            .into_iter()
+            .any(|event| event.operation_id.as_deref() == Some(operation_id));
+        if has_durable_fact {
+            return Ok(format!(
+                "recovery_pending:{}/{}",
+                self.session_id(),
+                operation_id
+            ));
+        }
+        Err(CodingSessionError::PartialCommit {
+            operation_id: operation_id.to_owned(),
+            message: "partial commit has no durable fact or outbox evidence".into(),
+        })
+    }
+
     pub(crate) fn take_startup_outbox_records(&mut self) -> Vec<DurableOutboxRecord> {
         std::mem::take(&mut self.startup_outbox_records)
     }

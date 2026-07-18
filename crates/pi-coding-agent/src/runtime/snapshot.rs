@@ -54,6 +54,12 @@ pub(crate) enum SubmittedOperationStatus {
         kind: OperationKind,
         descriptor: OperationDescriptor,
     },
+    RecoveryPending {
+        operation_id: String,
+        kind: OperationKind,
+        descriptor: OperationDescriptor,
+        recovery_id: String,
+    },
     Terminal {
         operation_id: String,
         kind: OperationKind,
@@ -1411,6 +1417,48 @@ impl SnapshotCoordinator {
         });
     }
 
+    pub(crate) fn mark_recovery_pending(
+        &self,
+        handle: &ClientHandle,
+        operation_id: &str,
+        descriptor: OperationDescriptor,
+        recovery_id: String,
+    ) -> Result<(), ClientRegistryError> {
+        let mut state = self.state.lock().unwrap();
+        Self::validate_terminal_runtime(&state)?;
+        let record = state
+            .clients
+            .get_mut(&handle.id)
+            .ok_or(ClientRegistryError::SubmittedRegression)?;
+        match record.submitted_operation.as_ref() {
+            Some(SubmittedOperationStatus::Running {
+                operation_id: stored_id,
+                descriptor: stored_descriptor,
+                ..
+            }) if stored_id == operation_id && *stored_descriptor == descriptor => {
+                record.submitted_operation = Some(SubmittedOperationStatus::RecoveryPending {
+                    operation_id: operation_id.to_owned(),
+                    kind: descriptor.submitted_kind,
+                    descriptor,
+                    recovery_id,
+                });
+                Ok(())
+            }
+            Some(SubmittedOperationStatus::RecoveryPending {
+                operation_id: stored_id,
+                descriptor: stored_descriptor,
+                recovery_id: stored_recovery_id,
+                ..
+            }) if stored_id == operation_id
+                && *stored_descriptor == descriptor
+                && stored_recovery_id == &recovery_id =>
+            {
+                Ok(())
+            }
+            _ => Err(ClientRegistryError::SubmittedRegression),
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn install_submission_transition_probe_for_tests(
         &self,
@@ -1477,6 +1525,11 @@ impl SnapshotCoordinator {
                     descriptor,
                     ..
                 })
+                | Some(SubmittedOperationStatus::RecoveryPending {
+                    operation_id,
+                    descriptor,
+                    ..
+                })
                 | Some(SubmittedOperationStatus::Terminal {
                     operation_id,
                     descriptor,
@@ -1496,7 +1549,10 @@ impl SnapshotCoordinator {
                 Some(SubmittedOperationStatus::Terminal { root_count, .. }) => {
                     *root_count = root_count.saturating_add(1);
                 }
-                Some(SubmittedOperationStatus::Running { .. }) => {
+                Some(
+                    SubmittedOperationStatus::Running { .. }
+                    | SubmittedOperationStatus::RecoveryPending { .. },
+                ) => {
                     let durability = match event.durability() {
                         crate::events::CodingAgentProductEventDurability::PersistenceUncertain {
                             ..

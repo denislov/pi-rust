@@ -55,13 +55,21 @@ impl CodingAgentSession {
                 Err(IntentRouter::unsupported_dispatch(&admission))
             }
         };
+        let decision = self
+            .runtime_host
+            .operation_supervisor
+            .finalizer
+            .freeze(&execution, &result);
+        let commit_result = self
+            .runtime_host
+            .session_coordinator
+            .resolve_finalization(&decision)?;
+        self.runtime_host
+            .event_hub
+            .service
+            .emit_recovery_pending(&decision, &commit_result);
         if let Some(guard) = submission.as_mut() {
-            let decision = self
-                .runtime_host
-                .operation_supervisor
-                .finalizer
-                .freeze(&execution, &result);
-            guard.finish(&decision)?;
+            guard.finish(&decision, &commit_result)?;
         }
         result
     }
@@ -266,13 +274,21 @@ impl CodingAgentSession {
             | Operation::AgentInvocation(_)
             | Operation::AgentTeam(_) => Err(IntentRouter::unsupported_dispatch(&admission)),
         })();
+        let decision = self
+            .runtime_host
+            .operation_supervisor
+            .finalizer
+            .freeze(&execution, &result);
+        let commit_result = self
+            .runtime_host
+            .session_coordinator
+            .resolve_finalization(&decision)?;
+        self.runtime_host
+            .event_hub
+            .service
+            .emit_recovery_pending(&decision, &commit_result);
         if let Some(guard) = submission.as_mut() {
-            let decision = self
-                .runtime_host
-                .operation_supervisor
-                .finalizer
-                .freeze(&execution, &result);
-            guard.finish(&decision)?;
+            guard.finish(&decision, &commit_result)?;
         }
         result
     }
@@ -603,13 +619,21 @@ impl CodingAgentSession {
                 }
             }
             .await;
+        let decision = self
+            .runtime_host
+            .operation_supervisor
+            .finalizer
+            .freeze(&execution, &result);
+        let commit_result = self
+            .runtime_host
+            .session_coordinator
+            .resolve_finalization(&decision)?;
+        self.runtime_host
+            .event_hub
+            .service
+            .emit_recovery_pending(&decision, &commit_result);
         if let Some(guard) = submission.as_mut() {
-            let decision = self
-                .runtime_host
-                .operation_supervisor
-                .finalizer
-                .freeze(&execution, &result);
-            guard.finish(&decision)?;
+            guard.finish(&decision, &commit_result)?;
         }
         result
     }

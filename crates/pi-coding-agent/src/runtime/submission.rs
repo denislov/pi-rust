@@ -1,12 +1,13 @@
 use super::client::projection as public_projection;
 use super::client::service::ClientService;
 use super::facade::{CodingAgentSession, CodingSessionError};
-use super::finalization::FinalizationDecision;
+use super::finalization::{FinalizationCommitResult, FinalizationDecision};
 use super::operation::{OperationDispatchMode, OperationExecution};
 use super::outcome as public_operation;
 use super::outcome::{CodingAgentOperation, CodingAgentOperationOutcome};
 use super::snapshot as snapshot_coordinator;
 use super::snapshot::SnapshotCoordinator;
+use crate::events as event;
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,6 +115,7 @@ impl SubmissionCommitGuard {
     pub(super) fn finish(
         &mut self,
         decision: &FinalizationDecision,
+        commit_result: &FinalizationCommitResult,
     ) -> Result<(), CodingSessionError> {
         if let Some(execution) = &self.execution {
             if decision.operation_id != execution.operation_id
@@ -139,6 +141,40 @@ impl SubmissionCommitGuard {
                     message: "finalization decision does not match admitted operation".into(),
                 });
             }
+            if let FinalizationCommitResult::InDoubt { recovery_id } = commit_result {
+                self.coordinator
+                    .mark_recovery_pending(
+                        &self.handle,
+                        &execution.operation_id,
+                        execution.descriptor,
+                        recovery_id.clone(),
+                    )
+                    .map_err(|error| CodingSessionError::Session {
+                        message: error.to_string(),
+                    })?;
+                self.finished = true;
+                return Ok(());
+            }
+            let status = match commit_result {
+                FinalizationCommitResult::Committed => decision.terminal_status,
+                FinalizationCommitResult::DefinitelyFailed { code, message } => match &decision
+                    .payload
+                {
+                    super::finalization::FinalizationPayload::Failed {
+                        code: decision_code,
+                        message: decision_message,
+                    } if decision_code == code && decision_message == message => {
+                        event::ProductEventTerminalStatus::Failed
+                    }
+                    _ => {
+                        return Err(CodingSessionError::Session {
+                            message: "definite failure result conflicts with finalization decision"
+                                .into(),
+                        });
+                    }
+                },
+                FinalizationCommitResult::InDoubt { .. } => unreachable!(),
+            };
             match execution.descriptor.terminal_policy {
                 public_operation::OperationTerminalPolicy::ProductEvent => {
                     self.coordinator
@@ -146,7 +182,7 @@ impl SubmissionCommitGuard {
                             &self.handle,
                             &execution.operation_id,
                             execution.descriptor,
-                            decision.terminal_status,
+                            status,
                         )
                         .map_err(|error| CodingSessionError::Session {
                             message: error.to_string(),
@@ -167,7 +203,7 @@ impl SubmissionCommitGuard {
                             execution.kind,
                             execution.descriptor,
                             anchor,
-                            decision.terminal_status,
+                            status,
                         )
                         .map_err(|error| CodingSessionError::Session {
                             message: error.to_string(),

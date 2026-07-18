@@ -56,6 +56,9 @@ pub struct CodingAgentDraft {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CodingAgentSubmittedOperationStatus {
     Running,
+    RecoveryPending {
+        recovery_id: String,
+    },
     Terminal {
         status: CodingAgentProductEventTerminalStatus,
         anchor: CodingAgentSubmittedTerminalAnchor,
@@ -1243,6 +1246,16 @@ fn public_client_snapshot(state: ClientSnapshotState) -> CodingAgentSnapshot {
             operation_id,
             kind: kind.as_str().into(),
             status: CodingAgentSubmittedOperationStatus::Running,
+        },
+        SubmittedOperationStatus::RecoveryPending {
+            operation_id,
+            kind,
+            recovery_id,
+            ..
+        } => CodingAgentSubmittedOperation {
+            operation_id,
+            kind: kind.as_str().into(),
+            status: CodingAgentSubmittedOperationStatus::RecoveryPending { recovery_id },
         },
         SubmittedOperationStatus::Terminal {
             operation_id,

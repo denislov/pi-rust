@@ -26,6 +26,15 @@ pub(crate) struct FinalizationDecision {
     pub(crate) terminal_status: ProductEventTerminalStatus,
     pub(crate) semantic_event_id: String,
     pub(crate) payload: FinalizationPayload,
+    pub(crate) requires_recovery: bool,
+    pub(crate) persistence_error: Option<CodingSessionError>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum FinalizationCommitResult {
+    Committed,
+    DefinitelyFailed { code: String, message: String },
+    InDoubt { recovery_id: String },
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -37,6 +46,7 @@ impl OperationFinalizer {
         execution: &OperationExecution,
         result: &Result<OperationOutcome, CodingSessionError>,
     ) -> FinalizationDecision {
+        let requires_recovery = Self::requires_recovery(result);
         let payload = Self::payload(result);
         let terminal_status = match &payload {
             FinalizationPayload::Completed => ProductEventTerminalStatus::Completed,
@@ -59,6 +69,35 @@ impl OperationFinalizer {
             terminal_status,
             semantic_event_id: format!("{scope}/{}/operation_terminal", execution.operation_id),
             payload,
+            requires_recovery,
+            persistence_error: Self::persistence_error(result),
+        }
+    }
+
+    pub(crate) fn resolve_non_session(
+        &self,
+        decision: &FinalizationDecision,
+    ) -> Result<FinalizationCommitResult, CodingSessionError> {
+        if decision.descriptor.durability.session_if_persistent {
+            return Err(CodingSessionError::Session {
+                message: "session-durable finalization requires SessionCoordinator".into(),
+            });
+        }
+        if decision.requires_recovery {
+            return Err(CodingSessionError::Session {
+                message: "non-session finalization has no durable recovery owner".into(),
+            });
+        }
+        match &decision.payload {
+            FinalizationPayload::Failed { code, message } => {
+                Ok(FinalizationCommitResult::DefinitelyFailed {
+                    code: code.clone(),
+                    message: message.clone(),
+                })
+            }
+            FinalizationPayload::Completed | FinalizationPayload::Aborted { .. } => {
+                Ok(FinalizationCommitResult::Committed)
+            }
         }
     }
 
@@ -98,6 +137,43 @@ impl OperationFinalizer {
                 message: format!("operation failed ({})", error.code()),
             },
             Ok(_) => FinalizationPayload::Completed,
+        }
+    }
+
+    fn requires_recovery(result: &Result<OperationOutcome, CodingSessionError>) -> bool {
+        matches!(
+            result,
+            Err(CodingSessionError::PartialCommit { .. })
+                | Ok(OperationOutcome::Prompt(PromptTurnOutcome::Failed {
+                    error: CodingSessionError::PartialCommit { .. },
+                    ..
+                }))
+                | Ok(OperationOutcome::ManualCompaction(
+                    PromptTurnOutcome::Failed {
+                        error: CodingSessionError::PartialCommit { .. },
+                        ..
+                    }
+                ))
+                | Ok(OperationOutcome::BranchSummary(PromptTurnOutcome::Failed {
+                    error: CodingSessionError::PartialCommit { .. },
+                    ..
+                }))
+        )
+    }
+
+    fn persistence_error(
+        result: &Result<OperationOutcome, CodingSessionError>,
+    ) -> Option<CodingSessionError> {
+        match result {
+            Err(error @ CodingSessionError::PartialCommit { .. }) => Some(error.clone()),
+            Ok(OperationOutcome::Prompt(PromptTurnOutcome::Failed { error, .. }))
+            | Ok(OperationOutcome::ManualCompaction(PromptTurnOutcome::Failed { error, .. }))
+            | Ok(OperationOutcome::BranchSummary(PromptTurnOutcome::Failed { error, .. }))
+                if matches!(error, CodingSessionError::PartialCommit { .. }) =>
+            {
+                Some(error.clone())
+            }
+            _ => None,
         }
     }
 }

@@ -295,6 +295,17 @@ impl CodingProtocolEventAdapter {
                 revocation: capability_revocation_to_protocol(*revocation).to_owned(),
             }],
             CodingAgentProductEventKind::Workflow(
+                CodingAgentWorkflowProductEvent::OperationRecoveryPending {
+                    operation_id,
+                    recovery_id,
+                    reason,
+                },
+            ) => vec![ProtocolEvent::OperationRecoveryPending {
+                operation_id: operation_id.clone(),
+                recovery_id: recovery_id.clone(),
+                reason: reason.clone(),
+            }],
+            CodingAgentProductEventKind::Workflow(
                 CodingAgentWorkflowProductEvent::OperationRecovered {
                     operation_id,
                     recovery_id,
@@ -1082,7 +1093,7 @@ mod tests {
     use super::*;
     use crate::events::CodingAgentImageContent;
     use crate::events::message::MessageEvent;
-    use crate::events::recovery::RecoveryEvent;
+    use crate::events::recovery::{RecoveryEvent, RecoveryPendingEvent};
     use crate::runtime::facade::{ProductEvent, ProductEventSequence};
     use pi_ai::api::conversation::Usage;
 
@@ -1117,6 +1128,41 @@ mod tests {
                 && recovery_id == "recovery_1"
                 && reason.contains("startup recovery")
         ));
+    }
+
+    #[test]
+    fn protocol_adapter_maps_recovery_pending_without_terminal_status() {
+        let mut adapter = CodingProtocolEventAdapter::new_with_provider(
+            "faux".into(),
+            "faux-provider".into(),
+            "faux-model".into(),
+        );
+        let product_event = ProductEvent::from_draft_for_tests(
+            ProductEventSequence::new(1),
+            RecoveryPendingEvent {
+                operation_id: "op_pending".into(),
+                recovery_id: "recovery_pending:session/op".into(),
+                reason: "session commit outcome requires recovery inspection".into(),
+                session_id: "session_pending".into(),
+            }
+            .into_product_draft(),
+            None,
+        );
+
+        let events = adapter.push_internal_product_event(&product_event);
+
+        assert!(matches!(
+            &events[0],
+            ProtocolEvent::OperationRecoveryPending {
+                operation_id,
+                recovery_id,
+                reason,
+            } if operation_id == "op_pending"
+                && recovery_id == "recovery_pending:session/op"
+                && reason.contains("recovery inspection")
+        ));
+        assert!(product_event.terminal_status().is_none());
+        assert!(product_event.terminal_operation().is_none());
     }
 
     #[test]

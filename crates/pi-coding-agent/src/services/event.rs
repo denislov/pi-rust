@@ -17,7 +17,7 @@ use crate::events::outbox::DurableOutboxRecord;
 use crate::events::profile::ProfileEvent;
 use crate::events::prompt::PromptEvent;
 use crate::events::prompt_stream::PromptStreamEvent;
-use crate::events::recovery::RecoveryEvent;
+use crate::events::recovery::{RecoveryEvent, RecoveryPendingEvent};
 use crate::events::runtime::RuntimeEvent;
 use crate::events::session::{SessionCompactionEvent, SessionLifecycleEvent, SessionWriteEvent};
 use crate::events::team::TeamEvent;
@@ -32,6 +32,7 @@ use crate::operations::self_healing_edit::flow::{
 };
 use crate::runtime::capability::InstalledCapabilityGeneration;
 use crate::runtime::facade::{CodingSessionError, ProfileId, ProfileKind};
+use crate::runtime::finalization::{FinalizationCommitResult, FinalizationDecision};
 use crate::runtime::snapshot::{ClientHandle, ClientRegistryError, SnapshotCoordinator};
 use crate::session::service::FinalizedSessionWrite;
 
@@ -835,7 +836,9 @@ impl EventService {
                 error,
                 ..
             } => {
-                self.emit_prompt_failed(operation_id.clone(), error.clone());
+                if !matches!(error, CodingSessionError::PartialCommit { .. }) {
+                    self.emit_prompt_failed(operation_id.clone(), error.clone());
+                }
             }
         }
     }
@@ -1166,6 +1169,28 @@ impl EventService {
                 operation_kind,
                 root_operation_id: Some(operation_id),
             },
+        )
+    }
+
+    pub(crate) fn emit_recovery_pending(
+        &self,
+        decision: &FinalizationDecision,
+        commit_result: &FinalizationCommitResult,
+    ) -> Option<ProductEvent> {
+        let FinalizationCommitResult::InDoubt { recovery_id } = commit_result else {
+            return None;
+        };
+        let session_id = decision.session_identity.clone()?;
+        Some(
+            self.publish_without_root_terminal(
+                RecoveryPendingEvent {
+                    operation_id: decision.operation_id.clone(),
+                    recovery_id: recovery_id.clone(),
+                    reason: "session commit outcome requires recovery inspection".into(),
+                    session_id,
+                }
+                .into_product_draft(),
+            ),
         )
     }
 

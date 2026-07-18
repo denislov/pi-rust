@@ -91,8 +91,12 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   the admitted execution and typed outcome across all four dispatch paths.
   Submission projection validates that decision instead of independently
   classifying a naked terminal status. Typed Prompt/Compact/BranchSummary
-  failures are now classified as Failed rather than Completed. Coordinator
-  commit-result and durable RecoveryPending integration remain open.
+  failures are now classified as Failed rather than Completed. SessionCoordinator
+  resolves durable evidence to `Committed`/`DefinitelyFailed`/`InDoubt`;
+  partial commits with evidence enter non-terminal `RecoveryPending`, and
+  EventHub emits typed `OperationRecoveryPending` evidence without terminal
+  fields. Missing evidence preserves the original `PartialCommit`; retry,
+  operator resolution, and final operation-terminal outbox commit remain open.
 - Commit uncertainty is represented by `PartialCommit`, but supervisor-owned
   durable `RecoveryPending` lifetime across caller exit/restart is not complete.
 

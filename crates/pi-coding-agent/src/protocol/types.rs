@@ -406,6 +406,14 @@ pub enum ProtocolEvent {
     },
     #[serde(rename = "capability_changed")]
     CapabilityChanged { generation: u64, revocation: String },
+    #[serde(rename = "operation_recovery_pending")]
+    OperationRecoveryPending {
+        #[serde(rename = "operationId")]
+        operation_id: String,
+        #[serde(rename = "recoveryId")]
+        recovery_id: String,
+        reason: String,
+    },
     #[serde(rename = "operation_recovered")]
     OperationRecovered {
         #[serde(rename = "operationId")]

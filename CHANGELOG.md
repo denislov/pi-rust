@@ -123,6 +123,11 @@
   validates the decision instead of classifying a detached status. Typed
   Prompt/Compact/BranchSummary failure outcomes now correctly resolve Failed
   rather than Completed.
+- Partial commit paths with durable fact/outbox evidence now resolve to a stable
+  `InDoubt(recovery_id)` result and project non-terminal `RecoveryPending`
+  status. EventHub and protocol adapters emit `OperationRecoveryPending` with
+  no `terminal_status` or `terminal_operation`; when evidence is absent, the
+  original `PartialCommit` error is preserved and the handoff fails closed.
 
 ### Release Status
 

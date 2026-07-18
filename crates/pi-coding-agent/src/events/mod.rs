@@ -550,6 +550,11 @@ pub enum CodingAgentWorkflowProductEvent {
         operation_id: String,
         reason: String,
     },
+    OperationRecoveryPending {
+        operation_id: String,
+        recovery_id: String,
+        reason: String,
+    },
     OperationRecovered {
         operation_id: String,
         recovery_id: String,
@@ -715,6 +720,9 @@ impl CodingAgentProductEventKind {
             Self::Workflow(CodingAgentWorkflowProductEvent::PromptAborted { .. }) => {
                 "prompt_aborted"
             }
+            Self::Workflow(CodingAgentWorkflowProductEvent::OperationRecoveryPending {
+                ..
+            }) => "operation_recovery_pending",
             Self::Workflow(CodingAgentWorkflowProductEvent::OperationRecovered { .. }) => {
                 "operation_recovered"
             }
@@ -769,7 +777,8 @@ impl CodingAgentProductEvent {
     ) -> Self {
         let delivery_class = match &event {
             CodingAgentProductEventKind::Workflow(
-                CodingAgentWorkflowProductEvent::OperationRecovered { .. },
+                CodingAgentWorkflowProductEvent::OperationRecoveryPending { .. }
+                | CodingAgentWorkflowProductEvent::OperationRecovered { .. },
             ) => CodingAgentProductEventDeliveryClass::Recovery,
             CodingAgentProductEventKind::Capability(_)
             | CodingAgentProductEventKind::Runtime(CodingAgentRuntimeProductEvent::ShutDown) => {

@@ -516,6 +516,17 @@ impl CodingEventBridge {
                 text: format!("Self-healing edit cancelled for {path}: {reason}"),
             }],
             CodingAgentProductEventKind::Workflow(
+                CodingAgentWorkflowProductEvent::OperationRecoveryPending {
+                    operation_id,
+                    recovery_id,
+                    reason,
+                },
+            ) => vec![UiEvent::SystemNotice {
+                text: format!(
+                    "Operation {operation_id} requires recovery ({recovery_id}): {reason}"
+                ),
+            }],
+            CodingAgentProductEventKind::Workflow(
                 CodingAgentWorkflowProductEvent::OperationRecovered {
                     operation_id,
                     reason,

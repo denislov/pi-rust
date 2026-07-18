@@ -5092,7 +5092,7 @@ runtime = "lua"
     }
 
     #[tokio::test]
-    async fn failed_transaction_store_fixture_preserves_operation_id_and_terminal_uncertain() {
+    async fn failed_transaction_store_fixture_enters_durable_recovery_pending_without_terminal() {
         let prompt_api = "coding-session-store-failure-prompt";
         let prompt_provider = crate::test_support::ProviderGuard::register(
             prompt_api,
@@ -5158,18 +5158,14 @@ runtime = "lua"
             .submitted_operation
             .expect("failed Prompt uncertain submitted state");
         assert_eq!(prompt_submitted.operation_id, prompt_operation_id);
-        let prompt_sequence = match prompt_submitted.status {
-            public_projection::CodingAgentSubmittedOperationStatus::Terminal {
-                anchor:
-                    public_projection::CodingAgentSubmittedTerminalAnchor::ProductEvent {
-                        sequence,
-                        durability:
-                            public_projection::CodingAgentSubmittedEventDurability::Uncertain,
-                    },
-                ..
-            } => sequence,
-            other => panic!("unexpected failed Prompt terminal anchor: {other:?}"),
+        let prompt_recovery_id = match prompt_submitted.status {
+            public_projection::CodingAgentSubmittedOperationStatus::RecoveryPending {
+                recovery_id,
+            } => recovery_id,
+            other => panic!("unexpected failed Prompt recovery state: {other:?}"),
         };
+        assert!(prompt_recovery_id.contains(&prompt_operation_id));
+        assert!(prompt_recovery_id.ends_with("/session_write_committed"));
         let public_projection::CodingAgentReconnect::Replayed {
             events: prompt_events,
             ..
@@ -5181,17 +5177,11 @@ runtime = "lua"
             prompt_events
                 .iter()
                 .filter(|event| {
-                    event.sequence() == prompt_sequence
-                        && event.operation_id() == Some(prompt_operation_id.as_str())
-                        && matches!(
-                            event.event(),
-                            CodingAgentProductEventKind::Workflow(
-                                CodingAgentWorkflowProductEvent::PromptFailed { .. }
-                            )
-                        )
+                    event.operation_id() == Some(prompt_operation_id.as_str())
+                        && event.terminal_operation().is_some()
                 })
                 .count(),
-            1
+            0
         );
         assert!(prompt_events.iter().any(|event| {
             event.operation_id() == Some(prompt_operation_id.as_str())
@@ -5270,13 +5260,10 @@ runtime = "lua"
         assert_eq!(compact_submitted.operation_id, compact_operation_id);
         assert!(matches!(
             compact_submitted.status,
-            public_projection::CodingAgentSubmittedOperationStatus::Terminal {
-                anchor: public_projection::CodingAgentSubmittedTerminalAnchor::TerminalUncertain {
-                    operation_id: ref uncertain_id,
-                    ..
-                },
-                ..
-            } if uncertain_id == &compact_operation_id
+            public_projection::CodingAgentSubmittedOperationStatus::RecoveryPending {
+                recovery_id: ref pending_id,
+            } if pending_id.contains(&compact_operation_id)
+                && pending_id.ends_with("/session_write_committed")
         ));
         let public_projection::CodingAgentReconnect::Replayed {
             events: compact_events,
@@ -5969,6 +5956,9 @@ runtime = "lua"
                 CodingAgentWorkflowProductEvent::PromptCompleted { .. } => "prompt_completed",
                 CodingAgentWorkflowProductEvent::PromptFailed { .. } => "prompt_failed",
                 CodingAgentWorkflowProductEvent::PromptAborted { .. } => "prompt_aborted",
+                CodingAgentWorkflowProductEvent::OperationRecoveryPending { .. } => {
+                    "operation_recovery_pending"
+                }
                 CodingAgentWorkflowProductEvent::OperationRecovered { .. } => "operation_recovered",
                 CodingAgentWorkflowProductEvent::PluginLoadCompleted { .. } => {
                     "plugin_load_completed"

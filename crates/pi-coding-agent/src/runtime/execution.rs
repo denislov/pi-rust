@@ -183,7 +183,8 @@ impl CodingAgentSession {
             };
             if let Some(guard) = submission.as_mut() {
                 let decision = operation_finalizer.freeze(&execution, &result);
-                guard.finish(&decision)?;
+                let commit_result = operation_finalizer.resolve_non_session(&decision)?;
+                guard.finish(&decision, &commit_result)?;
             }
             drop(operation_permit);
             result.map(CodingAgentOperationOutcome::from_internal)

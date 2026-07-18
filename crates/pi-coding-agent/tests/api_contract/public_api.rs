@@ -39,8 +39,8 @@ use pi_coding_agent::api::client::{
     CodingAgentDraftKind, CodingAgentFileChangeSnapshot, CodingAgentLifecycleRejection,
     CodingAgentOperationControl, CodingAgentOperationSnapshot, CodingAgentOperationStatus,
     CodingAgentOutcomeAcknowledgementId, CodingAgentSnapshot, CodingAgentSnapshotCursor,
-    CodingAgentSubmittedTerminalAnchor, CodingAgentTerminalUncertainty,
-    CodingAgentTurnUsageSnapshot, CodingAgentUsageSnapshot,
+    CodingAgentSubmittedOperationStatus, CodingAgentSubmittedTerminalAnchor,
+    CodingAgentTerminalUncertainty, CodingAgentTurnUsageSnapshot, CodingAgentUsageSnapshot,
 };
 use pi_coding_agent::api::event::{
     CodingAgentAgentProductEvent, CodingAgentCapabilityProductEvent,
@@ -178,6 +178,22 @@ fn lifecycle_serialization_is_stable_and_authority_free() {
             "leaked {forbidden}: {serialized}"
         );
     }
+}
+
+#[test]
+fn recovery_pending_status_is_public_non_terminal_wire_state() {
+    let status = CodingAgentSubmittedOperationStatus::RecoveryPending {
+        recovery_id: "recovery_pending:session/op".into(),
+    };
+    let encoded = serde_json::to_value(&status).unwrap();
+    assert_eq!(
+        encoded,
+        serde_json::json!({
+            "RecoveryPending": {"recovery_id": "recovery_pending:session/op"}
+        })
+    );
+    let decoded: CodingAgentSubmittedOperationStatus = serde_json::from_value(encoded).unwrap();
+    assert_eq!(decoded, status);
 }
 
 #[test]

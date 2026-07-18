@@ -2,6 +2,7 @@ use std::sync::Mutex;
 
 use super::capability::CapabilityGeneration;
 use super::facade::CodingSessionError;
+use super::finalization::{FinalizationCommitResult, FinalizationDecision, FinalizationPayload};
 use crate::operations::delegation::{
     PendingDelegationConfirmationQueue, PendingDelegationConfirmationState,
 };
@@ -18,6 +19,34 @@ pub(crate) struct SessionCoordinator {
     pub(super) persistence: SessionPersistence,
     pub(super) pending_delegation_confirmations: PendingDelegationConfirmationQueue,
     pub(super) startup_recovery_markers: Mutex<Vec<StartupRecoveryMarker>>,
+}
+
+impl SessionCoordinator {
+    pub(crate) fn resolve_finalization(
+        &self,
+        decision: &FinalizationDecision,
+    ) -> Result<FinalizationCommitResult, CodingSessionError> {
+        if decision.requires_recovery {
+            let SessionPersistence::Persistent(service) = &self.persistence else {
+                return Err(CodingSessionError::Session {
+                    message: "non-persistent finalization cannot enter durable recovery".into(),
+                });
+            };
+            return service
+                .recovery_id_for_uncertain_operation(&decision.operation_id)
+                .map(|recovery_id| FinalizationCommitResult::InDoubt { recovery_id })
+                .map_err(|error| decision.persistence_error.clone().unwrap_or(error));
+        }
+        if !decision.descriptor.durability.session_if_persistent
+            && let FinalizationPayload::Failed { code, message } = &decision.payload
+        {
+            return Ok(FinalizationCommitResult::DefinitelyFailed {
+                code: code.clone(),
+                message: message.clone(),
+            });
+        }
+        Ok(FinalizationCommitResult::Committed)
+    }
 }
 
 /// Identity-bearing command accepted by the per-session writer.
