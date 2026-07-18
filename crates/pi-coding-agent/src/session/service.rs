@@ -7,6 +7,7 @@ use pi_agent_core::api::transcript::{SessionEntry, SessionTreeNode, StoredAgentM
 use pi_ai::api::conversation::ContentBlock;
 
 use crate::events::CodingAgentSessionWriteFailureStatus;
+use crate::events::emission::ProductEventDraft;
 use crate::events::outbox::{
     DurableOutboxIntent, DurableOutboxRecord, DurableOutboxRecordCandidate, DurableOutboxRecordKind,
 };
@@ -23,6 +24,7 @@ use crate::runtime::facade::{
     CodingAgentSessionUsageSummary, CodingAgentSessionView, CodingSessionError, ProfileId,
     ProfileKind, SelfHealingEditOutcome, SelfHealingEditRepairAttempt,
 };
+use crate::runtime::finalization::FinalizationDecision;
 use crate::services::event::EventService;
 use crate::session::event::{
     OperationKind, PersistedContentBlock, PersistedDelegationRuntimeSeed,
@@ -1020,6 +1022,45 @@ impl SessionService {
             operation_id: operation_id.to_owned(),
             message: "partial commit has no durable fact or outbox evidence".into(),
         })
+    }
+
+    pub(crate) fn persist_terminal_decision(
+        &self,
+        decision: &FinalizationDecision,
+        draft: ProductEventDraft,
+    ) -> Result<(), CodingSessionError> {
+        let mut ids = SystemIdGenerator;
+        let event = SessionEventEnvelope::new(
+            self.session_id(),
+            ids.next_event_id(),
+            SystemClock.now_rfc3339(),
+            SessionEventData::OperationTerminalRecorded {
+                status: decision.terminal_status.as_str().into(),
+                semantic_event_id: decision.semantic_event_id.clone(),
+            },
+        )
+        .with_operation_id(decision.operation_id.clone());
+        let intent = DurableOutboxRecordCandidate::new(
+            decision.semantic_event_id.clone(),
+            self.session_id().to_owned(),
+            Some(decision.operation_id.clone()),
+            vec![event.event_id.clone()],
+            DurableOutboxRecordKind::OperationTerminal,
+            draft.with_durable_session(self.session_id()),
+        )
+        .map_err(|message| CodingSessionError::Session {
+            message: message.into(),
+        })?;
+        let receipt = self
+            .transaction_writer
+            .commit_session_mutation_with_outbox(
+                vec![event],
+                vec![intent],
+                ManifestPatch::new().updated_at(SystemClock.now_rfc3339()),
+                Some(decision.operation_id.clone()),
+            )?;
+        observe_commit_receipt(&self.committed_session_sequence, receipt);
+        Ok(())
     }
 
     pub(crate) fn take_startup_outbox_records(&mut self) -> Vec<DurableOutboxRecord> {

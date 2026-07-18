@@ -3,6 +3,7 @@ use std::sync::Mutex;
 use super::capability::CapabilityGeneration;
 use super::facade::CodingSessionError;
 use super::finalization::{FinalizationCommitResult, FinalizationDecision, FinalizationPayload};
+use crate::events::emission::ProductEventDraft;
 use crate::operations::delegation::{
     PendingDelegationConfirmationQueue, PendingDelegationConfirmationState,
 };
@@ -22,6 +23,27 @@ pub(crate) struct SessionCoordinator {
 }
 
 impl SessionCoordinator {
+    pub(crate) fn persist_terminal_decision(
+        &self,
+        decision: &FinalizationDecision,
+        draft: ProductEventDraft,
+    ) -> Result<(), CodingSessionError> {
+        if decision.requires_recovery {
+            return Err(decision.persistence_error.clone().unwrap_or(
+                CodingSessionError::PartialCommit {
+                    operation_id: decision.operation_id.clone(),
+                    message: "terminal decision cannot persist while commit is uncertain".into(),
+                },
+            ));
+        }
+        match &self.persistence {
+            SessionPersistence::Persistent(service) => {
+                service.persist_terminal_decision(decision, draft)
+            }
+            SessionPersistence::NonPersistent(_) => Ok(()),
+        }
+    }
+
     pub(crate) fn resolve_finalization(
         &self,
         decision: &FinalizationDecision,

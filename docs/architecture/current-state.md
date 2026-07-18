@@ -109,9 +109,9 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
 - Snapshot/reconnect, stream identity, sequence gaps, capability generation,
   client projection, print/JSON, RPC, and interactive adapters exist.
 - A durable ProductEvent outbox now shares the bounded writer commit point with
-  its source SessionEvents. Session-write and startup-recovery records are
-  implemented; supervisor-owned operation-terminal records remain open under
-  `RIF-002`.
+  its source SessionEvents. Session-write, startup-recovery, and the first
+  Prompt `OperationTerminal` records are implemented; Compact and remaining
+  supervisor-owned operation-terminal records remain open under `RIF-002`.
 - The retained broadcast window is live delivery/replay state, not durable
   evidence. `RIF-009-001` must define an outbox record and semantic identity
   before a writer batch can claim session/outbox atomicity. The record contract

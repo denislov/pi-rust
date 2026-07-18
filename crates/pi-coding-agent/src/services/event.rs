@@ -23,7 +23,7 @@ use crate::events::session::{SessionCompactionEvent, SessionLifecycleEvent, Sess
 use crate::events::team::TeamEvent;
 use crate::events::tool::ToolEvent;
 use crate::events::workflow::{PluginLoadEvent, SelfHealingEditEvent};
-use crate::events::{ProductEvent, ProductEventSequence};
+use crate::events::{CodingAgentProductEventKind, ProductEvent, ProductEventSequence};
 use crate::operations::compaction::flow::ManualCompactionOutcome;
 use crate::operations::plugin_load::flow::PluginLoadOutcome;
 use crate::operations::prompt::context::{DelegationRequest, PromptTurnOutcome};
@@ -608,7 +608,52 @@ impl EventService {
             return None;
         }
         drop(state);
-        Some(self.publish_without_root_terminal(record.draft.clone()))
+        Some(match record.kind {
+            crate::events::outbox::DurableOutboxRecordKind::OperationTerminal => {
+                self.publish_durable_terminal_draft(record.draft.clone())
+            }
+            _ => self.publish_without_root_terminal(record.draft.clone()),
+        })
+    }
+
+    fn publish_durable_terminal_draft(&self, draft: ProductEventDraft) -> ProductEvent {
+        let evidence = match &draft.event {
+            CodingAgentProductEventKind::Workflow(
+                crate::events::CodingAgentWorkflowProductEvent::PromptCompleted { .. },
+            ) => Some(crate::runtime::outcome::OperationRootTerminalEvidence::PromptCompleted),
+            CodingAgentProductEventKind::Workflow(
+                crate::events::CodingAgentWorkflowProductEvent::PromptFailed { .. },
+            ) => Some(crate::runtime::outcome::OperationRootTerminalEvidence::PromptFailed),
+            CodingAgentProductEventKind::Workflow(
+                crate::events::CodingAgentWorkflowProductEvent::PromptAborted { .. },
+            ) => Some(crate::runtime::outcome::OperationRootTerminalEvidence::PromptAborted),
+            _ => None,
+        };
+        self.publish(
+            draft,
+            ProductEventEmissionContext::default(),
+            move |operation_kind, terminal_status| {
+                terminal_status.and_then(|status| {
+                    let kind = operation_kind.or_else(|| {
+                        evidence.map(|evidence| match evidence {
+                            crate::runtime::outcome::OperationRootTerminalEvidence::PromptCompleted
+                            | crate::runtime::outcome::OperationRootTerminalEvidence::PromptFailed
+                            | crate::runtime::outcome::OperationRootTerminalEvidence::PromptAborted => {
+                                crate::runtime::control::OperationKind::Prompt
+                            }
+                            _ => crate::runtime::control::OperationKind::Prompt,
+                        })
+                    });
+                    kind.and_then(|kind| {
+                        evidence.and_then(|evidence| {
+                            crate::runtime::outcome::product_terminal_operation(
+                                kind, evidence, status,
+                            )
+                        })
+                    })
+                })
+            },
+        )
     }
 
     pub(crate) fn emit_diagnostic(
@@ -816,6 +861,10 @@ impl EventService {
 
     pub(crate) fn emit_prompt_outcome(&self, outcome: &PromptTurnOutcome) {
         self.emit_prompt_diagnostics(outcome);
+        self.emit_prompt_terminal(outcome);
+    }
+
+    pub(crate) fn emit_prompt_terminal(&self, outcome: &PromptTurnOutcome) {
         match outcome {
             PromptTurnOutcome::Success {
                 operation_id,
@@ -841,6 +890,42 @@ impl EventService {
                 }
             }
         }
+    }
+
+    pub(crate) fn prompt_terminal_draft(outcome: &PromptTurnOutcome) -> Option<ProductEventDraft> {
+        let draft = match outcome {
+            PromptTurnOutcome::Success {
+                operation_id,
+                turn_id,
+                ..
+            } => PromptEvent::Completed {
+                operation_id: operation_id.clone(),
+                turn_id: turn_id.clone(),
+            }
+            .into_product_draft(),
+            PromptTurnOutcome::Aborted {
+                operation_id,
+                reason,
+                ..
+            } => PromptEvent::Aborted {
+                operation_id: operation_id.clone(),
+                reason: reason.clone(),
+            }
+            .into_product_draft(),
+            PromptTurnOutcome::Failed {
+                operation_id,
+                error,
+                ..
+            } if !matches!(error, CodingSessionError::PartialCommit { .. }) => {
+                PromptEvent::Failed {
+                    operation_id: operation_id.clone(),
+                    error: error.clone(),
+                }
+                .into_product_draft()
+            }
+            PromptTurnOutcome::Failed { .. } => return None,
+        };
+        Some(draft)
     }
 
     pub(crate) fn emit_agent_invocation_started(

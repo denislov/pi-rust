@@ -191,6 +191,11 @@ pub(crate) enum SessionEventData {
     OperationAborted { reason: String },
     #[serde(rename = "operation.failed")]
     OperationFailed { error_code: String, message: String },
+    #[serde(rename = "operation.terminal.recorded")]
+    OperationTerminalRecorded {
+        status: String,
+        semantic_event_id: String,
+    },
     #[serde(rename = "operation.recovered")]
     OperationRecovered { reason: String, recovery_id: String },
     #[serde(rename = "turn.started")]
@@ -623,6 +628,13 @@ mod tests {
                     message: "failed".into(),
                 },
                 "operation.failed",
+            ),
+            (
+                SessionEventData::OperationTerminalRecorded {
+                    status: "completed".into(),
+                    semantic_event_id: "session/op/operation_terminal".into(),
+                },
+                "operation.terminal.recorded",
             ),
             (
                 SessionEventData::OperationRecovered {

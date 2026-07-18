@@ -4013,6 +4013,76 @@ runtime = "lua"
     }
 
     #[tokio::test]
+    async fn persistent_prompt_terminal_is_recorded_in_operation_terminal_outbox() {
+        let api = "coding-session-terminal-outbox-prompt";
+        let _provider_guard = crate::test_support::ProviderGuard::register(
+            api,
+            Arc::new(FauxProvider::simple_text("durable terminal")),
+        );
+        let temp = tempfile::tempdir().unwrap();
+        let session_id = "sess_terminal_operation_outbox";
+        let mut session = CodingAgentSession::create(
+            CodingAgentSessionOptions::new()
+                .with_session_id(session_id)
+                .with_session_log_root(temp.path())
+                .with_ai_client(_provider_guard.ai_client()),
+        )
+        .await
+        .unwrap();
+
+        let outcome = session
+            .run(CodingAgentOperation::Prompt(prompt_options(api, "hello")))
+            .await
+            .unwrap();
+        assert!(matches!(
+            prompt_outcome(outcome),
+            PromptTurnOutcome::Success { .. }
+        ));
+
+        let records = std::fs::read_to_string(temp.path().join(session_id).join("outbox.jsonl"))
+            .unwrap()
+            .lines()
+            .map(serde_json::from_str::<crate::events::outbox::DurableOutboxRecord>)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(records.iter().any(|record| {
+            record.kind == crate::events::outbox::DurableOutboxRecordKind::OperationTerminal
+                && record.record_id.ends_with("/operation_terminal")
+                && record.operation_id.is_some()
+        }));
+
+        session.shutdown().await.unwrap();
+        drop(session);
+        let reopened = CodingAgentSession::open(
+            CodingAgentSessionOptions::new()
+                .with_session_id(session_id)
+                .with_session_log_root(temp.path()),
+        )
+        .await
+        .unwrap();
+        let connection = reopened
+            .connect(public_projection::CodingAgentClientId::new(
+                "terminal-replay",
+            ))
+            .unwrap();
+        let public_projection::CodingAgentReconnect::Replayed { events, .. } =
+            connection.reconnect(0).unwrap()
+        else {
+            panic!("terminal outbox must be retained for restart redelivery")
+        };
+        assert!(events.iter().any(|event| {
+            event.operation_id().is_some()
+                && event.terminal_operation().is_some()
+                && matches!(
+                    event.event(),
+                    CodingAgentProductEventKind::Workflow(
+                        CodingAgentWorkflowProductEvent::PromptCompleted { .. }
+                    )
+                )
+        }));
+    }
+
+    #[tokio::test]
     async fn non_persistent_prompt_hydrates_owner_lifetime_transcript() {
         let first_api = "coding-session-non-persistent-first";
         let second_api = "coding-session-non-persistent-second";

@@ -270,6 +270,7 @@ fn finalized_operation_ids(events: &[SessionEventEnvelope]) -> HashSet<String> {
             SessionEventData::OperationCommitted { .. }
             | SessionEventData::OperationAborted { .. }
             | SessionEventData::OperationFailed { .. }
+            | SessionEventData::OperationTerminalRecorded { .. }
             | SessionEventData::OperationRecovered { .. } => event.operation_id.clone(),
             _ => None,
         })
@@ -334,6 +335,16 @@ impl ReplayBuilder {
             SessionEventData::OperationRecovered { .. } => {
                 self.operation_statuses
                     .insert(operation_id.to_owned(), OperationReplayStatus::Recovered);
+            }
+            SessionEventData::OperationTerminalRecorded { status, .. } => {
+                let status = match status.as_str() {
+                    "completed" => OperationReplayStatus::Committed,
+                    "failed" => OperationReplayStatus::Failed,
+                    "aborted" => OperationReplayStatus::Aborted,
+                    _ => return,
+                };
+                self.operation_statuses
+                    .insert(operation_id.to_owned(), status);
             }
             _ => {}
         }
@@ -513,6 +524,7 @@ impl ReplayBuilder {
                     event.operation_id.as_deref().unwrap_or("<unknown>")
                 ));
             }
+            SessionEventData::OperationTerminalRecorded { .. } => {}
             SessionEventData::TurnInputRecorded { content } => {
                 self.transcript.push(TranscriptItem::UserInput {
                     turn_id: event.turn_id.clone().unwrap_or_default(),
