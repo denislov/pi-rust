@@ -3,7 +3,10 @@ use pi_agent_core::api::transcript::{create_session_id, create_timestamp};
 pub(crate) trait IdGenerator {
     fn next_session_id(&mut self) -> String;
     fn next_event_id(&mut self) -> String;
-    fn next_operation_id(&mut self) -> String;
+    fn next_root_operation_id(&mut self) -> String;
+    fn next_child_operation_id(&mut self) -> String;
+    fn next_session_copy_id(&mut self) -> String;
+    fn next_recovery_id(&mut self) -> String;
     fn next_turn_id(&mut self) -> String;
     fn next_message_id(&mut self) -> String;
     fn next_tool_call_id(&mut self) -> String;
@@ -26,8 +29,20 @@ impl IdGenerator for SystemIdGenerator {
         prefixed_id("evt")
     }
 
-    fn next_operation_id(&mut self) -> String {
+    fn next_root_operation_id(&mut self) -> String {
         prefixed_id("op")
+    }
+
+    fn next_child_operation_id(&mut self) -> String {
+        prefixed_id("op")
+    }
+
+    fn next_session_copy_id(&mut self) -> String {
+        prefixed_id("copy")
+    }
+
+    fn next_recovery_id(&mut self) -> String {
+        prefixed_id("recovery")
     }
 
     fn next_turn_id(&mut self) -> String {
@@ -70,6 +85,8 @@ pub(crate) struct DeterministicIdGenerator {
     session: u64,
     event: u64,
     operation: u64,
+    session_copy: u64,
+    recovery: u64,
     turn: u64,
     message: u64,
     tool_call: u64,
@@ -93,8 +110,20 @@ impl IdGenerator for DeterministicIdGenerator {
         next_deterministic_id("evt", &mut self.event)
     }
 
-    fn next_operation_id(&mut self) -> String {
+    fn next_root_operation_id(&mut self) -> String {
         next_deterministic_id("op", &mut self.operation)
+    }
+
+    fn next_child_operation_id(&mut self) -> String {
+        next_deterministic_id("op", &mut self.operation)
+    }
+
+    fn next_session_copy_id(&mut self) -> String {
+        next_deterministic_id("copy", &mut self.session_copy)
+    }
+
+    fn next_recovery_id(&mut self) -> String {
+        next_deterministic_id("recovery", &mut self.recovery)
     }
 
     fn next_turn_id(&mut self) -> String {
@@ -153,7 +182,10 @@ mod tests {
         assert_eq!(generator.next_session_id(), "sess_1");
         assert_eq!(generator.next_session_id(), "sess_2");
         assert_eq!(generator.next_event_id(), "evt_1");
-        assert_eq!(generator.next_operation_id(), "op_1");
+        assert_eq!(generator.next_root_operation_id(), "op_1");
+        assert_eq!(generator.next_child_operation_id(), "op_2");
+        assert_eq!(generator.next_session_copy_id(), "copy_1");
+        assert_eq!(generator.next_recovery_id(), "recovery_1");
         assert_eq!(generator.next_turn_id(), "turn_1");
         assert_eq!(generator.next_message_id(), "msg_1");
         assert_eq!(generator.next_tool_call_id(), "tool_1");
@@ -166,7 +198,10 @@ mod tests {
 
         assert!(generator.next_session_id().starts_with("sess_"));
         assert!(generator.next_event_id().starts_with("evt_"));
-        assert!(generator.next_operation_id().starts_with("op_"));
+        assert!(generator.next_root_operation_id().starts_with("op_"));
+        assert!(generator.next_child_operation_id().starts_with("op_"));
+        assert!(generator.next_session_copy_id().starts_with("copy_"));
+        assert!(generator.next_recovery_id().starts_with("recovery_"));
         assert!(generator.next_turn_id().starts_with("turn_"));
         assert!(generator.next_message_id().starts_with("msg_"));
         assert!(generator.next_tool_call_id().starts_with("tool_"));

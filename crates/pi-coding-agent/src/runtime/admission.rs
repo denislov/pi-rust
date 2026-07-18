@@ -110,7 +110,7 @@ impl CodingAgentSession {
 
     fn next_operation_admission_id(&self, _operation: &Operation) -> String {
         let mut ids = SystemIdGenerator;
-        ids.next_operation_id()
+        ids.next_root_operation_id()
     }
 
     fn snapshot_input_for_operation(

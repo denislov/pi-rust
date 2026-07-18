@@ -94,7 +94,7 @@ where
         operation: OperationKind,
         runtime_generation: PersistedRuntimeGenerationRef,
     ) -> Self {
-        let operation_id = ids.next_operation_id();
+        let operation_id = ids.next_root_operation_id();
         Self::begin_admitted_with_runtime_generation(
             store,
             handle,

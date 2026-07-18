@@ -1033,7 +1033,7 @@ impl SessionService {
         let markers = in_doubt_operations
             .into_iter()
             .map(|operation_id| {
-                let recovery_id = ids.next_operation_id();
+                let recovery_id = ids.next_recovery_id();
                 let (operation_kind, capability_generation) = operation_facts
                     .get(&operation_id)
                     .cloned()
@@ -1164,7 +1164,7 @@ impl SessionService {
         let clock = SystemClock;
         let operation_id = admitted_operation_id
             .map(str::to_owned)
-            .unwrap_or_else(|| ids.next_operation_id());
+            .unwrap_or_else(|| ids.next_session_copy_id());
         let replay = self.replay()?;
         let target_session_id = ids.next_session_id();
         let mut target = Self::create_with_id(

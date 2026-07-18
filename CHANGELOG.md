@@ -24,7 +24,9 @@
   resolved root/parent lineage at admission. Durable PluginLoad,
   SelfHealingEdit, and BranchSummary transactions now reuse that admitted
   identity; Agent/Team contexts receive it at construction and obtain nested
-  child IDs through the scheduler.
+  child IDs through the scheduler. Root, child, session-copy correlation, and
+  recovery allocation are explicitly separated, while delegation approval facts
+  reuse the admitted approval operation ID.
 - Replaced duplicated internal operation metadata values with one exhaustive
   descriptor table and orthogonal validated claims for lineage, session/runtime
   access, priority, capacity, durability, cancellation, children, outcomes, and

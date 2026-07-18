@@ -2178,7 +2178,7 @@ fn durable_operation_paths_consume_admitted_identity_without_regeneration() {
         "production transaction construction must expose the admitted-identity entry point"
     );
     assert!(
-        transaction.matches("next_operation_id()").count() == 1,
+        transaction.matches("next_root_operation_id()").count() == 1,
         "only the test-only transaction compatibility constructor may mint an identity"
     );
     assert_direct_cfg_test(&transaction, "pub(crate) fn begin_with_runtime_generation(");
@@ -2195,7 +2195,8 @@ fn durable_operation_paths_consume_admitted_identity_without_regeneration() {
             "invocation contexts must receive their execution identity at construction: {relative}"
         );
         assert!(
-            !production.contains("next_operation_id()"),
+            !production.contains("next_root_operation_id()")
+                && !production.contains("next_child_operation_id()"),
             "invocation flows must request child identities from the scheduler: {relative}"
         );
         assert!(
@@ -2209,6 +2210,23 @@ fn durable_operation_paths_consume_admitted_identity_without_regeneration() {
     assert!(
         scheduler.contains("pub(crate) fn allocate_child_operation_id()"),
         "the scheduler must own child operation identity allocation"
+    );
+
+    let delegation = fs::read_to_string(
+        scan.crate_root
+            .join("src/operations/delegation/execution.rs"),
+    )
+    .expect("read delegation execution source");
+    assert!(
+        delegation.contains(
+            "let approval_operation_id = parent_capability_snapshot.operation_id.clone();"
+        ),
+        "delegation approval persistence must reuse the admitted approval identity"
+    );
+    assert!(
+        !delegation.contains("next_root_operation_id()")
+            && !delegation.contains("next_child_operation_id()"),
+        "delegation execution must not mint an unadmitted approval identity"
     );
 }
 

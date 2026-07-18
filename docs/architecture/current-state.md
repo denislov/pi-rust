@@ -33,9 +33,11 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   child executions retain resolved parent/root lineage. PluginLoad,
   SelfHealingEdit, and BranchSummary durable transactions consume the admitted
   snapshot identity; Agent/Team contexts receive that identity at construction,
-  and scheduler-owned allocation supplies nested child IDs. Full downstream
-  finalization/projection propagation and removal of remaining non-admitted
-  lifecycle generators are still open under `RIF-001`.
+  and scheduler-owned allocation supplies nested child IDs. Root, child,
+  session-copy correlation, and recovery allocators are now explicit, and
+  delegation approval facts reuse their admitted approval operation identity.
+  Full downstream finalization/projection propagation is still open under
+  `RIF-001`.
 - The 16 public operation variants now share one exhaustive descriptor table.
   Internal operation payloads map to its contract keys, and internal metadata,
   capability session access, admission class, and dispatch mode are derived

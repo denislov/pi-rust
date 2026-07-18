@@ -15,7 +15,7 @@ pub(crate) struct OperationScheduler;
 impl OperationScheduler {
     pub(crate) fn allocate_child_operation_id() -> String {
         let mut ids = SystemIdGenerator;
-        ids.next_operation_id()
+        ids.next_child_operation_id()
     }
 
     pub(crate) fn admit(

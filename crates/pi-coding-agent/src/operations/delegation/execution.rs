@@ -16,7 +16,6 @@ use crate::services::event::EventService;
 use crate::services::flow::FlowService;
 use crate::services::plugin::PluginService;
 use crate::services::runtime::RuntimeService;
-use crate::session::id::{IdGenerator, SystemIdGenerator};
 use crate::session::service::SessionPersistence;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -228,7 +227,7 @@ pub(crate) async fn approve(
     parent_capability_snapshot: OperationCapabilitySnapshot,
 ) -> Result<(), CodingSessionError> {
     SessionWriteCapability::require(parent_capability_snapshot.session_write.as_ref())?;
-    let mut ids = SystemIdGenerator;
+    let approval_operation_id = parent_capability_snapshot.operation_id.clone();
     let mut pending = approve_pending(
         persistence,
         pending_confirmations,
@@ -236,7 +235,7 @@ pub(crate) async fn approve(
         operation_id.as_str(),
         tool_call_id.as_str(),
         &now,
-        ids.next_operation_id(),
+        approval_operation_id,
     )?;
     if let Some(runtime) = pending.prompt_options.runtime_mut() {
         runtime_service.install_provider_runtime(runtime);

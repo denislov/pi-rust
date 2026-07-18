@@ -264,6 +264,7 @@ mod cases {
             ) => recovery_id.clone(),
             _ => unreachable!("recovery event checked above"),
         };
+        assert!(recovery_id.starts_with("recovery_"));
         assert_eq!(
             event.durability(),
             &crate::events::CodingAgentProductEventDurability::DerivedFromSession {
