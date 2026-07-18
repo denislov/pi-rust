@@ -2709,11 +2709,11 @@ runtime = "lua"
         .await
         .unwrap();
 
-        let async_metadata = CodingAgentOperation::Prompt(prompt_options(api, "async prompt"))
+        let async_descriptor = CodingAgentOperation::Prompt(prompt_options(api, "async prompt"))
             .into_internal(PluginLoadOptions::new())
-            .metadata();
+            .descriptor();
         assert_eq!(
-            async_metadata.dispatch_mode,
+            async_descriptor.dispatch_mode,
             crate::runtime::operation::OperationDispatchMode::Async
         );
         let async_outcome = session
@@ -2728,11 +2728,11 @@ runtime = "lua"
             CodingAgentOperationOutcome::Prompt(PromptTurnOutcome::Success { .. })
         ));
 
-        let read_only_metadata = CodingAgentOperation::ExportCurrent
+        let read_only_descriptor = CodingAgentOperation::ExportCurrent
             .into_internal(PluginLoadOptions::new())
-            .metadata();
+            .descriptor();
         assert_eq!(
-            read_only_metadata.dispatch_mode,
+            read_only_descriptor.dispatch_mode,
             crate::runtime::operation::OperationDispatchMode::SyncReadOnly
         );
         let read_only_outcome = session
@@ -2744,13 +2744,13 @@ runtime = "lua"
             CodingAgentOperationOutcome::Export(_)
         ));
 
-        let sync_mut_metadata = CodingAgentOperation::SetDefaultAgentProfile {
+        let sync_mut_descriptor = CodingAgentOperation::SetDefaultAgentProfile {
             profile_id: ProfileId::from("reviewer"),
         }
         .into_internal(PluginLoadOptions::new())
-        .metadata();
+        .descriptor();
         assert_eq!(
-            sync_mut_metadata.dispatch_mode,
+            sync_mut_descriptor.dispatch_mode,
             crate::runtime::operation::OperationDispatchMode::SyncMutable
         );
         let sync_mut_outcome = session
@@ -3264,13 +3264,16 @@ runtime = "lua"
         let admission = session.resolve_operation_admission(&operation).unwrap();
 
         assert_eq!(admission.kind, OperationKind::AgentTeam);
-        assert_eq!(admission.metadata.static_kind, None);
         assert_eq!(
-            admission.metadata.dispatch_mode,
+            admission.descriptor.submitted_kind,
+            OperationKind::DelegationConfirmation
+        );
+        assert_eq!(
+            admission.descriptor.dispatch_mode,
             crate::runtime::operation::OperationDispatchMode::Async
         );
         assert_eq!(
-            admission.metadata.class,
+            admission.descriptor.admission_class(),
             crate::runtime::operation::OperationClass::SessionWriteRoot
         );
         assert!(admission.capability_snapshot.session_write.is_some());
@@ -3292,15 +3295,15 @@ runtime = "lua"
 
         assert_eq!(admission.kind, OperationKind::DelegationConfirmation);
         assert_eq!(
-            admission.metadata.static_kind,
-            Some(OperationKind::DelegationConfirmation)
+            admission.descriptor.submitted_kind,
+            OperationKind::DelegationConfirmation
         );
         assert_eq!(
-            admission.metadata.dispatch_mode,
+            admission.descriptor.dispatch_mode,
             crate::runtime::operation::OperationDispatchMode::SyncMutable
         );
         assert_eq!(
-            admission.metadata.class,
+            admission.descriptor.admission_class(),
             crate::runtime::operation::OperationClass::SessionWriteRoot
         );
         assert!(admission.capability_snapshot.session_write.is_some());

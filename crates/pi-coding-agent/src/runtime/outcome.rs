@@ -369,6 +369,22 @@ impl OperationDescriptor {
             }
         }
     }
+
+    fn for_child(mut self) -> Option<Self> {
+        if self.child_policy != OperationChildPolicy::Structured
+            || self.dispatch_mode != OperationDispatchMode::Async
+            || self.cancellation != OperationCancellation::Cancellable
+        {
+            return None;
+        }
+        self.lineage = OperationLineage::Child;
+        self.session_access = OperationSessionAccess::None;
+        self.runtime_access = OperationRuntimeAccess::Read;
+        self.capacity = OperationCapacity::BoundedRuntime;
+        self.durability = OperationDurability::NONE;
+        debug_assert_eq!(self.validate(), Ok(()));
+        Some(self)
+    }
 }
 
 const PROMPT_ROOT_EVIDENCE: &[OperationRootTerminalEvidence] = &[
@@ -544,6 +560,54 @@ pub(crate) fn descriptor_for_internal_operation(operation: &Operation) -> Operat
         Operation::Export(_) => OperationContract::ExportCurrent,
     };
     contract.descriptor()
+}
+
+pub(crate) fn descriptor_for_child_kind(kind: OperationKind) -> Option<OperationDescriptor> {
+    let contract = match kind {
+        OperationKind::Prompt => OperationContract::Prompt,
+        OperationKind::AgentInvocation => OperationContract::InvokeAgent,
+        OperationKind::AgentTeam => OperationContract::InvokeTeam,
+        OperationKind::Compact
+        | OperationKind::PluginLoad
+        | OperationKind::PluginCommand
+        | OperationKind::BranchSummary
+        | OperationKind::SelfHealingEdit
+        | OperationKind::DelegationConfirmation
+        | OperationKind::ForkSession
+        | OperationKind::SwitchActiveLeaf
+        | OperationKind::SetSessionTreeLabel
+        | OperationKind::SetDefaultAgentProfile
+        | OperationKind::Export => return None,
+    };
+    contract.descriptor().for_child()
+}
+
+#[cfg(test)]
+pub(crate) fn descriptor_for_test_admission(
+    kind: OperationKind,
+    class: OperationClass,
+    dispatch_mode: OperationDispatchMode,
+) -> OperationDescriptor {
+    let mut descriptor = match class {
+        OperationClass::ReadOnly => OperationContract::ExportCurrent.descriptor(),
+        OperationClass::SessionWriteRoot => OperationContract::Prompt.descriptor(),
+        OperationClass::NonSessionRoot => OperationContract::InvokeAgent.descriptor(),
+        OperationClass::RuntimeWrite => OperationContract::PluginLoad.descriptor(),
+        OperationClass::Child => descriptor_for_child_kind(OperationKind::Prompt)
+            .expect("prompt contract permits structured children"),
+        OperationClass::Query | OperationClass::Control => {
+            panic!("query/control intents do not create operation executions")
+        }
+    };
+    descriptor.submitted_kind = kind;
+    descriptor.dispatch_mode = dispatch_mode;
+    descriptor.cancellation = match dispatch_mode {
+        OperationDispatchMode::Async => OperationCancellation::Cancellable,
+        OperationDispatchMode::SyncReadOnly | OperationDispatchMode::SyncMutable => {
+            OperationCancellation::Atomic
+        }
+    };
+    descriptor
 }
 
 impl OperationContract {
@@ -1530,7 +1594,7 @@ mod tests {
         );
         for case in &cases {
             let operation = (case.build_operation)().into_internal(PluginLoadOptions::new());
-            let metadata = operation.metadata();
+            let internal_descriptor = operation.descriptor();
             assert_eq!(
                 internal_operation_variant(&operation),
                 case.expected_internal,
@@ -1538,14 +1602,13 @@ mod tests {
                 case.public_variant
             );
             assert_eq!(
-                metadata.dispatch_mode, case.expected_dispatch,
+                internal_descriptor.dispatch_mode, case.expected_dispatch,
                 "{} dispatch mode",
                 case.public_variant
             );
             let descriptor = (case.build_operation)().descriptor();
-            assert_eq!(descriptor.dispatch_mode, metadata.dispatch_mode);
-            assert_eq!(descriptor.admission_class(), metadata.class);
-            if let Some(static_kind) = metadata.static_kind {
+            assert_eq!(descriptor, internal_descriptor);
+            if let Some(static_kind) = operation.static_kind() {
                 assert_eq!(descriptor.submitted_kind, static_kind);
             } else {
                 assert_eq!(
@@ -1595,6 +1658,95 @@ mod tests {
         assert_eq!(public_variants.len(), 16);
         assert_eq!(terminal_associated, 6);
         assert_eq!(outcome_only, 10);
+    }
+
+    #[test]
+    fn descriptor_claim_matrix_is_exhaustive_and_orthogonal() {
+        let descriptors = operation_contract_cases()
+            .into_iter()
+            .map(|case| (case.build_operation)().descriptor())
+            .collect::<Vec<_>>();
+
+        assert_eq!(descriptors.len(), 16);
+        assert!(
+            descriptors
+                .iter()
+                .all(|descriptor| descriptor.validate().is_ok())
+        );
+        assert_eq!(
+            descriptors
+                .iter()
+                .filter(|descriptor| {
+                    descriptor.admission_class() == OperationClass::SessionWriteRoot
+                })
+                .count(),
+            9
+        );
+        assert_eq!(
+            descriptors
+                .iter()
+                .filter(|descriptor| descriptor.admission_class() == OperationClass::RuntimeWrite)
+                .count(),
+            2
+        );
+        assert_eq!(
+            descriptors
+                .iter()
+                .filter(|descriptor| {
+                    descriptor.admission_class() == OperationClass::NonSessionRoot
+                })
+                .count(),
+            3
+        );
+        assert_eq!(
+            descriptors
+                .iter()
+                .filter(|descriptor| descriptor.admission_class() == OperationClass::ReadOnly)
+                .count(),
+            2
+        );
+        assert_eq!(
+            descriptors
+                .iter()
+                .filter(|descriptor| descriptor.priority == OperationPriority::Interactive)
+                .count(),
+            3
+        );
+        assert_eq!(
+            descriptors
+                .iter()
+                .filter(|descriptor| descriptor.priority == OperationPriority::Maintenance)
+                .count(),
+            1
+        );
+        assert_eq!(
+            descriptors
+                .iter()
+                .filter(|descriptor| descriptor.child_policy == OperationChildPolicy::Structured)
+                .count(),
+            3
+        );
+        assert_eq!(
+            descriptors
+                .iter()
+                .filter(|descriptor| descriptor.cancellation == OperationCancellation::Cancellable)
+                .count(),
+            9
+        );
+        assert_eq!(
+            descriptors
+                .iter()
+                .filter(|descriptor| descriptor.durability.session_if_persistent)
+                .count(),
+            11
+        );
+        assert_eq!(
+            descriptors
+                .iter()
+                .filter(|descriptor| descriptor.durability.runtime_generation)
+                .count(),
+            2
+        );
     }
 
     #[test]

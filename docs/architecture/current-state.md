@@ -38,8 +38,10 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   capability session access, admission class, and dispatch mode are derived
   projections. Orthogonal lineage, session/runtime access, priority, capacity,
   durability, cancellation, child, outcome, and terminal claims are validated;
-  direct scheduler consumption and deletion of transitional metadata remain open
-  under `RIF-007`.
+  scheduler and capability admission consume the descriptor directly, and only
+  descriptors declaring structured children enter child admission. The former
+  `OperationMetadata` projection has been deleted; `RIF-007` and `RIF-D006` are
+  complete.
 - SessionWriteRoot, NonSessionRoot, RuntimeWrite, Query, ReadOnly, Child, and
   Control admission classes exist; the scheduler has no general work queue.
 - PluginCommand, AgentInvocation, and AgentTeam have runtime-owned submitted task

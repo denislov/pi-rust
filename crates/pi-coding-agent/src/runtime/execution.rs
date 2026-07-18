@@ -47,12 +47,11 @@ impl CodingAgentSession {
                 capability: "runtime operation submission requires an active Tokio runtime".into(),
             }
         })?;
-        let descriptor = operation.descriptor();
         let fingerprint = operation.submission_fingerprint();
         let mut operation = operation.into_internal(self.default_plugin_load_options.clone());
-        let metadata = operation.metadata();
-        if metadata.class != OperationClass::NonSessionRoot
-            || metadata.dispatch_mode != OperationDispatchMode::Async
+        let descriptor = operation.descriptor();
+        if descriptor.admission_class() != OperationClass::NonSessionRoot
+            || descriptor.dispatch_mode != OperationDispatchMode::Async
             || !matches!(
                 operation,
                 Operation::PluginCommand { .. }

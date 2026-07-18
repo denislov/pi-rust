@@ -74,13 +74,13 @@ const FAIL_FIXTURES: [CompileFixture; 15] = [
         category: "operation-dispatch",
         access_path: "api",
         source: "operation_dispatch_api.rs",
-        expected: unresolved(28, 37, "Operation", "pi_coding_agent::api"),
+        expected: unresolved(28, 47, "OperationDescriptor", "pi_coding_agent::api"),
     },
     CompileFixture {
         category: "operation-dispatch",
         access_path: "root",
         source: "operation_dispatch_root.rs",
-        expected: unresolved(23, 32, "Operation", "pi_coding_agent"),
+        expected: unresolved(23, 42, "OperationDescriptor", "pi_coding_agent"),
     },
     CompileFixture {
         category: "operation-dispatch",
@@ -200,21 +200,26 @@ const fn private_module(
 fn run_external_consumer_fixtures() {
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let fixture_root = crate_root.join("tests/fixtures/api_boundary");
-    let consumer = tempfile::tempdir().expect("create external consumer directory");
+    let workspace_root = crate_root
+        .parent()
+        .and_then(Path::parent)
+        .expect("pi-coding-agent should live below the workspace root");
+    let fixture_work_root = workspace_root.join("target/api-boundary-fixtures");
+    fs::create_dir_all(&fixture_work_root).expect("create project-local external consumer root");
+    let consumer = tempfile::Builder::new()
+        .prefix("consumer-")
+        .tempdir_in(&fixture_work_root)
+        .expect("create project-local external consumer directory");
     let source_dir = consumer.path().join("src");
     fs::create_dir(&source_dir).expect("create external consumer source directory");
     fs::write(
         consumer.path().join("Cargo.toml"),
         format!(
-            "[package]\nname = \"pi-coding-agent-api-boundary-fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[dependencies]\npi-coding-agent = {{ path = {:?} }}\n",
+            "[package]\nname = \"pi-coding-agent-api-boundary-fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[dependencies]\npi-coding-agent = {{ path = {:?} }}\n\n[workspace]\n",
             crate_root
         ),
     )
     .expect("write external consumer manifest");
-    let workspace_root = crate_root
-        .parent()
-        .and_then(Path::parent)
-        .expect("pi-coding-agent should live below the workspace root");
     fs::copy(
         workspace_root.join("Cargo.lock"),
         consumer.path().join("Cargo.lock"),
@@ -718,7 +723,7 @@ fn coding_session_run_is_the_canonical_operation_dispatcher() {
 
     for required in [
         "into_internal(",
-        "operation.metadata().dispatch_mode",
+        "operation.descriptor().dispatch_mode",
         "OperationDispatchMode::Async",
         "OperationDispatchMode::SyncReadOnly",
         "OperationDispatchMode::SyncMutable",
@@ -821,7 +826,8 @@ fn stable_api_excludes_internal_runtime_contracts() {
 
     for forbidden in [
         "Operation",
-        "OperationMetadata",
+        "OperationDescriptor",
+        "OperationExecution",
         "OperationDispatchMode",
         "PluginLoadOptions",
         "RuntimeService",

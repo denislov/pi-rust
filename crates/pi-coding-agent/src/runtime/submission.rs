@@ -178,7 +178,7 @@ impl CodingAgentSession {
         let fingerprint = operation.submission_fingerprint();
         let submission = self.consume_submission_lease(descriptor, fingerprint.as_ref());
         let operation = operation.into_internal(self.default_plugin_load_options.clone());
-        let dispatch_mode = operation.metadata().dispatch_mode;
+        let dispatch_mode = operation.descriptor().dispatch_mode;
         let outcome = match dispatch_mode {
             OperationDispatchMode::Async => self.run_operation(operation, submission).await?,
             OperationDispatchMode::SyncReadOnly => {

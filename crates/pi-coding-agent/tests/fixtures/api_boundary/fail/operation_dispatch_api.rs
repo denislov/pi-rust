@@ -1,2 +1,2 @@
-use pi_coding_agent::api::{Operation, OperationDispatchMode, OperationMetadata};
+use pi_coding_agent::api::{OperationDescriptor};
 fn main() {}

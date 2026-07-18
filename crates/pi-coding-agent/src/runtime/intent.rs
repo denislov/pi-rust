@@ -5,6 +5,8 @@ use super::control::{
 };
 #[cfg(test)]
 use super::operation::Operation;
+#[cfg(test)]
+use super::operation::OperationOrigin;
 use super::operation::{OperationClass, OperationExecution};
 use super::scheduler::OperationScheduler;
 use crate::runtime::facade::CodingSessionError;
@@ -188,7 +190,6 @@ impl IntentRouter {
     pub(crate) fn static_admission(
         operation: &Operation,
     ) -> Result<OperationExecution, CodingSessionError> {
-        let metadata = operation.metadata();
         if operation.static_kind().is_none() {
             return Err(CodingSessionError::UnsupportedCapability {
                 capability: "dynamic operation requires async dispatcher".into(),
@@ -197,7 +198,8 @@ impl IntentRouter {
         let snapshot = OperationCapabilitySnapshot::permissive("op_static_admission");
         Ok(OperationExecution::root(
             operation.kind(),
-            metadata,
+            operation.descriptor(),
+            OperationOrigin::ClientRoot,
             None,
             Some("static-test-session".into()),
             snapshot,
@@ -230,7 +232,7 @@ impl IntentRouter {
             capability: format!(
                 "{} operation requires {} dispatcher",
                 admission.kind.as_str(),
-                admission.metadata.dispatch_mode.dispatcher_label(),
+                admission.descriptor.dispatch_mode.dispatcher_label(),
             ),
         }
     }
@@ -420,7 +422,10 @@ mod tests {
                 operation: "prompt".into(),
             }
         );
-        assert_eq!(admission.metadata.class, OperationClass::SessionWriteRoot);
+        assert_eq!(
+            admission.descriptor.admission_class(),
+            OperationClass::SessionWriteRoot
+        );
         assert_eq!(control.active(), Some(OperationKind::Prompt));
         drop(root);
         assert_eq!(control.active(), None);
@@ -432,17 +437,14 @@ mod tests {
             ActorId, CapabilityGeneration, OperationCapabilitySnapshot, PluginCapabilitySet,
             ToolCapabilitySet,
         };
-        use crate::runtime::operation::{OperationMetadata, OperationOrigin};
+        use crate::runtime::operation::OperationOrigin;
 
         let control = OperationControl::new();
-        let metadata = OperationMetadata {
-            static_kind: Some(OperationKind::Export),
-            origin: OperationOrigin::ClientRoot,
-            descriptor_revision: 1,
-            lineage: crate::runtime::outcome::OperationLineage::Root,
-            class: OperationClass::ReadOnly,
-            dispatch_mode: OperationDispatchMode::SyncReadOnly,
-        };
+        let descriptor = crate::runtime::outcome::descriptor_for_test_admission(
+            OperationKind::Export,
+            OperationClass::ReadOnly,
+            OperationDispatchMode::SyncReadOnly,
+        );
         let snapshot = OperationCapabilitySnapshot {
             generation: CapabilityGeneration::new(3),
             operation_id: "op_export".into(),
@@ -459,7 +461,8 @@ mod tests {
         };
         let admission = OperationExecution::root(
             OperationKind::Export,
-            metadata,
+            descriptor,
+            OperationOrigin::ClientRoot,
             None,
             Some("intent-test-session".into()),
             snapshot.clone(),
@@ -479,17 +482,14 @@ mod tests {
             ActorId, CapabilityGeneration, OperationCapabilitySnapshot, PluginCapabilitySet,
             ToolCapabilitySet,
         };
-        use crate::runtime::operation::{OperationMetadata, OperationOrigin};
+        use crate::runtime::operation::OperationOrigin;
 
         let control = OperationControl::new();
-        let metadata = OperationMetadata {
-            static_kind: Some(OperationKind::PluginCommand),
-            origin: OperationOrigin::ClientRoot,
-            descriptor_revision: 1,
-            lineage: crate::runtime::outcome::OperationLineage::Root,
-            class: OperationClass::NonSessionRoot,
-            dispatch_mode: OperationDispatchMode::SyncReadOnly,
-        };
+        let descriptor = crate::runtime::outcome::descriptor_for_test_admission(
+            OperationKind::PluginCommand,
+            OperationClass::NonSessionRoot,
+            OperationDispatchMode::Async,
+        );
         let snapshot = OperationCapabilitySnapshot {
             generation: CapabilityGeneration::new(5),
             operation_id: "op_command".into(),
@@ -506,16 +506,16 @@ mod tests {
         };
         let admission = OperationExecution::root(
             OperationKind::PluginCommand,
-            metadata,
+            descriptor,
+            OperationOrigin::ClientRoot,
             None,
             Some("intent-test-session".into()),
             snapshot.clone(),
         );
 
-        let permit =
-            OperationScheduler::admit(&control, &admission, OperationDispatchMode::SyncReadOnly)
-                .map_err(|rejection| rejection.into_error())
-                .unwrap();
+        let permit = OperationScheduler::admit(&control, &admission, OperationDispatchMode::Async)
+            .map_err(|rejection| rejection.into_error())
+            .unwrap();
 
         assert!(permit.is_guarded());
         assert_eq!(permit.capability_snapshot(), &snapshot);

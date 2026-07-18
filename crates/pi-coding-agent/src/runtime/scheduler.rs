@@ -1,9 +1,7 @@
 use super::capability::{ActorId, OperationCapabilitySnapshot};
 use super::control::{OperationControl, OperationKind};
 use super::intent::{OperationPermit, QueryIntent, QueryIntentMetadata};
-use super::operation::{
-    OperationClass, OperationDispatchMode, OperationExecution, OperationMetadata, OperationOrigin,
-};
+use super::operation::{OperationClass, OperationDispatchMode, OperationExecution};
 use crate::runtime::facade::CodingSessionError;
 
 /// Typed admission owner for runtime-affecting operations.
@@ -19,48 +17,43 @@ impl OperationScheduler {
         admission: &OperationExecution,
         expected_dispatch: OperationDispatchMode,
     ) -> Result<OperationPermit, AdmissionRejection> {
-        if admission.metadata.dispatch_mode != expected_dispatch {
+        if admission.descriptor.dispatch_mode != expected_dispatch {
             return Err(AdmissionRejection::DispatchMismatch {
                 kind: admission.kind,
                 expected: expected_dispatch,
-                actual: admission.metadata.dispatch_mode,
+                actual: admission.descriptor.dispatch_mode,
             });
         }
 
-        match admission.metadata.class {
-            OperationClass::Query | OperationClass::Child => {
+        let class = admission.descriptor.admission_class();
+        match class {
+            OperationClass::Child => {
                 return Err(AdmissionRejection::DedicatedPathRequired {
                     kind: admission.kind,
-                    class: admission.metadata.class,
+                    class,
                 });
             }
             OperationClass::ReadOnly | OperationClass::Control => {
                 return Ok(OperationPermit::unguarded(
                     admission.kind,
-                    admission.metadata.class,
+                    class,
                     admission.clone(),
                 ));
             }
             OperationClass::SessionWriteRoot
             | OperationClass::NonSessionRoot
             | OperationClass::RuntimeWrite => {}
+            OperationClass::Query => unreachable!("queries do not create OperationExecution"),
         }
 
         control
             .begin_root_with_capability_generation(
-                admission.metadata.class,
+                class,
                 admission.kind,
                 admission.capability_snapshot.operation_id.clone(),
                 admission.capability_snapshot.generation,
             )
-            .map(|guard| {
-                OperationPermit::guarded(
-                    admission.kind,
-                    admission.metadata.class,
-                    guard,
-                    admission.clone(),
-                )
-            })
+            .map(|guard| OperationPermit::guarded(admission.kind, class, guard, admission.clone()))
             .map_err(AdmissionRejection::Control)
     }
 
@@ -76,6 +69,8 @@ impl OperationScheduler {
         kind: OperationKind,
         capability_snapshot: OperationCapabilitySnapshot,
     ) -> Result<OperationPermit, AdmissionRejection> {
+        let descriptor = crate::runtime::outcome::descriptor_for_child_kind(kind)
+            .ok_or(AdmissionRejection::ChildKindNotPermitted { kind })?;
         match &capability_snapshot.actor {
             ActorId::ChildOperation(parent_id) if !parent_id.is_empty() => {
                 let parent_id = parent_id.clone();
@@ -89,14 +84,7 @@ impl OperationScheduler {
                     .map(|guard| {
                         let execution = OperationExecution::child(
                             kind,
-                            OperationMetadata {
-                                static_kind: Some(kind),
-                                origin: OperationOrigin::ParentChild,
-                                descriptor_revision: 1,
-                                lineage: crate::runtime::outcome::OperationLineage::Child,
-                                class: OperationClass::Child,
-                                dispatch_mode: OperationDispatchMode::Async,
-                            },
+                            descriptor,
                             capability_snapshot,
                             guard.parent_operation_id().to_owned(),
                             guard.root_operation_id().to_owned(),
@@ -118,14 +106,8 @@ impl OperationScheduler {
     ) -> OperationExecution {
         OperationExecution::root(
             kind,
-            super::operation::OperationMetadata {
-                static_kind: Some(kind),
-                origin: super::operation::OperationOrigin::ClientRoot,
-                descriptor_revision: 1,
-                lineage: crate::runtime::outcome::OperationLineage::Root,
-                class,
-                dispatch_mode: dispatch,
-            },
+            crate::runtime::outcome::descriptor_for_test_admission(kind, class, dispatch),
+            super::operation::OperationOrigin::ClientRoot,
             None,
             Some("scheduler-test-session".into()),
             capability_snapshot,
@@ -142,6 +124,9 @@ pub(crate) enum AdmissionRejection {
     },
     Control(CodingSessionError),
     ChildLineageMissing {
+        kind: OperationKind,
+    },
+    ChildKindNotPermitted {
         kind: OperationKind,
     },
     DedicatedPathRequired {
@@ -169,6 +154,12 @@ impl AdmissionRejection {
             Self::ChildLineageMissing { kind } => CodingSessionError::UnsupportedCapability {
                 capability: format!(
                     "{} child operation is missing a valid parent lineage",
+                    kind.as_str()
+                ),
+            },
+            Self::ChildKindNotPermitted { kind } => CodingSessionError::UnsupportedCapability {
+                capability: format!(
+                    "{} operation does not permit structured children",
                     kind.as_str()
                 ),
             },
@@ -203,19 +194,18 @@ mod tests {
     fn unguarded_classes_bypass_busy_root_guard() {
         let control = OperationControl::new();
         let root = control.begin(OperationKind::Prompt, "root".into()).unwrap();
-        for (class, dispatch) in [
-            (
+        let permit = OperationScheduler::admit(
+            &control,
+            &admission(
                 OperationClass::ReadOnly,
                 OperationDispatchMode::SyncReadOnly,
             ),
-            (OperationClass::Control, OperationDispatchMode::SyncMutable),
-        ] {
-            let permit = OperationScheduler::admit(&control, &admission(class, dispatch), dispatch)
-                .expect("read-only and control operations should bypass the root guard");
-            assert!(!permit.is_guarded());
-            assert_eq!(permit.class(), class);
-            assert_eq!(control.active(), Some(OperationKind::Prompt));
-        }
+            OperationDispatchMode::SyncReadOnly,
+        )
+        .expect("read-only operations should bypass the root guard");
+        assert!(!permit.is_guarded());
+        assert_eq!(permit.class(), OperationClass::ReadOnly);
+        assert_eq!(control.active(), Some(OperationKind::Prompt));
         drop(root);
     }
 
@@ -339,23 +329,27 @@ mod tests {
     }
 
     #[test]
-    fn query_and_child_classes_require_dedicated_admission_paths() {
+    fn child_class_requires_the_dedicated_admission_path() {
         let control = OperationControl::new();
-        for class in [OperationClass::Query, OperationClass::Child] {
-            let rejection = OperationScheduler::admit(
-                &control,
-                &admission(class, OperationDispatchMode::Async),
-                OperationDispatchMode::Async,
-            )
-            .expect_err("query and child classes must not bypass dedicated admission");
-            assert!(matches!(
-                rejection,
-                AdmissionRejection::DedicatedPathRequired {
-                    kind: OperationKind::Export,
-                    class: rejected_class,
-                } if rejected_class == class
-            ));
-        }
+        let mut snapshot = OperationCapabilitySnapshot::permissive("child-op");
+        snapshot.actor = ActorId::ChildOperation("parent-op".into());
+        let child_execution = OperationExecution::child(
+            OperationKind::Prompt,
+            crate::runtime::outcome::descriptor_for_child_kind(OperationKind::Prompt).unwrap(),
+            snapshot,
+            "parent-op".into(),
+            "parent-op".into(),
+        );
+        let rejection =
+            OperationScheduler::admit(&control, &child_execution, OperationDispatchMode::Async)
+                .expect_err("child class must not bypass dedicated admission");
+        assert!(matches!(
+            rejection,
+            AdmissionRejection::DedicatedPathRequired {
+                kind: OperationKind::Prompt,
+                class: OperationClass::Child,
+            }
+        ));
         assert_eq!(control.active(), None);
     }
 
@@ -381,8 +375,11 @@ mod tests {
     #[test]
     fn classified_admission_keeps_client_root_origin() {
         let admission = admission(OperationClass::RuntimeWrite, OperationDispatchMode::Async);
-        assert_eq!(admission.metadata.origin, OperationOrigin::ClientRoot);
-        assert_eq!(admission.metadata.class, OperationClass::RuntimeWrite);
+        assert_eq!(admission.origin, OperationOrigin::ClientRoot);
+        assert_eq!(
+            admission.descriptor.admission_class(),
+            OperationClass::RuntimeWrite
+        );
     }
 
     #[test]
@@ -419,6 +416,15 @@ mod tests {
             AdmissionRejection::ChildLineageMissing {
                 kind: OperationKind::AgentInvocation
             }
+        ));
+
+        let mut forbidden = OperationCapabilitySnapshot::permissive("forbidden-child");
+        forbidden.actor = ActorId::ChildOperation("parent-op".into());
+        assert!(matches!(
+            OperationScheduler::admit_child(&control, OperationKind::Export, forbidden),
+            Err(AdmissionRejection::ChildKindNotPermitted {
+                kind: OperationKind::Export
+            })
         ));
     }
 }

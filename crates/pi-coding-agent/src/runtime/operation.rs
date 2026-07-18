@@ -115,72 +115,32 @@ impl Operation {
     }
 
     pub(crate) fn static_kind(&self) -> Option<OperationKind> {
-        self.metadata().static_kind
+        (!matches!(self, Self::ApproveDelegationConfirmation { .. }))
+            .then_some(self.descriptor().submitted_kind)
     }
 
     #[allow(dead_code)]
     pub(crate) fn origin(&self) -> OperationOrigin {
-        self.metadata().origin
+        OperationOrigin::ClientRoot
     }
 
     #[allow(dead_code)]
     pub(crate) fn class(&self) -> OperationClass {
-        self.metadata().class
+        self.descriptor().admission_class()
     }
 
-    pub(crate) fn metadata(&self) -> OperationMetadata {
+    pub(crate) fn descriptor(&self) -> crate::runtime::outcome::OperationDescriptor {
         let descriptor = crate::runtime::outcome::descriptor_for_internal_operation(self);
         debug_assert_eq!(descriptor.validate(), Ok(()));
-        OperationMetadata::new(
-            (!matches!(self, Self::ApproveDelegationConfirmation { .. }))
-                .then_some(descriptor.submitted_kind),
-            OperationOrigin::ClientRoot,
-            descriptor.revision,
-            descriptor.admission_class(),
-            descriptor.dispatch_mode,
-        )
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct OperationMetadata {
-    pub(crate) static_kind: Option<OperationKind>,
-    pub(crate) origin: OperationOrigin,
-    pub(crate) descriptor_revision: u16,
-    pub(crate) lineage: crate::runtime::outcome::OperationLineage,
-    pub(crate) class: OperationClass,
-    pub(crate) dispatch_mode: OperationDispatchMode,
-}
-
-impl OperationMetadata {
-    fn new(
-        static_kind: Option<OperationKind>,
-        origin: OperationOrigin,
-        descriptor_revision: u16,
-        class: OperationClass,
-        dispatch_mode: OperationDispatchMode,
-    ) -> Self {
-        Self {
-            static_kind,
-            origin,
-            descriptor_revision,
-            lineage: match origin {
-                OperationOrigin::ParentChild => crate::runtime::outcome::OperationLineage::Child,
-                OperationOrigin::ClientRoot | OperationOrigin::RuntimeInternal => {
-                    crate::runtime::outcome::OperationLineage::Root
-                }
-            },
-            class,
-            dispatch_mode,
-        }
+        descriptor
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct OperationExecution {
     pub(crate) kind: OperationKind,
-    pub(crate) metadata: OperationMetadata,
-    pub(crate) descriptor_revision: u16,
+    pub(crate) descriptor: crate::runtime::outcome::OperationDescriptor,
+    pub(crate) origin: OperationOrigin,
     pub(crate) admitted_at: Option<String>,
     pub(crate) session_identity: Option<String>,
     pub(crate) capability_snapshot: OperationCapabilitySnapshot,
@@ -194,22 +154,30 @@ pub(crate) struct OperationExecution {
 impl OperationExecution {
     pub(crate) fn root(
         kind: OperationKind,
-        metadata: OperationMetadata,
+        descriptor: crate::runtime::outcome::OperationDescriptor,
+        origin: OperationOrigin,
         admitted_at: Option<String>,
         session_identity: Option<String>,
         capability_snapshot: OperationCapabilitySnapshot,
     ) -> Self {
         let operation_id = capability_snapshot.operation_id.clone();
         let capability_generation = capability_snapshot.generation;
-        let descriptor_revision = metadata.descriptor_revision;
         debug_assert!(matches!(
             capability_snapshot.actor,
             super::capability::ActorId::Client
         ));
+        debug_assert_eq!(
+            descriptor.lineage,
+            crate::runtime::outcome::OperationLineage::Root
+        );
+        debug_assert!(matches!(
+            origin,
+            OperationOrigin::ClientRoot | OperationOrigin::RuntimeInternal
+        ));
         Self {
             kind,
-            metadata,
-            descriptor_revision,
+            descriptor,
+            origin,
             admitted_at,
             session_identity,
             capability_snapshot,
@@ -223,22 +191,25 @@ impl OperationExecution {
 
     pub(crate) fn child(
         kind: OperationKind,
-        metadata: OperationMetadata,
+        descriptor: crate::runtime::outcome::OperationDescriptor,
         capability_snapshot: OperationCapabilitySnapshot,
         parent_operation_id: String,
         root_operation_id: String,
     ) -> Self {
         let operation_id = capability_snapshot.operation_id.clone();
         let capability_generation = capability_snapshot.generation;
-        let descriptor_revision = metadata.descriptor_revision;
         debug_assert!(matches!(
             capability_snapshot.actor,
             super::capability::ActorId::ChildOperation(_)
         ));
+        debug_assert_eq!(
+            descriptor.lineage,
+            crate::runtime::outcome::OperationLineage::Child
+        );
         Self {
             kind,
-            metadata,
-            descriptor_revision,
+            descriptor,
+            origin: OperationOrigin::ParentChild,
             admitted_at: None,
             session_identity: None,
             capability_snapshot,
@@ -382,7 +353,8 @@ mod tests {
             Operation::Prompt(PromptTurnOptions::new(PromptInvocation::Text(
                 "hello".into(),
             )))
-            .metadata(),
+            .descriptor(),
+            OperationOrigin::ClientRoot,
             None,
             Some("session-root".into()),
             snapshot,
@@ -390,7 +362,7 @@ mod tests {
         .with_idempotency_key(OperationIdempotencyKey::parse("client-root:prompt-1").unwrap());
 
         assert_eq!(admission.operation_id, "op-root");
-        assert_eq!(admission.descriptor_revision, 1);
+        assert_eq!(admission.descriptor.revision, 1);
         assert_eq!(admission.session_identity.as_deref(), Some("session-root"));
         assert_eq!(admission.capability_generation.get(), 1);
         assert_eq!(admission.parent_operation_id, None);
@@ -410,13 +382,8 @@ mod tests {
         snapshot.actor = super::super::capability::ActorId::ChildOperation("op-parent".into());
         let admission = OperationExecution::child(
             OperationKind::AgentInvocation,
-            OperationMetadata::new(
-                Some(OperationKind::AgentInvocation),
-                OperationOrigin::ParentChild,
-                1,
-                OperationClass::Child,
-                OperationDispatchMode::Async,
-            ),
+            crate::runtime::outcome::descriptor_for_child_kind(OperationKind::AgentInvocation)
+                .unwrap(),
             snapshot,
             "op-parent".into(),
             "op-root".into(),
@@ -472,30 +439,36 @@ mod tests {
     }
 
     #[test]
-    fn operation_metadata_exposes_static_contract_and_dispatch_mode() {
+    fn operation_descriptor_exposes_static_contract_and_dispatch_mode() {
         let operation = Operation::Export(ExportOptions::view());
 
-        let metadata = operation.metadata();
+        let descriptor = operation.descriptor();
 
-        assert_eq!(metadata.static_kind, Some(OperationKind::Export));
-        assert_eq!(metadata.origin, OperationOrigin::ClientRoot);
-        assert_eq!(metadata.class, OperationClass::ReadOnly);
-        assert_eq!(metadata.dispatch_mode, OperationDispatchMode::SyncReadOnly);
+        assert_eq!(operation.static_kind(), Some(OperationKind::Export));
+        assert_eq!(operation.origin(), OperationOrigin::ClientRoot);
+        assert_eq!(descriptor.admission_class(), OperationClass::ReadOnly);
+        assert_eq!(
+            descriptor.dispatch_mode,
+            OperationDispatchMode::SyncReadOnly
+        );
     }
 
     #[test]
-    fn dynamic_operation_metadata_exposes_dispatch_without_static_kind() {
+    fn dynamic_operation_descriptor_exposes_dispatch_without_static_kind() {
         let operation = Operation::ApproveDelegationConfirmation {
             operation_id: "op_parent".into(),
             tool_call_id: "tool_delegate".into(),
         };
 
-        let metadata = operation.metadata();
+        let descriptor = operation.descriptor();
 
-        assert_eq!(metadata.static_kind, None);
-        assert_eq!(metadata.origin, OperationOrigin::ClientRoot);
-        assert_eq!(metadata.class, OperationClass::SessionWriteRoot);
-        assert_eq!(metadata.dispatch_mode, OperationDispatchMode::Async);
+        assert_eq!(operation.static_kind(), None);
+        assert_eq!(operation.origin(), OperationOrigin::ClientRoot);
+        assert_eq!(
+            descriptor.admission_class(),
+            OperationClass::SessionWriteRoot
+        );
+        assert_eq!(descriptor.dispatch_mode, OperationDispatchMode::Async);
     }
 
     #[test]
@@ -615,7 +588,7 @@ mod tests {
         assert_eq!(operation.origin(), OperationOrigin::ClientRoot);
         assert_eq!(operation.class(), OperationClass::RuntimeWrite);
         assert_eq!(
-            operation.metadata().dispatch_mode,
+            operation.descriptor().dispatch_mode,
             OperationDispatchMode::SyncMutable
         );
     }
@@ -630,7 +603,7 @@ mod tests {
         assert_eq!(operation.origin(), OperationOrigin::ClientRoot);
         assert_eq!(operation.class(), OperationClass::SessionWriteRoot);
         assert_eq!(
-            operation.metadata().dispatch_mode,
+            operation.descriptor().dispatch_mode,
             OperationDispatchMode::SyncMutable
         );
     }
@@ -708,14 +681,10 @@ mod tests {
             PluginCapabilitySet, ToolCapabilitySet,
         };
 
-        let metadata = OperationMetadata {
-            static_kind: Some(OperationKind::Prompt),
-            origin: OperationOrigin::ClientRoot,
-            descriptor_revision: 1,
-            lineage: crate::runtime::outcome::OperationLineage::Root,
-            class: OperationClass::SessionWriteRoot,
-            dispatch_mode: OperationDispatchMode::Async,
-        };
+        let descriptor = Operation::Prompt(PromptTurnOptions::new(PromptInvocation::Text(
+            "hello".into(),
+        )))
+        .descriptor();
         let snapshot = OperationCapabilitySnapshot {
             generation: CapabilityGeneration::new(7),
             operation_id: "op_admitted".into(),
@@ -733,7 +702,8 @@ mod tests {
 
         let admission = OperationExecution::root(
             OperationKind::Prompt,
-            metadata,
+            descriptor,
+            OperationOrigin::ClientRoot,
             Some("2026-07-09T00:00:00Z".into()),
             Some("session-test".into()),
             snapshot.clone(),

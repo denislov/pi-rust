@@ -748,7 +748,8 @@ fn production_interactive_uses_canonical_operations() {
                 for private_type in [
                     "Operation",
                     "PluginLoadOptions",
-                    "OperationMetadata",
+                    "OperationDescriptor",
+                    "OperationExecution",
                     "FlowService",
                     "SessionService",
                     "EventService",

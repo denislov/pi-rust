@@ -2,7 +2,7 @@ use super::capability::{ActorId, CapabilitySnapshotInput};
 use super::facade::{
     AgentProfile, CodingAgentSession, CodingSessionError, OperationKind, ProfileKind,
 };
-use super::operation::{Operation, OperationExecution};
+use super::operation::{Operation, OperationExecution, OperationOrigin};
 use crate::services::session::session_cwd;
 use crate::session::id::{Clock, IdGenerator, SystemClock, SystemIdGenerator};
 use crate::session::service::SessionPersistence;
@@ -56,7 +56,7 @@ impl CodingAgentSession {
         &self,
         operation: &Operation,
     ) -> Result<OperationExecution, CodingSessionError> {
-        let metadata = operation.metadata();
+        let descriptor = operation.descriptor();
         let (kind, admitted_at, operation_runtime) = match operation {
             Operation::ApproveDelegationConfirmation {
                 operation_id,
@@ -100,7 +100,8 @@ impl CodingAgentSession {
         });
         Ok(OperationExecution::root(
             kind,
-            metadata,
+            descriptor,
+            OperationOrigin::ClientRoot,
             admitted_at,
             session_identity,
             snapshot,

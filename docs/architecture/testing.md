@@ -78,6 +78,11 @@ Tests that mutate process environment use the repository environment guards and
 temporary `PI_RUST_DIR`. Test-only facades remain behind non-default
 `test-support`.
 
+Tests that invoke compilers, componentizers, bundlers, or other build tools must
+place their working directories and generated artifacts beneath the repository
+`target/` tree. Temporary test data may use OS facilities, but no test may create
+a Cargo or language-toolchain build target outside the project.
+
 ## Release Validation
 
 Every `0.4.x` release runs at least:

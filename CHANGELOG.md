@@ -26,10 +26,15 @@
   descriptor table and orthogonal validated claims for lineage, session/runtime
   access, priority, capacity, durability, cancellation, children, outcomes, and
   terminal policy.
+- Completed `RIF-007` by making scheduler/capability admission consume the
+  execution-owned descriptor directly, enforcing descriptor-declared structured
+  children, and removing the transitional operation metadata registry.
+- Moved external API compile fixtures and their Cargo targets under the project
+  `target/api-boundary-fixtures/` tree.
 
 ### Release Status
 
-- `RIF-005` and `RIF-006` are complete; `RIF-001` and `RIF-007` are next.
+- `RIF-005`, `RIF-006`, and `RIF-007` are complete; `RIF-001` is in progress.
   Workspace packages remain at `0.3.1` until all `0.4.0` implementation, debt,
   and release gates close.
 
