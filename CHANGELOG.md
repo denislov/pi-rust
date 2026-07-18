@@ -38,6 +38,8 @@
 - Added the reproducible offline `scripts/runtime-baseline.sh` harness and
   `docs/architecture/runtime-baseline-0.4.0.md` evidence for admission, writer
   pressure, session/outbox commit, snapshot/reconnect, and recovery scan paths.
+- Refreshed the 0.4.x roadmap status: all current 0.4.0 execution-debt rows are
+  closed; reconnect/lag matrix completion and release convergence remain open.
 
 - Added a typed `RecoveryPending` admission rejection. `SessionWriteRoot`
   operations now inspect durable recovery evidence before
