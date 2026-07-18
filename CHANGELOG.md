@@ -71,6 +71,9 @@
   now read/path authority only; mutable manifest owner state remains in the
   writer, and deterministic tests cover independent-session concurrency while a
   different writer is blocked.
+- Closed `RIF-D007`: the owner graph and boundary evidence now show that runtime,
+  session, and event mutation authority no longer overlaps through mutable
+  service handles.
 
 ### Release Status
 
