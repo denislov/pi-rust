@@ -172,15 +172,188 @@ pub(crate) enum OperationRootTerminalEvidence {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct OperationDescriptor {
+    pub(crate) revision: u16,
     pub(crate) submitted_kind: OperationKind,
-    pub(crate) admission_class: OperationClass,
     pub(crate) dispatch_mode: OperationDispatchMode,
     pub(crate) outcome_family: OperationOutcomeFamily,
     pub(crate) terminal_policy: OperationTerminalPolicy,
     pub(crate) permitted_root_evidence: &'static [OperationRootTerminalEvidence],
+    pub(crate) lineage: OperationLineage,
+    pub(crate) session_access: OperationSessionAccess,
+    pub(crate) runtime_access: OperationRuntimeAccess,
+    pub(crate) priority: OperationPriority,
+    pub(crate) capacity: OperationCapacity,
+    pub(crate) durability: OperationDurability,
+    pub(crate) cancellation: OperationCancellation,
+    pub(crate) child_policy: OperationChildPolicy,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OperationLineage {
+    Root,
+    Child,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OperationSessionAccess {
+    None,
+    Read,
+    Write,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OperationRuntimeAccess {
+    None,
+    Read,
+    Write,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OperationPriority {
+    Interactive,
+    Normal,
+    Maintenance,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OperationCapacity {
+    Shared,
+    SessionWriter,
+    BoundedRuntime,
+    RuntimeExclusive,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct OperationDurability {
+    pub(crate) session_if_persistent: bool,
+    pub(crate) runtime_generation: bool,
+}
+
+impl OperationDurability {
+    const NONE: Self = Self {
+        session_if_persistent: false,
+        runtime_generation: false,
+    };
+    const SESSION: Self = Self {
+        session_if_persistent: true,
+        runtime_generation: false,
+    };
+    const SESSION_AND_RUNTIME: Self = Self {
+        session_if_persistent: true,
+        runtime_generation: true,
+    };
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OperationCancellation {
+    Cancellable,
+    Atomic,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OperationChildPolicy {
+    Forbidden,
+    Structured,
 }
 
 impl OperationDescriptor {
+    pub(crate) fn admission_class(self) -> OperationClass {
+        match (
+            self.lineage,
+            self.session_access,
+            self.runtime_access,
+            self.capacity,
+        ) {
+            (
+                OperationLineage::Root,
+                _,
+                OperationRuntimeAccess::Write,
+                OperationCapacity::RuntimeExclusive,
+            ) => OperationClass::RuntimeWrite,
+            (
+                OperationLineage::Root,
+                OperationSessionAccess::Write,
+                _,
+                OperationCapacity::SessionWriter,
+            ) => OperationClass::SessionWriteRoot,
+            (
+                OperationLineage::Root,
+                OperationSessionAccess::None,
+                _,
+                OperationCapacity::BoundedRuntime,
+            ) => OperationClass::NonSessionRoot,
+            (
+                OperationLineage::Root,
+                OperationSessionAccess::Read,
+                _,
+                OperationCapacity::Shared,
+            ) => OperationClass::ReadOnly,
+            (OperationLineage::Child, _, _, _) => OperationClass::Child,
+            _ => unreachable!("validated descriptor must derive one admission class"),
+        }
+    }
+
+    pub(crate) fn validate(self) -> Result<(), &'static str> {
+        self.validate_terminal_policy()?;
+        match (
+            self.lineage,
+            self.session_access,
+            self.runtime_access,
+            self.capacity,
+        ) {
+            (
+                OperationLineage::Root,
+                _,
+                OperationRuntimeAccess::Write,
+                OperationCapacity::RuntimeExclusive,
+            )
+            | (
+                OperationLineage::Root,
+                OperationSessionAccess::Write,
+                _,
+                OperationCapacity::SessionWriter,
+            )
+            | (
+                OperationLineage::Root,
+                OperationSessionAccess::None,
+                _,
+                OperationCapacity::BoundedRuntime,
+            )
+            | (
+                OperationLineage::Root,
+                OperationSessionAccess::Read,
+                _,
+                OperationCapacity::Shared,
+            ) => {}
+            (OperationLineage::Child, OperationSessionAccess::None, _, _) => {}
+            _ => return Err("operation access and capacity claims do not derive a valid class"),
+        }
+        if self.durability.session_if_persistent
+            && self.session_access != OperationSessionAccess::Write
+        {
+            return Err("session durability requires session write access");
+        }
+        if self.durability.runtime_generation
+            && self.runtime_access != OperationRuntimeAccess::Write
+        {
+            return Err("runtime generation durability requires runtime write access");
+        }
+        match (self.dispatch_mode, self.cancellation) {
+            (OperationDispatchMode::Async, OperationCancellation::Cancellable)
+            | (
+                OperationDispatchMode::SyncReadOnly | OperationDispatchMode::SyncMutable,
+                OperationCancellation::Atomic,
+            ) => {}
+            _ => return Err("dispatch mode and cancellation claim conflict"),
+        }
+        if self.child_policy == OperationChildPolicy::Structured
+            && self.cancellation != OperationCancellation::Cancellable
+        {
+            return Err("structured children require cancellable ownership");
+        }
+        Ok(())
+    }
+
     pub(crate) fn validate_terminal_policy(self) -> Result<(), &'static str> {
         match (
             self.terminal_policy,
@@ -327,8 +500,54 @@ pub(crate) fn recovered_product_terminal_operation(
     })
 }
 
-impl CodingAgentOperation {
-    pub(crate) fn descriptor(&self) -> OperationDescriptor {
+/// Resolve the internal payload enum through the public operation contract.
+///
+/// The internal enum intentionally owns no scheduling or lifecycle table: it
+/// only maps its payload shape back to the authoritative public descriptor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OperationContract {
+    Prompt,
+    Compact,
+    BranchSummary,
+    SelfHealingEdit,
+    InvokeAgent,
+    InvokeTeam,
+    PluginLoad,
+    PluginCommand,
+    SetDefaultAgentProfile,
+    ApproveDelegation,
+    RejectDelegation,
+    ForkSession,
+    SwitchActiveLeaf,
+    SetSessionTreeLabel,
+    ExportCurrent,
+    ExportCurrentHtml,
+}
+
+pub(crate) fn descriptor_for_internal_operation(operation: &Operation) -> OperationDescriptor {
+    let contract = match operation {
+        Operation::Prompt(_) => OperationContract::Prompt,
+        Operation::ManualCompaction(_) => OperationContract::Compact,
+        Operation::PluginLoad(_) => OperationContract::PluginLoad,
+        Operation::PluginCommand { .. } => OperationContract::PluginCommand,
+        Operation::ApproveDelegationConfirmation { .. } => OperationContract::ApproveDelegation,
+        Operation::RejectDelegationConfirmation { .. } => OperationContract::RejectDelegation,
+        Operation::BranchSummary { .. } => OperationContract::BranchSummary,
+        Operation::SelfHealingEdit(_) => OperationContract::SelfHealingEdit,
+        Operation::AgentInvocation(_) => OperationContract::InvokeAgent,
+        Operation::AgentTeam(_) => OperationContract::InvokeTeam,
+        Operation::ForkSession { .. } => OperationContract::ForkSession,
+        Operation::SwitchActiveLeaf { .. } => OperationContract::SwitchActiveLeaf,
+        Operation::SetSessionTreeLabel { .. } => OperationContract::SetSessionTreeLabel,
+        Operation::SetDefaultAgentProfile { .. } => OperationContract::SetDefaultAgentProfile,
+        Operation::Export(options) if options.writes_html() => OperationContract::ExportCurrentHtml,
+        Operation::Export(_) => OperationContract::ExportCurrent,
+    };
+    contract.descriptor()
+}
+
+impl OperationContract {
+    fn descriptor(self) -> OperationDescriptor {
         let (
             submitted_kind,
             admission_class,
@@ -337,7 +556,7 @@ impl CodingAgentOperation {
             terminal_policy,
             permitted_root_evidence,
         ) = match self {
-            Self::Prompt(_) => (
+            Self::Prompt => (
                 OperationKind::Prompt,
                 OperationClass::SessionWriteRoot,
                 OperationDispatchMode::Async,
@@ -345,7 +564,7 @@ impl CodingAgentOperation {
                 OperationTerminalPolicy::ProductEvent,
                 PROMPT_ROOT_EVIDENCE,
             ),
-            Self::Compact(_) => (
+            Self::Compact => (
                 OperationKind::Compact,
                 OperationClass::SessionWriteRoot,
                 OperationDispatchMode::Async,
@@ -353,7 +572,7 @@ impl CodingAgentOperation {
                 OperationTerminalPolicy::ProductEvent,
                 COMPACT_ROOT_EVIDENCE,
             ),
-            Self::BranchSummary { .. } => (
+            Self::BranchSummary => (
                 OperationKind::BranchSummary,
                 OperationClass::SessionWriteRoot,
                 OperationDispatchMode::Async,
@@ -361,7 +580,7 @@ impl CodingAgentOperation {
                 OperationTerminalPolicy::OutcomeAcknowledgement,
                 &[][..],
             ),
-            Self::SelfHealingEdit(_) => (
+            Self::SelfHealingEdit => (
                 OperationKind::SelfHealingEdit,
                 OperationClass::SessionWriteRoot,
                 OperationDispatchMode::Async,
@@ -369,7 +588,7 @@ impl CodingAgentOperation {
                 OperationTerminalPolicy::ProductEvent,
                 SELF_HEALING_EDIT_ROOT_EVIDENCE,
             ),
-            Self::InvokeAgent(_) => (
+            Self::InvokeAgent => (
                 OperationKind::AgentInvocation,
                 OperationClass::NonSessionRoot,
                 OperationDispatchMode::Async,
@@ -377,7 +596,7 @@ impl CodingAgentOperation {
                 OperationTerminalPolicy::ProductEvent,
                 AGENT_INVOCATION_ROOT_EVIDENCE,
             ),
-            Self::InvokeTeam(_) => (
+            Self::InvokeTeam => (
                 OperationKind::AgentTeam,
                 OperationClass::NonSessionRoot,
                 OperationDispatchMode::Async,
@@ -393,7 +612,7 @@ impl CodingAgentOperation {
                 OperationTerminalPolicy::ProductEvent,
                 PLUGIN_LOAD_ROOT_EVIDENCE,
             ),
-            Self::PluginCommand { .. } => (
+            Self::PluginCommand => (
                 OperationKind::PluginCommand,
                 OperationClass::NonSessionRoot,
                 OperationDispatchMode::Async,
@@ -401,7 +620,7 @@ impl CodingAgentOperation {
                 OperationTerminalPolicy::OutcomeAcknowledgement,
                 &[][..],
             ),
-            Self::SetDefaultAgentProfile { .. } => (
+            Self::SetDefaultAgentProfile => (
                 OperationKind::SetDefaultAgentProfile,
                 OperationClass::RuntimeWrite,
                 OperationDispatchMode::SyncMutable,
@@ -409,7 +628,7 @@ impl CodingAgentOperation {
                 OperationTerminalPolicy::OutcomeAcknowledgement,
                 &[][..],
             ),
-            Self::ApproveDelegation { .. } => (
+            Self::ApproveDelegation => (
                 OperationKind::DelegationConfirmation,
                 OperationClass::SessionWriteRoot,
                 OperationDispatchMode::Async,
@@ -417,7 +636,7 @@ impl CodingAgentOperation {
                 OperationTerminalPolicy::OutcomeAcknowledgement,
                 &[][..],
             ),
-            Self::RejectDelegation { .. } => (
+            Self::RejectDelegation => (
                 OperationKind::DelegationConfirmation,
                 OperationClass::SessionWriteRoot,
                 OperationDispatchMode::SyncMutable,
@@ -425,7 +644,7 @@ impl CodingAgentOperation {
                 OperationTerminalPolicy::OutcomeAcknowledgement,
                 &[][..],
             ),
-            Self::ForkSession { .. } => (
+            Self::ForkSession => (
                 OperationKind::ForkSession,
                 OperationClass::SessionWriteRoot,
                 OperationDispatchMode::SyncMutable,
@@ -433,7 +652,7 @@ impl CodingAgentOperation {
                 OperationTerminalPolicy::OutcomeAcknowledgement,
                 &[][..],
             ),
-            Self::SwitchActiveLeaf { .. } => (
+            Self::SwitchActiveLeaf => (
                 OperationKind::SwitchActiveLeaf,
                 OperationClass::SessionWriteRoot,
                 OperationDispatchMode::SyncMutable,
@@ -441,7 +660,7 @@ impl CodingAgentOperation {
                 OperationTerminalPolicy::OutcomeAcknowledgement,
                 &[][..],
             ),
-            Self::SetSessionTreeLabel { .. } => (
+            Self::SetSessionTreeLabel => (
                 OperationKind::SetSessionTreeLabel,
                 OperationClass::SessionWriteRoot,
                 OperationDispatchMode::SyncMutable,
@@ -457,7 +676,7 @@ impl CodingAgentOperation {
                 OperationTerminalPolicy::OutcomeAcknowledgement,
                 &[][..],
             ),
-            Self::ExportCurrentHtml(_) => (
+            Self::ExportCurrentHtml => (
                 OperationKind::Export,
                 OperationClass::ReadOnly,
                 OperationDispatchMode::SyncReadOnly,
@@ -466,14 +685,97 @@ impl CodingAgentOperation {
                 &[][..],
             ),
         };
+        let (session_access, runtime_access, capacity, durability) = match admission_class {
+            OperationClass::SessionWriteRoot => (
+                OperationSessionAccess::Write,
+                OperationRuntimeAccess::None,
+                OperationCapacity::SessionWriter,
+                OperationDurability::SESSION,
+            ),
+            OperationClass::NonSessionRoot => (
+                OperationSessionAccess::None,
+                OperationRuntimeAccess::Read,
+                OperationCapacity::BoundedRuntime,
+                OperationDurability::NONE,
+            ),
+            OperationClass::RuntimeWrite => (
+                OperationSessionAccess::Write,
+                OperationRuntimeAccess::Write,
+                OperationCapacity::RuntimeExclusive,
+                OperationDurability::SESSION_AND_RUNTIME,
+            ),
+            OperationClass::ReadOnly => (
+                OperationSessionAccess::Read,
+                OperationRuntimeAccess::None,
+                OperationCapacity::Shared,
+                OperationDurability::NONE,
+            ),
+            OperationClass::Query | OperationClass::Child | OperationClass::Control => {
+                unreachable!("public root descriptor cannot use a dedicated intent class")
+            }
+        };
+        let priority = match submitted_kind {
+            OperationKind::Prompt | OperationKind::DelegationConfirmation => {
+                OperationPriority::Interactive
+            }
+            OperationKind::PluginLoad => OperationPriority::Maintenance,
+            _ => OperationPriority::Normal,
+        };
+        let cancellation = match dispatch_mode {
+            OperationDispatchMode::Async => OperationCancellation::Cancellable,
+            OperationDispatchMode::SyncReadOnly | OperationDispatchMode::SyncMutable => {
+                OperationCancellation::Atomic
+            }
+        };
+        let child_policy = match submitted_kind {
+            OperationKind::Prompt | OperationKind::AgentInvocation | OperationKind::AgentTeam => {
+                OperationChildPolicy::Structured
+            }
+            _ => OperationChildPolicy::Forbidden,
+        };
         OperationDescriptor {
+            revision: 1,
             submitted_kind,
-            admission_class,
             dispatch_mode,
             outcome_family,
             terminal_policy,
             permitted_root_evidence,
+            lineage: OperationLineage::Root,
+            session_access,
+            runtime_access,
+            priority,
+            capacity,
+            durability,
+            cancellation,
+            child_policy,
         }
+    }
+}
+
+impl CodingAgentOperation {
+    fn contract(&self) -> OperationContract {
+        match self {
+            Self::Prompt(_) => OperationContract::Prompt,
+            Self::Compact(_) => OperationContract::Compact,
+            Self::BranchSummary { .. } => OperationContract::BranchSummary,
+            Self::SelfHealingEdit(_) => OperationContract::SelfHealingEdit,
+            Self::InvokeAgent(_) => OperationContract::InvokeAgent,
+            Self::InvokeTeam(_) => OperationContract::InvokeTeam,
+            Self::PluginLoad => OperationContract::PluginLoad,
+            Self::PluginCommand { .. } => OperationContract::PluginCommand,
+            Self::SetDefaultAgentProfile { .. } => OperationContract::SetDefaultAgentProfile,
+            Self::ApproveDelegation { .. } => OperationContract::ApproveDelegation,
+            Self::RejectDelegation { .. } => OperationContract::RejectDelegation,
+            Self::ForkSession { .. } => OperationContract::ForkSession,
+            Self::SwitchActiveLeaf { .. } => OperationContract::SwitchActiveLeaf,
+            Self::SetSessionTreeLabel { .. } => OperationContract::SetSessionTreeLabel,
+            Self::ExportCurrent => OperationContract::ExportCurrent,
+            Self::ExportCurrentHtml(_) => OperationContract::ExportCurrentHtml,
+        }
+    }
+
+    pub(crate) fn descriptor(&self) -> OperationDescriptor {
+        self.contract().descriptor()
     }
 
     pub(crate) fn submission_fingerprint(&self) -> Option<(String, String)> {
@@ -1242,7 +1544,7 @@ mod tests {
             );
             let descriptor = (case.build_operation)().descriptor();
             assert_eq!(descriptor.dispatch_mode, metadata.dispatch_mode);
-            assert_eq!(descriptor.admission_class, metadata.class);
+            assert_eq!(descriptor.admission_class(), metadata.class);
             if let Some(static_kind) = metadata.static_kind {
                 assert_eq!(descriptor.submitted_kind, static_kind);
             } else {
@@ -1277,7 +1579,7 @@ mod tests {
                 descriptor_outcome_family(case.expected_outcome)
             );
             assert_eq!(descriptor.terminal_policy, case.expected_terminal_policy);
-            assert_eq!(descriptor.validate_terminal_policy(), Ok(()));
+            assert_eq!(descriptor.validate(), Ok(()));
             assert_eq!(
                 descriptor.permitted_root_evidence, case.expected_root_evidence,
                 "{} root evidence",
@@ -1309,6 +1611,30 @@ mod tests {
         assert_eq!(
             descriptor.validate_terminal_policy(),
             Err("outcome acknowledgement policy forbids root terminal evidence")
+        );
+    }
+
+    #[test]
+    fn descriptor_claim_validation_rejects_non_derivable_or_conflicting_claims() {
+        let mut descriptor = CodingAgentOperation::Prompt(prompt_operation_options()).descriptor();
+        descriptor.capacity = OperationCapacity::BoundedRuntime;
+        assert_eq!(
+            descriptor.validate(),
+            Err("operation access and capacity claims do not derive a valid class")
+        );
+
+        let mut descriptor = CodingAgentOperation::ExportCurrent.descriptor();
+        descriptor.durability.session_if_persistent = true;
+        assert_eq!(
+            descriptor.validate(),
+            Err("session durability requires session write access")
+        );
+
+        let mut descriptor = CodingAgentOperation::Prompt(prompt_operation_options()).descriptor();
+        descriptor.durability.runtime_generation = true;
+        assert_eq!(
+            descriptor.validate(),
+            Err("runtime generation durability requires runtime write access")
         );
     }
 

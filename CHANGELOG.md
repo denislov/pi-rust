@@ -22,6 +22,10 @@
 - Began `RIF-001` with immutable permit-owned `OperationExecution` identity,
   freezing descriptor revision, origin, capability/session association, and
   resolved root/parent lineage at admission.
+- Replaced duplicated internal operation metadata values with one exhaustive
+  descriptor table and orthogonal validated claims for lineage, session/runtime
+  access, priority, capacity, durability, cancellation, children, outcomes, and
+  terminal policy.
 
 ### Release Status
 

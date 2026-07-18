@@ -1612,8 +1612,8 @@ mod tests {
 
     fn prompt_descriptor() -> OperationDescriptor {
         OperationDescriptor {
+            revision: 1,
             submitted_kind: OperationKind::Prompt,
-            admission_class: super::super::operation::OperationClass::SessionWriteRoot,
             dispatch_mode: super::super::operation::OperationDispatchMode::Async,
             outcome_family: crate::runtime::outcome::OperationOutcomeFamily::Prompt,
             terminal_policy: crate::runtime::outcome::OperationTerminalPolicy::ProductEvent,
@@ -1622,6 +1622,17 @@ mod tests {
                 OperationRootTerminalEvidence::PromptFailed,
                 OperationRootTerminalEvidence::PromptAborted,
             ],
+            lineage: crate::runtime::outcome::OperationLineage::Root,
+            session_access: crate::runtime::outcome::OperationSessionAccess::Write,
+            runtime_access: crate::runtime::outcome::OperationRuntimeAccess::None,
+            priority: crate::runtime::outcome::OperationPriority::Interactive,
+            capacity: crate::runtime::outcome::OperationCapacity::SessionWriter,
+            durability: crate::runtime::outcome::OperationDurability {
+                session_if_persistent: true,
+                runtime_generation: false,
+            },
+            cancellation: crate::runtime::outcome::OperationCancellation::Cancellable,
+            child_policy: crate::runtime::outcome::OperationChildPolicy::Structured,
         }
     }
 

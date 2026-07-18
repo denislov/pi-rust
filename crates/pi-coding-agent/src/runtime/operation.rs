@@ -78,22 +78,12 @@ impl Operation {
     }
 
     pub(crate) fn session_access(&self) -> SessionCapabilityAccess {
-        match self {
-            Self::Export(_) => SessionCapabilityAccess::Read,
-            Self::PluginCommand { .. } | Self::AgentInvocation(_) | Self::AgentTeam(_) => {
-                SessionCapabilityAccess::None
+        match crate::runtime::outcome::descriptor_for_internal_operation(self).session_access {
+            crate::runtime::outcome::OperationSessionAccess::None => SessionCapabilityAccess::None,
+            crate::runtime::outcome::OperationSessionAccess::Read => SessionCapabilityAccess::Read,
+            crate::runtime::outcome::OperationSessionAccess::Write => {
+                SessionCapabilityAccess::Write
             }
-            Self::Prompt(_)
-            | Self::ManualCompaction(_)
-            | Self::PluginLoad(_)
-            | Self::ApproveDelegationConfirmation { .. }
-            | Self::RejectDelegationConfirmation { .. }
-            | Self::BranchSummary { .. }
-            | Self::SelfHealingEdit(_)
-            | Self::ForkSession { .. }
-            | Self::SwitchActiveLeaf { .. }
-            | Self::SetSessionTreeLabel { .. }
-            | Self::SetDefaultAgentProfile { .. } => SessionCapabilityAccess::Write,
         }
     }
 
@@ -139,98 +129,16 @@ impl Operation {
     }
 
     pub(crate) fn metadata(&self) -> OperationMetadata {
-        match self {
-            Self::Prompt(_) => OperationMetadata::new(
-                Some(OperationKind::Prompt),
-                OperationOrigin::ClientRoot,
-                OperationClass::SessionWriteRoot,
-                OperationDispatchMode::Async,
-            ),
-            Self::ManualCompaction(_) => OperationMetadata::new(
-                Some(OperationKind::Compact),
-                OperationOrigin::ClientRoot,
-                OperationClass::SessionWriteRoot,
-                OperationDispatchMode::Async,
-            ),
-            Self::PluginLoad(_) => OperationMetadata::new(
-                Some(OperationKind::PluginLoad),
-                OperationOrigin::ClientRoot,
-                OperationClass::RuntimeWrite,
-                OperationDispatchMode::Async,
-            ),
-            Self::PluginCommand { .. } => OperationMetadata::new(
-                Some(OperationKind::PluginCommand),
-                OperationOrigin::ClientRoot,
-                OperationClass::NonSessionRoot,
-                OperationDispatchMode::Async,
-            ),
-            Self::ApproveDelegationConfirmation { .. } => OperationMetadata::new(
-                None,
-                OperationOrigin::ClientRoot,
-                OperationClass::SessionWriteRoot,
-                OperationDispatchMode::Async,
-            ),
-            Self::RejectDelegationConfirmation { .. } => OperationMetadata::new(
-                Some(OperationKind::DelegationConfirmation),
-                OperationOrigin::ClientRoot,
-                OperationClass::SessionWriteRoot,
-                OperationDispatchMode::SyncMutable,
-            ),
-            Self::BranchSummary { .. } => OperationMetadata::new(
-                Some(OperationKind::BranchSummary),
-                OperationOrigin::ClientRoot,
-                OperationClass::SessionWriteRoot,
-                OperationDispatchMode::Async,
-            ),
-            Self::SelfHealingEdit(_) => OperationMetadata::new(
-                Some(OperationKind::SelfHealingEdit),
-                OperationOrigin::ClientRoot,
-                OperationClass::SessionWriteRoot,
-                OperationDispatchMode::Async,
-            ),
-            Self::AgentInvocation(_) => OperationMetadata::new(
-                Some(OperationKind::AgentInvocation),
-                OperationOrigin::ClientRoot,
-                OperationClass::NonSessionRoot,
-                OperationDispatchMode::Async,
-            ),
-            Self::AgentTeam(_) => OperationMetadata::new(
-                Some(OperationKind::AgentTeam),
-                OperationOrigin::ClientRoot,
-                OperationClass::NonSessionRoot,
-                OperationDispatchMode::Async,
-            ),
-            Self::ForkSession { .. } => OperationMetadata::new(
-                Some(OperationKind::ForkSession),
-                OperationOrigin::ClientRoot,
-                OperationClass::SessionWriteRoot,
-                OperationDispatchMode::SyncMutable,
-            ),
-            Self::SwitchActiveLeaf { .. } => OperationMetadata::new(
-                Some(OperationKind::SwitchActiveLeaf),
-                OperationOrigin::ClientRoot,
-                OperationClass::SessionWriteRoot,
-                OperationDispatchMode::SyncMutable,
-            ),
-            Self::SetSessionTreeLabel { .. } => OperationMetadata::new(
-                Some(OperationKind::SetSessionTreeLabel),
-                OperationOrigin::ClientRoot,
-                OperationClass::SessionWriteRoot,
-                OperationDispatchMode::SyncMutable,
-            ),
-            Self::SetDefaultAgentProfile { .. } => OperationMetadata::new(
-                Some(OperationKind::SetDefaultAgentProfile),
-                OperationOrigin::ClientRoot,
-                OperationClass::RuntimeWrite,
-                OperationDispatchMode::SyncMutable,
-            ),
-            Self::Export(_) => OperationMetadata::new(
-                Some(OperationKind::Export),
-                OperationOrigin::ClientRoot,
-                OperationClass::ReadOnly,
-                OperationDispatchMode::SyncReadOnly,
-            ),
-        }
+        let descriptor = crate::runtime::outcome::descriptor_for_internal_operation(self);
+        debug_assert_eq!(descriptor.validate(), Ok(()));
+        OperationMetadata::new(
+            (!matches!(self, Self::ApproveDelegationConfirmation { .. }))
+                .then_some(descriptor.submitted_kind),
+            OperationOrigin::ClientRoot,
+            descriptor.revision,
+            descriptor.admission_class(),
+            descriptor.dispatch_mode,
+        )
     }
 }
 
@@ -238,6 +146,8 @@ impl Operation {
 pub(crate) struct OperationMetadata {
     pub(crate) static_kind: Option<OperationKind>,
     pub(crate) origin: OperationOrigin,
+    pub(crate) descriptor_revision: u16,
+    pub(crate) lineage: crate::runtime::outcome::OperationLineage,
     pub(crate) class: OperationClass,
     pub(crate) dispatch_mode: OperationDispatchMode,
 }
@@ -246,12 +156,20 @@ impl OperationMetadata {
     fn new(
         static_kind: Option<OperationKind>,
         origin: OperationOrigin,
+        descriptor_revision: u16,
         class: OperationClass,
         dispatch_mode: OperationDispatchMode,
     ) -> Self {
         Self {
             static_kind,
             origin,
+            descriptor_revision,
+            lineage: match origin {
+                OperationOrigin::ParentChild => crate::runtime::outcome::OperationLineage::Child,
+                OperationOrigin::ClientRoot | OperationOrigin::RuntimeInternal => {
+                    crate::runtime::outcome::OperationLineage::Root
+                }
+            },
             class,
             dispatch_mode,
         }
@@ -274,8 +192,6 @@ pub(crate) struct OperationExecution {
 }
 
 impl OperationExecution {
-    pub(crate) const DESCRIPTOR_REVISION: u16 = 1;
-
     pub(crate) fn root(
         kind: OperationKind,
         metadata: OperationMetadata,
@@ -285,6 +201,7 @@ impl OperationExecution {
     ) -> Self {
         let operation_id = capability_snapshot.operation_id.clone();
         let capability_generation = capability_snapshot.generation;
+        let descriptor_revision = metadata.descriptor_revision;
         debug_assert!(matches!(
             capability_snapshot.actor,
             super::capability::ActorId::Client
@@ -292,7 +209,7 @@ impl OperationExecution {
         Self {
             kind,
             metadata,
-            descriptor_revision: Self::DESCRIPTOR_REVISION,
+            descriptor_revision,
             admitted_at,
             session_identity,
             capability_snapshot,
@@ -313,6 +230,7 @@ impl OperationExecution {
     ) -> Self {
         let operation_id = capability_snapshot.operation_id.clone();
         let capability_generation = capability_snapshot.generation;
+        let descriptor_revision = metadata.descriptor_revision;
         debug_assert!(matches!(
             capability_snapshot.actor,
             super::capability::ActorId::ChildOperation(_)
@@ -320,7 +238,7 @@ impl OperationExecution {
         Self {
             kind,
             metadata,
-            descriptor_revision: Self::DESCRIPTOR_REVISION,
+            descriptor_revision,
             admitted_at: None,
             session_identity: None,
             capability_snapshot,
@@ -495,6 +413,7 @@ mod tests {
             OperationMetadata::new(
                 Some(OperationKind::AgentInvocation),
                 OperationOrigin::ParentChild,
+                1,
                 OperationClass::Child,
                 OperationDispatchMode::Async,
             ),
@@ -792,6 +711,8 @@ mod tests {
         let metadata = OperationMetadata {
             static_kind: Some(OperationKind::Prompt),
             origin: OperationOrigin::ClientRoot,
+            descriptor_revision: 1,
+            lineage: crate::runtime::outcome::OperationLineage::Root,
             class: OperationClass::SessionWriteRoot,
             dispatch_mode: OperationDispatchMode::Async,
         };

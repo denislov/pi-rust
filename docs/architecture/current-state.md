@@ -33,6 +33,13 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   child executions retain resolved parent/root lineage. Full downstream identity
   propagation and removal of remaining workflow-local generators are still open
   under `RIF-001`.
+- The 16 public operation variants now share one exhaustive descriptor table.
+  Internal operation payloads map to its contract keys, and internal metadata,
+  capability session access, admission class, and dispatch mode are derived
+  projections. Orthogonal lineage, session/runtime access, priority, capacity,
+  durability, cancellation, child, outcome, and terminal claims are validated;
+  direct scheduler consumption and deletion of transitional metadata remain open
+  under `RIF-007`.
 - SessionWriteRoot, NonSessionRoot, RuntimeWrite, Query, ReadOnly, Child, and
   Control admission classes exist; the scheduler has no general work queue.
 - PluginCommand, AgentInvocation, and AgentTeam have runtime-owned submitted task

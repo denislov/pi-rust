@@ -438,6 +438,8 @@ mod tests {
         let metadata = OperationMetadata {
             static_kind: Some(OperationKind::Export),
             origin: OperationOrigin::ClientRoot,
+            descriptor_revision: 1,
+            lineage: crate::runtime::outcome::OperationLineage::Root,
             class: OperationClass::ReadOnly,
             dispatch_mode: OperationDispatchMode::SyncReadOnly,
         };
@@ -483,6 +485,8 @@ mod tests {
         let metadata = OperationMetadata {
             static_kind: Some(OperationKind::PluginCommand),
             origin: OperationOrigin::ClientRoot,
+            descriptor_revision: 1,
+            lineage: crate::runtime::outcome::OperationLineage::Root,
             class: OperationClass::NonSessionRoot,
             dispatch_mode: OperationDispatchMode::SyncReadOnly,
         };
@@ -546,6 +550,7 @@ mod tests {
         let dispatch_source = include_str!("dispatch.rs");
         let submission_source = include_str!("submission.rs");
         let operation_source = include_str!("operation.rs");
+        let outcome_source = include_str!("outcome.rs");
 
         assert!(
             !session_source.contains("fn set_default_agent_profile_id(")
@@ -568,17 +573,21 @@ mod tests {
             "the three canonical dispatchers should admit through OperationScheduler"
         );
         for expected in [
-            "Self::ForkSession { .. } => OperationMetadata::new(",
-            "Self::SwitchActiveLeaf { .. } => OperationMetadata::new(",
-            "Self::SetDefaultAgentProfile { .. } => OperationMetadata::new(",
+            "Self::ForkSession { .. } => OperationContract::ForkSession",
+            "Self::SwitchActiveLeaf { .. } => OperationContract::SwitchActiveLeaf",
+            "Self::SetDefaultAgentProfile { .. } => OperationContract::SetDefaultAgentProfile",
         ] {
             assert!(
-                operation_source.contains(expected),
-                "sync-mutable operation metadata should include {expected}"
+                outcome_source.contains(expected),
+                "authoritative operation descriptor mapping should include {expected}"
             );
         }
         assert!(
-            operation_source
+            operation_source.contains("descriptor_for_internal_operation(self)"),
+            "internal operation metadata should derive from the authoritative descriptor"
+        );
+        assert!(
+            outcome_source
                 .matches("OperationDispatchMode::SyncMutable,")
                 .count()
                 >= 3,

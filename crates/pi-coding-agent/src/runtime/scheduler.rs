@@ -92,6 +92,8 @@ impl OperationScheduler {
                             OperationMetadata {
                                 static_kind: Some(kind),
                                 origin: OperationOrigin::ParentChild,
+                                descriptor_revision: 1,
+                                lineage: crate::runtime::outcome::OperationLineage::Child,
                                 class: OperationClass::Child,
                                 dispatch_mode: OperationDispatchMode::Async,
                             },
@@ -119,6 +121,8 @@ impl OperationScheduler {
             super::operation::OperationMetadata {
                 static_kind: Some(kind),
                 origin: super::operation::OperationOrigin::ClientRoot,
+                descriptor_revision: 1,
+                lineage: crate::runtime::outcome::OperationLineage::Root,
                 class,
                 dispatch_mode: dispatch,
             },

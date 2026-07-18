@@ -97,7 +97,7 @@ impl ExportOptions {
         }
     }
 
-    fn writes_html(&self) -> bool {
+    pub(crate) fn writes_html(&self) -> bool {
         matches!(self.target, ExportTarget::Html(_))
     }
 }
