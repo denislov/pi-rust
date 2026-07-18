@@ -5,7 +5,7 @@
 Baseline version: `0.3.1`, released as annotated tag `v0.3.1`.
 
 Source baseline: commit `870d4bb`; dated release record: `180f219`; post-baseline
-`0.4.0` commits are recorded below. Last refreshed: 2026-07-18.
+`0.4.0` commits are recorded below. Last refreshed: 2026-07-19.
 
 This file records implementation facts, not desired behavior. Cargo manifests,
 compiled source, tests, and CodeGraph call paths outrank this summary when they
@@ -98,8 +98,10 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   sequences and broadcasts it through a bounded retained stream.
 - Snapshot/reconnect, stream identity, sequence gaps, capability generation,
   client projection, print/JSON, RPC, and interactive adapters exist.
-- A durable ProductEvent outbox sharing the SessionEvent commit point does not yet
-  exist; `RIF-009` owns it.
+- A durable ProductEvent outbox now shares the bounded writer commit point with
+  its source SessionEvents. Session-write and startup-recovery records are
+  implemented; supervisor-owned operation-terminal records remain open under
+  `RIF-002`.
 - The retained broadcast window is live delivery/replay state, not durable
   evidence. `RIF-009-001` must define an outbox record and semantic identity
   before a writer batch can claim session/outbox atomicity. The record contract
