@@ -23,12 +23,35 @@ pub const AGENT_TURN_NODE_IDS: &[&str] = &[
 const ACTION_CONTINUE: &str = "continue";
 const ACTION_CONTINUE_PROVIDER: &str = "continue_provider";
 const ACTION_TOOLS: &str = "tools";
+const MAX_TYPED_STATE_STEPS: usize = 16;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AgentTurnState {
+    Finish,
+    Start,
+    DrainQueuedInput,
+    CompactRuntimeContext,
+    PrepareProviderRequest,
+    ApplyProviderHook,
+    ProviderStream,
+    DecideAfterAssistant,
+    ExecuteTools,
+    PrepareNextTurn,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AgentTurnResult {
+    Continue,
+    Finish,
+}
 
 pub struct AgentTurnFlow {
+    #[allow(dead_code)]
     flow: Flow<AgentTurnContext>,
 }
 
 impl AgentTurnFlow {
+    #[allow(dead_code)]
     pub fn new() -> Result<Self, FlowError> {
         let mut flow = Flow::new(AGENT_TURN_NODE_IDS[0])?;
         flow.add_node("start_turn", nodes::StartTurnNode)?
@@ -82,6 +105,7 @@ impl AgentTurnFlow {
         self.run_with_options(ctx, FlowRunOptions::default()).await
     }
 
+    #[allow(dead_code)]
     pub async fn run_with_options(
         &self,
         ctx: &mut AgentTurnContext,
@@ -93,16 +117,6 @@ impl AgentTurnFlow {
 
     pub(crate) fn run_state(state: Arc<RwLock<AgentState>>) -> AgentStream {
         Box::pin(stream! {
-            let flow = match AgentTurnFlow::new() {
-                Ok(flow) => flow,
-                Err(error) => {
-                    yield AgentEvent::AgentError {
-                        error: error.to_string(),
-                    };
-                    return;
-                }
-            };
-
             let mut turn: u32 = 0;
 
             loop {
@@ -118,14 +132,7 @@ impl AgentTurnFlow {
                 let (event_sender, mut event_receiver) = mpsc::unbounded();
                 context.attach_runtime(Arc::clone(&state), event_sender);
 
-                let mut run = Box::pin(flow.run_with_options(
-                    &mut context,
-                    FlowRunOptions {
-                        cancel: Some(cancel),
-                        ..FlowRunOptions::default()
-                    },
-                ))
-                .fuse();
+                let mut run = Box::pin(run_typed_turn(&mut context, cancel)).fuse();
                 let outcome_result = loop {
                     futures::select! {
                         event = event_receiver.next().fuse() => {
@@ -149,7 +156,11 @@ impl AgentTurnFlow {
                             context.apply_to_state(&mut state);
                         }
                         yield AgentEvent::AgentError {
-                            error: flow_error_message(error),
+                            error: if context.cancel_token.is_cancelled() {
+                                "aborted".into()
+                            } else {
+                                error
+                            },
                         };
                         return;
                     }
@@ -162,18 +173,97 @@ impl AgentTurnFlow {
                     context.apply_to_state(&mut state);
                 }
 
-                match outcome.last_action.as_str() {
-                    ACTION_CONTINUE | ACTION_CONTINUE_PROVIDER => continue,
-                    _ => return,
+                match outcome {
+                    AgentTurnResult::Continue => continue,
+                    AgentTurnResult::Finish => return,
                 }
             }
         })
     }
 }
 
-fn flow_error_message(error: FlowError) -> String {
-    match error {
-        FlowError::Cancelled => "aborted".into(),
-        error => error.to_string(),
+async fn run_typed_turn(
+    ctx: &mut AgentTurnContext,
+    cancellation: tokio_util::sync::CancellationToken,
+) -> Result<AgentTurnResult, String> {
+    let mut state = AgentTurnState::Start;
+    let mut steps = 0usize;
+    loop {
+        steps += 1;
+        if steps > MAX_TYPED_STATE_STEPS {
+            return Err(format!(
+                "typed AgentTurn exceeded {MAX_TYPED_STATE_STEPS} state steps"
+            ));
+        }
+        state = match state {
+            AgentTurnState::Finish => return Ok(AgentTurnResult::Finish),
+            AgentTurnState::Start => {
+                let action = nodes::start_turn(ctx)?;
+                transition_from_action(AgentTurnState::Start, action)?
+            }
+            AgentTurnState::DrainQueuedInput => {
+                nodes::drain_queued_input(ctx);
+                AgentTurnState::CompactRuntimeContext
+            }
+            AgentTurnState::CompactRuntimeContext => {
+                nodes::maybe_compact_runtime_context(ctx).await?;
+                AgentTurnState::PrepareProviderRequest
+            }
+            AgentTurnState::PrepareProviderRequest => {
+                let action = nodes::prepare_provider_request(ctx).await?;
+                transition_from_action(AgentTurnState::PrepareProviderRequest, action)?
+            }
+            AgentTurnState::ApplyProviderHook => {
+                let action = nodes::apply_before_provider_request_hook(ctx).await?;
+                transition_from_action(AgentTurnState::ApplyProviderHook, action)?
+            }
+            AgentTurnState::ProviderStream => {
+                let action = nodes::stream_provider(ctx).await?;
+                transition_from_action(AgentTurnState::ProviderStream, action)?
+            }
+            AgentTurnState::DecideAfterAssistant => {
+                let action = nodes::decide_after_assistant(ctx)?;
+                transition_from_action(AgentTurnState::DecideAfterAssistant, action)?
+            }
+            AgentTurnState::ExecuteTools => {
+                let action = nodes::execute_tools(ctx).await?;
+                transition_from_action(AgentTurnState::ExecuteTools, action)?
+            }
+            AgentTurnState::PrepareNextTurn => {
+                let action = nodes::maybe_prepare_next_turn(ctx).await?;
+                return match action.as_str() {
+                    ACTION_CONTINUE | ACTION_CONTINUE_PROVIDER => Ok(AgentTurnResult::Continue),
+                    "done" | "error" | "aborted" => Ok(AgentTurnResult::Finish),
+                    action => Err(format!(
+                        "typed AgentTurn transition from PrepareNextTurn has unknown action '{action}'"
+                    )),
+                };
+            }
+        };
+
+        if cancellation.is_cancelled() {
+            return Ok(AgentTurnResult::Finish);
+        }
+    }
+}
+
+fn transition_from_action(state: AgentTurnState, action: Action) -> Result<AgentTurnState, String> {
+    let action = action.as_str();
+    match (state, action) {
+        (AgentTurnState::Start, "default") => Ok(AgentTurnState::DrainQueuedInput),
+        (AgentTurnState::PrepareProviderRequest, "default") => {
+            Ok(AgentTurnState::ApplyProviderHook)
+        }
+        (AgentTurnState::ApplyProviderHook, "default") => Ok(AgentTurnState::ProviderStream),
+        (AgentTurnState::ProviderStream, "default") => Ok(AgentTurnState::DecideAfterAssistant),
+        (AgentTurnState::DecideAfterAssistant, ACTION_TOOLS) => Ok(AgentTurnState::ExecuteTools),
+        (AgentTurnState::DecideAfterAssistant, ACTION_CONTINUE) => {
+            Ok(AgentTurnState::PrepareNextTurn)
+        }
+        (AgentTurnState::ExecuteTools, ACTION_CONTINUE) => Ok(AgentTurnState::PrepareNextTurn),
+        (_, "error" | "aborted") => Ok(AgentTurnState::Finish),
+        (state, action) => Err(format!(
+            "typed AgentTurn transition from {state:?} has unknown action '{action}'"
+        )),
     }
 }

@@ -20,6 +20,9 @@
 - Closed the 0.4.1 message-identity debt across replay/hydration as well:
   duplicate `Agent::add_message` IDs are normalized and replay hydration now
   has an explicit uniqueness assertion.
+- Completed `AWC-002`: the production Agent turn now uses a private exhaustive
+  typed state/transition runner with a bounded per-turn state-step guard. The
+  generic Flow wrapper remains only for tests and compatibility callers.
 
 ## 0.4.0 - 2026-07-19
 

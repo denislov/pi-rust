@@ -40,6 +40,7 @@ const ACTION_DONE: &str = "done";
 const ACTION_ERROR: &str = "error";
 const ACTION_ABORTED: &str = "aborted";
 
+#[allow(dead_code)]
 pub struct StartTurnNode;
 
 impl FlowNode<AgentTurnContext> for StartTurnNode {
@@ -55,6 +56,7 @@ impl FlowNode<AgentTurnContext> for StartTurnNode {
     }
 }
 
+#[allow(dead_code)]
 pub struct DrainQueuedInputNode;
 
 impl FlowNode<AgentTurnContext> for DrainQueuedInputNode {
@@ -73,6 +75,7 @@ impl FlowNode<AgentTurnContext> for DrainQueuedInputNode {
     }
 }
 
+#[allow(dead_code)]
 pub struct PrepareProviderRequestNode;
 
 impl FlowNode<AgentTurnContext> for PrepareProviderRequestNode {
@@ -88,6 +91,7 @@ impl FlowNode<AgentTurnContext> for PrepareProviderRequestNode {
     }
 }
 
+#[allow(dead_code)]
 pub struct ApplyBeforeProviderRequestHookNode;
 
 impl FlowNode<AgentTurnContext> for ApplyBeforeProviderRequestHookNode {
@@ -103,6 +107,7 @@ impl FlowNode<AgentTurnContext> for ApplyBeforeProviderRequestHookNode {
     }
 }
 
+#[allow(dead_code)]
 pub struct MaybeCompactRuntimeContextNode;
 
 impl FlowNode<AgentTurnContext> for MaybeCompactRuntimeContextNode {
@@ -121,6 +126,7 @@ impl FlowNode<AgentTurnContext> for MaybeCompactRuntimeContextNode {
     }
 }
 
+#[allow(dead_code)]
 pub struct ProviderStreamNode;
 
 impl FlowNode<AgentTurnContext> for ProviderStreamNode {
@@ -136,6 +142,7 @@ impl FlowNode<AgentTurnContext> for ProviderStreamNode {
     }
 }
 
+#[allow(dead_code)]
 pub struct DecideAfterAssistantNode;
 
 impl FlowNode<AgentTurnContext> for DecideAfterAssistantNode {
@@ -151,6 +158,7 @@ impl FlowNode<AgentTurnContext> for DecideAfterAssistantNode {
     }
 }
 
+#[allow(dead_code)]
 pub struct MaybePrepareNextTurnNode;
 
 impl FlowNode<AgentTurnContext> for MaybePrepareNextTurnNode {
@@ -166,6 +174,7 @@ impl FlowNode<AgentTurnContext> for MaybePrepareNextTurnNode {
     }
 }
 
+#[allow(dead_code)]
 pub struct ExecuteToolsNode;
 
 impl FlowNode<AgentTurnContext> for ExecuteToolsNode {
