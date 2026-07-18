@@ -2578,6 +2578,14 @@ mod tests {
         let replay = service.replay().unwrap();
         assert_eq!(replay.transcript.len(), 1);
         assert_eq!(replay.active_leaf_id, finalized.leaf_id);
+        let events = service.store.read_events(&service.handle).unwrap();
+        assert_eq!(
+            replay.committed_through_session_sequence,
+            events
+                .last()
+                .and_then(|event| event.session_sequence)
+                .unwrap()
+        );
         assert_eq!(
             service
                 .hydrated_view()

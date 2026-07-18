@@ -779,6 +779,7 @@ mod tests {
         let agent = service.build_agent_runtime(&runtime).unwrap();
         let replay = SessionReplay {
             session_id: "sess_replay".into(),
+            committed_through_session_sequence: 0,
             cwd: None,
             active_leaf_id: None,
             leaves: Vec::new(),

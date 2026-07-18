@@ -577,6 +577,7 @@ mod tests {
             .unwrap();
         context.set_replay(SessionReplay {
             session_id: "sess_flow_service".into(),
+            committed_through_session_sequence: 0,
             cwd: None,
             active_leaf_id: None,
             leaves: Vec::new(),
@@ -1807,6 +1808,7 @@ version = "0.1.0"
         };
         let replay = SessionReplay {
             session_id: "sess_export_flow".into(),
+            committed_through_session_sequence: 0,
             cwd: Some("/workspace/pi-rust".into()),
             active_leaf_id: Some("leaf_1".into()),
             leaves: Vec::new(),

@@ -46,6 +46,7 @@ impl SessionReplay {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct SessionReplay {
     pub(crate) session_id: String,
+    pub(crate) committed_through_session_sequence: u64,
     pub(crate) cwd: Option<String>,
     pub(crate) active_leaf_id: Option<String>,
     pub(crate) leaves: Vec<ReplayLeaf>,
@@ -199,6 +200,11 @@ struct ReplayBuilder {
 }
 
 pub(crate) fn fold_events(events: &[SessionEventEnvelope]) -> SessionReplay {
+    let committed_through_session_sequence = events
+        .iter()
+        .filter_map(|event| event.session_sequence)
+        .max()
+        .unwrap_or_default();
     let finalized_operations = finalized_operation_ids(events);
     let incomplete_operations = incomplete_operation_ids(events, &finalized_operations);
     let mut builder = ReplayBuilder::default();
@@ -232,6 +238,7 @@ pub(crate) fn fold_events(events: &[SessionEventEnvelope]) -> SessionReplay {
     });
     SessionReplay {
         session_id: builder.session_id.unwrap_or_default(),
+        committed_through_session_sequence,
         cwd: builder.cwd,
         active_leaf_id: builder.active_leaf_id,
         leaves: builder.leaves,

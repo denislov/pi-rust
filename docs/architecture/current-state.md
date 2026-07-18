@@ -112,7 +112,8 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   committed projection/snapshot cursor slice. Its first slice is implemented:
   outbox schema v2 stores `committed_through_session_sequence`, while only the
   repository may turn a validated candidate into a cursor-bearing durable
-  record. The committed read model and public snapshot are not yet cursor-bound.
+  record. `SessionReplay` now derives the same cursor from sequenced facts; the
+  committed read model and public snapshot are not yet cursor-bound.
 - The current transaction may append facts and then fail a manifest refresh,
   producing partial-commit uncertainty that startup recovery can inspect.
 

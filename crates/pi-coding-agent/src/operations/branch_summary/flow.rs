@@ -383,6 +383,7 @@ impl BranchSummaryContext {
         };
         let selected_replay = SessionReplay {
             session_id: self.replay.session_id.clone(),
+            committed_through_session_sequence: self.replay.committed_through_session_sequence,
             cwd: self.replay.cwd.clone(),
             active_leaf_id: self.selected_source_leaf_id.clone(),
             leaves: Vec::new(),
@@ -814,6 +815,7 @@ mod tests {
     fn branch_replay(session_id: &str) -> SessionReplay {
         SessionReplay {
             session_id: session_id.into(),
+            committed_through_session_sequence: 0,
             cwd: None,
             active_leaf_id: Some("leaf_branch".into()),
             leaves: vec![
@@ -880,6 +882,7 @@ mod tests {
         .unwrap();
         let replay = SessionReplay {
             session_id: "sess_branch_summary_selected".into(),
+            committed_through_session_sequence: 0,
             cwd: None,
             active_leaf_id: Some("leaf_branch".into()),
             leaves: vec![

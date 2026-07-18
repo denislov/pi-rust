@@ -733,6 +733,7 @@ mod tests {
         let (temp, store, handle) = setup_session_log();
         context.set_replay(SessionReplay {
             session_id: handle.manifest().session_id.clone(),
+            committed_through_session_sequence: 0,
             cwd: None,
             active_leaf_id: None,
             leaves: Vec::new(),
@@ -1489,6 +1490,7 @@ mod tests {
         context.resolve_request().unwrap();
         context.set_replay(SessionReplay {
             session_id: "sess_replay".into(),
+            committed_through_session_sequence: 0,
             cwd: None,
             active_leaf_id: None,
             leaves: Vec::new(),
