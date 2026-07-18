@@ -46,7 +46,7 @@ pub(crate) async fn run(
                 )?;
                 apply_finalized_session_write(&mut outcome, &finalized);
                 event_service.emit_session_write_events(&finalized);
-                event_service.emit_prompt_outcome(&outcome);
+                defer_compact_terminal(event_service, &outcome);
                 return Ok(outcome);
             }
             let mut outcome = manual_compaction_success_outcome(
@@ -88,8 +88,20 @@ pub(crate) async fn run(
             )?;
             apply_finalized_session_write(&mut outcome, &finalized);
             event_service.emit_session_write_events(&finalized);
-            event_service.emit_prompt_outcome(&outcome);
+            defer_compact_terminal(event_service, &outcome);
             Ok(outcome)
         }
+    }
+}
+
+fn defer_compact_terminal(event_service: &EventService, outcome: &PromptTurnOutcome) {
+    event_service.emit_prompt_diagnostics(outcome);
+    if let Some(draft) = EventService::prompt_terminal_draft(outcome) {
+        let operation_id = match outcome {
+            PromptTurnOutcome::Success { operation_id, .. }
+            | PromptTurnOutcome::Failed { operation_id, .. }
+            | PromptTurnOutcome::Aborted { operation_id, .. } => operation_id,
+        };
+        event_service.defer_terminal_draft(operation_id.clone(), draft);
     }
 }

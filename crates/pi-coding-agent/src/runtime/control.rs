@@ -54,6 +54,26 @@ impl OperationKind {
         }
     }
 
+    pub(crate) fn from_str(value: &str) -> Option<Self> {
+        Some(match value {
+            "prompt" => Self::Prompt,
+            "compact" => Self::Compact,
+            "plugin_command" => Self::PluginCommand,
+            "plugin_load" => Self::PluginLoad,
+            "delegation_confirmation" => Self::DelegationConfirmation,
+            "branch_summary" => Self::BranchSummary,
+            "agent_invocation" => Self::AgentInvocation,
+            "agent_team" => Self::AgentTeam,
+            "export" => Self::Export,
+            "fork_session" => Self::ForkSession,
+            "switch_active_leaf" => Self::SwitchActiveLeaf,
+            "set_session_tree_label" => Self::SetSessionTreeLabel,
+            "set_default_agent_profile" => Self::SetDefaultAgentProfile,
+            "self_healing_edit" => Self::SelfHealingEdit,
+            _ => return None,
+        })
+    }
+
     #[cfg(test)]
     fn root_class(self) -> OperationClass {
         match self {

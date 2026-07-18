@@ -674,6 +674,12 @@ impl CodingAgentSession {
             Some((Some(draft), prompt_outcome)) => (draft, prompt_outcome),
             _ => return Ok(()),
         };
+        let compact_terminal_is_session_event = matches!(
+            &draft.event,
+            crate::events::CodingAgentProductEventKind::Session(
+                crate::events::CodingAgentSessionProductEvent::CompactionCompleted { .. }
+            )
+        );
         let live_draft = draft.clone();
         self.runtime_host
             .session_coordinator
@@ -686,9 +692,12 @@ impl CodingAgentSession {
                     self.runtime_host
                         .event_hub
                         .service
-                        .emit_committed_terminal_draft(live_draft);
+                        .emit_committed_terminal_draft(live_draft, decision.operation_kind);
                 }
-                if let Some(outcome) = prompt_outcome {
+                if let Some(outcome) = prompt_outcome
+                    && (decision.operation_kind == crate::runtime::control::OperationKind::Prompt
+                        || compact_terminal_is_session_event)
+                {
                     self.runtime_host
                         .event_hub
                         .service

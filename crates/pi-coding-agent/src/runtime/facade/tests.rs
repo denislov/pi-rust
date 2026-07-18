@@ -5602,7 +5602,43 @@ runtime = "lua"
             std::fs::read_to_string(temp.path().join("sess_compact_failure/events.jsonl")).unwrap();
         assert!(event_log.contains("session.compaction.started"));
         assert!(event_log.contains("operation.failed"));
+        assert!(event_log.contains("operation.terminal.recorded"));
         assert!(!event_log.contains("session.compaction.completed"));
+        let outbox =
+            std::fs::read_to_string(temp.path().join("sess_compact_failure/outbox.jsonl")).unwrap();
+        assert!(outbox.contains("operation_terminal"));
+        assert!(outbox.contains("\"operation_kind\":\"compact\""));
+
+        session.shutdown().await.unwrap();
+        drop(session);
+        let reopened = CodingAgentSession::open(
+            CodingAgentSessionOptions::new()
+                .with_session_id("sess_compact_failure")
+                .with_session_log_root(temp.path()),
+        )
+        .await
+        .unwrap();
+        let connection = reopened
+            .connect(public_projection::CodingAgentClientId::new(
+                "compact-failure-replay",
+            ))
+            .unwrap();
+        let public_projection::CodingAgentReconnect::Replayed { events, .. } =
+            connection.reconnect(0).unwrap()
+        else {
+            panic!("compact failure terminal must be retained for restart redelivery")
+        };
+        assert!(events.iter().any(|event| {
+            matches!(
+                event.event(),
+                CodingAgentProductEventKind::Workflow(
+                    CodingAgentWorkflowProductEvent::PromptFailed { .. }
+                )
+            ) && event.terminal_operation().is_some_and(|terminal| {
+                terminal.kind
+                    == crate::events::CodingAgentProductEventTerminalOperationKind::Compact
+            })
+        }));
     }
 
     #[tokio::test]

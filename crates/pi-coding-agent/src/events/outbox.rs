@@ -39,6 +39,7 @@ pub(crate) struct DurableOutboxRecordCandidate {
     pub(crate) record_id: String,
     pub(crate) session_id: String,
     pub(crate) operation_id: Option<String>,
+    pub(crate) operation_kind: Option<String>,
     pub(crate) source_event_ids: Vec<String>,
     pub(crate) kind: DurableOutboxRecordKind,
     pub(crate) draft: ProductEventDraft,
@@ -72,10 +73,16 @@ impl DurableOutboxRecordCandidate {
             record_id,
             session_id,
             operation_id,
+            operation_kind: None,
             source_event_ids,
             kind,
             draft,
         })
+    }
+
+    pub(crate) fn with_operation_kind(mut self, operation_kind: impl Into<String>) -> Self {
+        self.operation_kind = Some(operation_kind.into());
+        self
     }
 
     pub(crate) fn commit(
@@ -91,6 +98,7 @@ impl DurableOutboxRecordCandidate {
             record_id: self.record_id,
             session_id: self.session_id,
             operation_id: self.operation_id,
+            operation_kind: self.operation_kind,
             source_event_ids: self.source_event_ids,
             committed_through_session_sequence,
             kind: self.kind,
@@ -106,6 +114,8 @@ pub struct DurableOutboxRecord {
     pub record_id: String,
     pub session_id: String,
     pub operation_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation_kind: Option<String>,
     pub source_event_ids: Vec<String>,
     pub committed_through_session_sequence: u64,
     pub kind: DurableOutboxRecordKind,

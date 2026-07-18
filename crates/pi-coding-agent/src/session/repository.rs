@@ -573,6 +573,10 @@ impl SessionLogStore {
             if record.session_id != handle.manifest.session_id
                 || record.committed_through_session_sequence == 0
                 || record.source_event_ids.is_empty()
+                || record.operation_kind.as_deref().is_some_and(|kind| {
+                    kind.trim().is_empty()
+                        || crate::runtime::control::OperationKind::from_str(kind).is_none()
+                })
                 || record
                     .source_event_ids
                     .iter()

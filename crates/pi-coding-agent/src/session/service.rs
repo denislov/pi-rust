@@ -1050,7 +1050,8 @@ impl SessionService {
         )
         .map_err(|message| CodingSessionError::Session {
             message: message.into(),
-        })?;
+        })?
+        .with_operation_kind(decision.operation_kind.as_str());
         let receipt = self
             .transaction_writer
             .commit_session_mutation_with_outbox(

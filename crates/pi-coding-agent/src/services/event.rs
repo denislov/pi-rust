@@ -616,9 +616,14 @@ impl EventService {
         }
         drop(state);
         Some(match record.kind {
-            crate::events::outbox::DurableOutboxRecordKind::OperationTerminal => {
-                self.publish_durable_terminal_draft(record.draft.clone())
-            }
+            crate::events::outbox::DurableOutboxRecordKind::OperationTerminal => self
+                .publish_durable_terminal_draft(
+                    record.draft.clone(),
+                    record
+                        .operation_kind
+                        .as_deref()
+                        .and_then(crate::runtime::control::OperationKind::from_str),
+                ),
             _ => self.publish_without_root_terminal(record.draft.clone()),
         })
     }
@@ -644,7 +649,11 @@ impl EventService {
             .remove(operation_id)
     }
 
-    fn publish_durable_terminal_draft(&self, draft: ProductEventDraft) -> ProductEvent {
+    fn publish_durable_terminal_draft(
+        &self,
+        draft: ProductEventDraft,
+        operation_kind_hint: Option<crate::runtime::control::OperationKind>,
+    ) -> ProductEvent {
         let evidence = match &draft.event {
             CodingAgentProductEventKind::Workflow(
                 crate::events::CodingAgentWorkflowProductEvent::PromptCompleted { .. },
@@ -662,7 +671,10 @@ impl EventService {
         };
         self.publish(
             draft,
-            ProductEventEmissionContext::default(),
+            ProductEventEmissionContext {
+                operation_kind: operation_kind_hint,
+                ..ProductEventEmissionContext::default()
+            },
             move |operation_kind, terminal_status| {
                 terminal_status.and_then(|status| {
                     let kind = operation_kind.or_else(|| {
@@ -675,6 +687,13 @@ impl EventService {
                     });
                     kind.and_then(|kind| {
                         evidence.and_then(|evidence| {
+                            let evidence = match (kind, evidence) {
+                                (
+                                    crate::runtime::control::OperationKind::Compact,
+                                    crate::runtime::outcome::OperationRootTerminalEvidence::PromptFailed,
+                                ) => crate::runtime::outcome::OperationRootTerminalEvidence::CompactPromptFailed,
+                                _ => evidence,
+                            };
                             crate::runtime::outcome::product_terminal_operation(
                                 kind, evidence, status,
                             )
@@ -685,8 +704,12 @@ impl EventService {
         )
     }
 
-    pub(crate) fn emit_committed_terminal_draft(&self, draft: ProductEventDraft) -> ProductEvent {
-        self.publish_durable_terminal_draft(draft)
+    pub(crate) fn emit_committed_terminal_draft(
+        &self,
+        draft: ProductEventDraft,
+        operation_kind: crate::runtime::control::OperationKind,
+    ) -> ProductEvent {
+        self.publish_durable_terminal_draft(draft, Some(operation_kind))
     }
 
     pub(crate) fn emit_diagnostic(
@@ -893,6 +916,7 @@ impl EventService {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn emit_prompt_outcome(&self, outcome: &PromptTurnOutcome) {
         self.emit_prompt_diagnostics(outcome);
         self.emit_prompt_terminal(outcome);
