@@ -1,31 +1,33 @@
+#![allow(dead_code)] // RIF-009-002 consumes this contract in the session writer batch.
+
 use serde::{Deserialize, Serialize};
 
 use super::emission::ProductEventDraft;
 
-pub(crate) const OUTBOX_SCHEMA: &str = "pi.coding-agent.product-event-outbox";
-pub(crate) const OUTBOX_VERSION: u32 = 1;
+pub const OUTBOX_SCHEMA: &str = "pi.coding-agent.product-event-outbox";
+pub const OUTBOX_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum DurableOutboxRecordKind {
+pub enum DurableOutboxRecordKind {
     SessionWrite,
     OperationTerminal,
     Recovery,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct DurableOutboxRecord {
-    pub(crate) schema: String,
-    pub(crate) version: u32,
-    pub(crate) record_id: String,
-    pub(crate) session_id: String,
-    pub(crate) operation_id: Option<String>,
-    pub(crate) kind: DurableOutboxRecordKind,
-    pub(crate) draft: ProductEventDraft,
+pub struct DurableOutboxRecord {
+    pub schema: String,
+    pub version: u32,
+    pub record_id: String,
+    pub session_id: String,
+    pub operation_id: Option<String>,
+    pub kind: DurableOutboxRecordKind,
+    pub draft: ProductEventDraft,
 }
 
 impl DurableOutboxRecord {
-    pub(crate) fn new(
+    pub fn new(
         record_id: impl Into<String>,
         session_id: impl Into<String>,
         operation_id: Option<String>,
@@ -51,7 +53,7 @@ impl DurableOutboxRecord {
         })
     }
 
-    pub(crate) fn semantic_id(&self) -> &str {
+    pub fn semantic_id(&self) -> &str {
         &self.record_id
     }
 }
