@@ -35,6 +35,9 @@
 - Closed the BranchSummary/SelfHealingEdit lifecycle debt. BranchSummary is
   explicitly outcome-acknowledged without a ProductEvent terminal, while
   SelfHealingEdit requires ProductEvent Completed/Failed/Aborted root evidence.
+- Added the reproducible offline `scripts/runtime-baseline.sh` harness and
+  `docs/architecture/runtime-baseline-0.4.0.md` evidence for admission, writer
+  pressure, session/outbox commit, snapshot/reconnect, and recovery scan paths.
 
 - Added a typed `RecoveryPending` admission rejection. `SessionWriteRoot`
   operations now inspect durable recovery evidence before

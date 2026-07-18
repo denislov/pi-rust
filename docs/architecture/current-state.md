@@ -137,6 +137,9 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
 - BranchSummary and SelfHealingEdit now have an explicit descriptor-level
   lifecycle matrix: outcome acknowledgement for branch summaries, and
   ProductEvent terminal evidence for self-healing edits.
+- The 0.4.0 runtime baseline harness records provisional offline limits and
+  current measurements for admission, writer pressure, session/outbox commit,
+  snapshot/reconnect, and recovery scan under `target/perf-baseline/`.
 
 ## Events, Sessions, And Clients
 
