@@ -35,12 +35,16 @@ pub(crate) async fn run(
     if let Some(receiver) = prompt_control_receiver {
         context.set_prompt_control_receiver(receiver);
     }
-    match cancellation {
+    let result = match cancellation {
         Some(cancellation) => {
             flow_service
                 .run_agent_invocation_with_cancellation(&mut context, cancellation)
                 .await
         }
         None => flow_service.run_agent_invocation(&mut context).await,
+    };
+    if let Err(error) = &result {
+        context.ensure_failure_terminal_draft(error);
     }
+    result
 }

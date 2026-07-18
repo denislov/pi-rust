@@ -16,6 +16,11 @@
 
 ### Runtime Integrity
 
+- Fixed definite-failure terminal publication for AgentInvocation and AgentTeam:
+  `DefinitelyFailed` results now retain and publish their root terminal draft,
+  matching committed-success publication and preventing child-only failure
+  projections.
+
 - Added a typed `RecoveryPending` admission rejection. `SessionWriteRoot`
   operations now inspect durable recovery evidence before
   `OperationScheduler::admit` and fail closed for the affected session, while

@@ -202,6 +202,14 @@ pub(crate) fn manual_compaction_failed_outcome(
     }
 }
 
+pub(crate) fn manual_compaction_operation_id(outcome: &PromptTurnOutcome) -> &str {
+    match outcome {
+        PromptTurnOutcome::Success { operation_id, .. }
+        | PromptTurnOutcome::Failed { operation_id, .. }
+        | PromptTurnOutcome::Aborted { operation_id, .. } => operation_id,
+    }
+}
+
 pub(crate) struct ManualCompactionContext {
     options: ManualCompactionOptions,
     operation_id: String,

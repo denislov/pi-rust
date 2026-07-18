@@ -318,6 +318,30 @@ impl AgentTeamContext {
         self.failure_error.take()
     }
 
+    pub(crate) fn ensure_failure_terminal_draft(&self, error: &CodingSessionError) {
+        if self
+            .event_service
+            .has_deferred_terminal_draft(&self.operation_id)
+        {
+            return;
+        }
+        let draft = if *error == CodingSessionError::Cancelled {
+            EventService::agent_team_aborted_draft(
+                self.operation_id.clone(),
+                self.options.team_id.clone(),
+                error.to_string(),
+            )
+        } else {
+            EventService::agent_team_failed_draft(
+                self.operation_id.clone(),
+                self.options.team_id.clone(),
+                error,
+            )
+        };
+        self.event_service
+            .defer_terminal_draft(self.operation_id.clone(), draft);
+    }
+
     pub(crate) fn take_pending_delegation_confirmations(
         &mut self,
     ) -> Vec<PendingDelegationConfirmationState> {

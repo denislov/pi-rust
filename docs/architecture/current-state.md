@@ -121,6 +121,9 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   commands; resolve persists `rpc_token` as the audit authority. New `SessionWriteRoot` admission is
   fail-closed for unresolved recovery in the affected persistent session;
   Query/ReadOnly paths and explicit recovery controls remain available.
+- AgentInvocation and AgentTeam definite failures now publish their root
+  terminal drafts after finalization; child PromptFailed events no longer
+  replace the root failure lifecycle evidence.
 
 ## Events, Sessions, And Clients
 

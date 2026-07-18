@@ -664,6 +664,7 @@ impl CodingAgentSession {
         ) || !matches!(
             commit_result,
             super::finalization::FinalizationCommitResult::Committed
+                | super::finalization::FinalizationCommitResult::DefinitelyFailed { .. }
         ) {
             return Ok(());
         }

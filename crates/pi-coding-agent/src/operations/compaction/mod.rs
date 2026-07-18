@@ -1,6 +1,6 @@
 use self::flow::{
     ManualCompactionContext, ManualCompactionOptions, manual_compaction_failed_outcome,
-    manual_compaction_success_outcome,
+    manual_compaction_operation_id, manual_compaction_success_outcome,
 };
 use crate::operations::prompt::context::PromptTurnOutcome;
 use crate::runtime::capability::{
@@ -97,11 +97,7 @@ pub(crate) async fn run(
 fn defer_compact_terminal(event_service: &EventService, outcome: &PromptTurnOutcome) {
     event_service.emit_prompt_diagnostics(outcome);
     if let Some(draft) = EventService::prompt_terminal_draft(outcome) {
-        let operation_id = match outcome {
-            PromptTurnOutcome::Success { operation_id, .. }
-            | PromptTurnOutcome::Failed { operation_id, .. }
-            | PromptTurnOutcome::Aborted { operation_id, .. } => operation_id,
-        };
-        event_service.defer_terminal_draft(operation_id.clone(), draft);
+        let operation_id = manual_compaction_operation_id(outcome);
+        event_service.defer_terminal_draft(operation_id.to_owned(), draft);
     }
 }

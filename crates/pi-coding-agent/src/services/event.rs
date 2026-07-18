@@ -677,6 +677,13 @@ impl EventService {
             .remove(operation_id)
     }
 
+    pub(crate) fn has_deferred_terminal_draft(&self, operation_id: &str) -> bool {
+        self.deferred_terminal_drafts
+            .lock()
+            .unwrap()
+            .contains_key(operation_id)
+    }
+
     fn publish_durable_terminal_draft(
         &self,
         draft: ProductEventDraft,

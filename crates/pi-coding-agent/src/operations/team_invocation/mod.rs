@@ -31,12 +31,16 @@ pub(crate) async fn run(
     )
     .with_deferred_terminal_publication()
     .with_parent_capability_snapshot(parent_capability_snapshot);
-    match cancellation {
+    let result = match cancellation {
         Some(cancellation) => {
             flow_service
                 .run_agent_team_with_cancellation(&mut context, cancellation)
                 .await
         }
         None => flow_service.run_agent_team(&mut context).await,
+    };
+    if let Err(error) = &result {
+        context.ensure_failure_terminal_draft(error);
     }
+    result
 }
