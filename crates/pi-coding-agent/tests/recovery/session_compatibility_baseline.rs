@@ -37,7 +37,7 @@ async fn event_v2_without_session_sequence_remains_openable() {
 }
 
 #[tokio::test]
-async fn event_v2_incomplete_operation_gets_one_recovery_record() {
+async fn event_v2_incomplete_operation_gets_one_recovery_pending_record() {
     let fixture = Path::new(FIXTURES).join("session-v2-incomplete");
     let (temp, session_dir) = copy_fixture(&fixture);
     let options = CodingAgentSessionOptions::new()
@@ -58,11 +58,15 @@ async fn event_v2_incomplete_operation_gets_one_recovery_record() {
     let events = read_jsonl(&session_dir.join("events.jsonl"));
     let recovery: Vec<_> = events
         .iter()
-        .filter(|event| event["kind"] == "operation.recovered")
+        .filter(|event| event["kind"] == "operation.recovery_pending")
         .collect();
     assert_eq!(recovery.len(), 1, "startup recovery must be idempotent");
     assert_eq!(recovery[0]["operation_id"], "op_incomplete");
-    assert_eq!(recovery[0]["session_sequence"], 3);
+    assert_eq!(
+        recovery[0]["data"]["recovery_id"],
+        "recovery_pending:sess_v2_incomplete/op_incomplete"
+    );
+    assert_eq!(recovery[0]["data"]["attempt_count"], 0);
 }
 
 fn copy_fixture(source: &Path) -> (tempfile::TempDir, PathBuf) {
