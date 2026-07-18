@@ -107,8 +107,10 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   typed writer batch, outbox-first append ordering under the session append lock,
   source event correlation, and session-write outbox persistence for prompt
   success/failure/abort and non-leaf commit/failure paths. Operation-terminal
-  and recovery publication plus restart reconciliation remain open under
-  `RIF-002` and `RIF-009-004`, respectively. `RIF-009-004` now owns the next
+  publication remains open under `RIF-002`; recovery publication now persists
+  `Recovery` outbox records atomically with `OperationRecovered` facts, while
+  broader restart reconciliation remains open under `RIF-009-004`.
+  `RIF-009-004` now owns the next
   restart/reconnect/redelivery consistency slice. The completed cursor work:
   outbox schema v2 stores `committed_through_session_sequence`, while only the
   repository may turn a validated candidate into a cursor-bearing durable
@@ -122,7 +124,9 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   records once per runtime by semantic record ID. The first matrix slice covers
   duplicate suppression, retained gaps, replay ordering, and reconnect from the
   current cursor. A manifest-failure -> writer shutdown -> reopen integration
-  test proves durable outbox evidence survives the restart boundary.
+  test proves durable outbox evidence survives the restart boundary. Startup
+  recovery idempotence coverage also verifies the recovery record is read back
+  on the next open and references the exact recovery fact event.
 - The current transaction may append facts and then fail a manifest refresh,
   producing partial-commit uncertainty that startup recovery can inspect.
 

@@ -113,6 +113,9 @@
 - Added a full restart failure case: manifest failure after outbox/fact append,
   writer shutdown, reopen, replay cursor validation, and startup outbox evidence
   for redelivery.
+- Startup `OperationRecovered` facts now commit a durable `Recovery` outbox
+  record in the same writer batch; a second open reads that record back for
+  redelivery, and idempotence tests tie it to the exact recovery fact event.
 
 ### Release Status
 

@@ -7,7 +7,10 @@ use pi_agent_core::api::transcript::{SessionEntry, SessionTreeNode, StoredAgentM
 use pi_ai::api::conversation::ContentBlock;
 
 use crate::events::CodingAgentSessionWriteFailureStatus;
-use crate::events::outbox::{DurableOutboxIntent, DurableOutboxRecord, DurableOutboxRecordKind};
+use crate::events::outbox::{
+    DurableOutboxIntent, DurableOutboxRecord, DurableOutboxRecordCandidate, DurableOutboxRecordKind,
+};
+use crate::events::recovery::RecoveryEvent;
 use crate::events::session::SessionWriteEvent;
 use crate::operations::export::flow::{ExportContext, ExportOptions};
 use crate::operations::prompt::context::{
@@ -1016,6 +1019,25 @@ impl SessionService {
         Ok(())
     }
 
+    fn commit_writer_mutation_with_outbox(
+        &self,
+        events: Vec<SessionEventEnvelope>,
+        outbox_records: Vec<DurableOutboxRecordCandidate>,
+        manifest_patch: ManifestPatch,
+        operation_id: Option<String>,
+    ) -> Result<(), CodingSessionError> {
+        let receipt = self
+            .transaction_writer
+            .commit_session_mutation_with_outbox(
+                events,
+                outbox_records,
+                manifest_patch,
+                operation_id,
+            )?;
+        observe_commit_receipt(&self.committed_session_sequence, receipt);
+        Ok(())
+    }
+
     pub(crate) fn shutdown_transaction_writer(&self) -> Result<(), CodingSessionError> {
         self.transaction_writer.shutdown()
     }
@@ -1076,7 +1098,7 @@ impl SessionService {
                 }
             })
             .collect::<Vec<_>>();
-        let mut events = markers
+        let recovery_events = markers
             .iter()
             .map(|marker| {
                 SessionEventEnvelope::new(
@@ -1091,6 +1113,33 @@ impl SessionService {
                 .with_operation_id(marker.operation_id.clone())
             })
             .collect::<Vec<_>>();
+        let recovery_outbox = markers
+            .iter()
+            .zip(&recovery_events)
+            .map(|(marker, event)| {
+                DurableOutboxRecordCandidate::new(
+                    format!(
+                        "{}/{}/recovery/{}",
+                        marker.session_id, marker.operation_id, marker.recovery_id
+                    ),
+                    marker.session_id.clone(),
+                    Some(marker.operation_id.clone()),
+                    vec![event.event_id.clone()],
+                    DurableOutboxRecordKind::Recovery,
+                    RecoveryEvent {
+                        operation_id: marker.operation_id.clone(),
+                        recovery_id: marker.recovery_id.clone(),
+                        reason: marker.reason.clone(),
+                        session_id: marker.session_id.clone(),
+                    }
+                    .into_product_draft(),
+                )
+                .map_err(|message| CodingSessionError::Session {
+                    message: message.into(),
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut events = recovery_events;
         events.extend(pending_tool_authorizations.into_iter().map(|request| {
             SessionEventEnvelope::new(
                 session_id.clone(),
@@ -1107,7 +1156,12 @@ impl SessionService {
             .with_turn_id(request.turn_id)
         }));
 
-        self.commit_writer_mutation(events, ManifestPatch::new().updated_at(recovered_at), None)?;
+        self.commit_writer_mutation_with_outbox(
+            events,
+            recovery_outbox,
+            ManifestPatch::new().updated_at(recovered_at),
+            None,
+        )?;
         self.startup_recovery_markers.extend(markers);
         Ok(())
     }
@@ -2324,7 +2378,14 @@ mod tests {
             .with_session_id("sess_recover_once")
             .with_session_log_root(temp.path());
         let _first = SessionService::open(&options).unwrap();
-        let _second = SessionService::open(&options).unwrap();
+        let mut second = SessionService::open(&options).unwrap();
+        let startup_records = second.take_startup_outbox_records();
+        assert_eq!(startup_records.len(), 1);
+        assert_eq!(startup_records[0].kind, DurableOutboxRecordKind::Recovery);
+        assert_eq!(
+            startup_records[0].operation_id.as_deref(),
+            Some("op_recover_once")
+        );
 
         let reopened = SessionLogStore::new(temp.path())
             .open_session_id("sess_recover_once")
@@ -2341,6 +2402,15 @@ mod tests {
             .count();
 
         assert_eq!(recovered_count, 1);
+        let recovery_event_id = events
+            .iter()
+            .find(|event| {
+                event.operation_id.as_deref() == Some("op_recover_once")
+                    && matches!(event.data, SessionEventData::OperationRecovered { .. })
+            })
+            .map(|event| event.event_id.clone())
+            .unwrap();
+        assert_eq!(startup_records[0].source_event_ids, vec![recovery_event_id]);
     }
 
     #[test]
