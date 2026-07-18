@@ -41,6 +41,9 @@
 - Refreshed the 0.4.x roadmap status: all current 0.4.0 implementation/debt
   rows and offline reconnect/lag matrices are closed; final release convergence
   remains open. Provider/live reconnect stress is deferred to later hardening.
+- Corrected `scripts/release-gates.sh` defaults to the actual `0.3.1` workspace
+  and API snapshot baseline; the script no longer points at the retired `0.3.0`
+  and `0.2.0-alpha.1` defaults.
 
 - Added a typed `RecoveryPending` admission rejection. `SessionWriteRoot`
   operations now inspect durable recovery evidence before
