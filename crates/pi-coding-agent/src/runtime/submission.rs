@@ -1,7 +1,7 @@
 use super::client::projection as public_projection;
 use super::client::service::ClientService;
 use super::facade::{CodingAgentSession, CodingSessionError, PromptTurnOutcome};
-use super::operation::{OperationDispatchMode, OperationOutcome};
+use super::operation::{OperationDispatchMode, OperationExecution, OperationOutcome};
 use super::outcome as public_operation;
 use super::outcome::{CodingAgentOperation, CodingAgentOperationOutcome};
 use super::snapshot as snapshot_coordinator;
@@ -32,7 +32,7 @@ pub(super) struct SubmissionCommitGuard {
     coordinator: Arc<SnapshotCoordinator>,
     pub(super) handle: snapshot_coordinator::ClientHandle,
     pub(super) lifecycle: Arc<Mutex<SubmissionLeaseLifecycle>>,
-    pub(super) operation_id: Option<String>,
+    pub(super) execution: Option<OperationExecution>,
     pub(super) descriptor: public_operation::OperationDescriptor,
     expected_prompt_draft: Option<snapshot_coordinator::DraftRecord>,
     finished: bool,
@@ -52,15 +52,25 @@ impl SubmissionCommitGuard {
             coordinator,
             handle,
             lifecycle: Arc::new(Mutex::new(SubmissionLeaseLifecycle::Consuming)),
-            operation_id: None,
+            execution: None,
             descriptor,
             expected_prompt_draft,
             finished: false,
         }
     }
 
-    pub(super) fn commit(&mut self, operation_id: String) -> Result<(), CodingSessionError> {
-        self.descriptor
+    pub(super) fn commit_execution(
+        &mut self,
+        execution: &OperationExecution,
+    ) -> Result<(), CodingSessionError> {
+        if self.descriptor != execution.descriptor {
+            return Err(CodingSessionError::Session {
+                message: "admitted operation descriptor changed after submission preparation"
+                    .into(),
+            });
+        }
+        execution
+            .descriptor
             .validate_terminal_policy()
             .map_err(|message| CodingSessionError::Session {
                 message: message.into(),
@@ -68,8 +78,8 @@ impl SubmissionCommitGuard {
         self.client_service
             .commit_submission_running(
                 &self.handle,
-                operation_id.clone(),
-                self.descriptor,
+                execution.operation_id.clone(),
+                execution.descriptor,
                 self.expected_prompt_draft.as_ref(),
             )
             .map_err(|error| match error {
@@ -84,22 +94,35 @@ impl SubmissionCommitGuard {
                 },
             })?;
         *self.lifecycle.lock().unwrap() = SubmissionLeaseLifecycle::Committed;
-        self.operation_id = Some(operation_id);
+        self.execution = Some(execution.clone());
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(super) fn commit(&mut self, operation_id: String) -> Result<(), CodingSessionError> {
+        let execution = OperationExecution::root(
+            self.descriptor.submitted_kind,
+            self.descriptor,
+            super::operation::OperationOrigin::ClientRoot,
+            None,
+            None,
+            super::capability::OperationCapabilitySnapshot::permissive(operation_id),
+        );
+        self.commit_execution(&execution)
     }
 
     pub(super) fn finish(
         &mut self,
         status: event::ProductEventTerminalStatus,
     ) -> Result<(), CodingSessionError> {
-        if let Some(operation_id) = &self.operation_id {
-            match self.descriptor.terminal_policy {
+        if let Some(execution) = &self.execution {
+            match execution.descriptor.terminal_policy {
                 public_operation::OperationTerminalPolicy::ProductEvent => {
                     self.coordinator
                         .finalize_terminal_association(
                             &self.handle,
-                            operation_id,
-                            self.descriptor,
+                            &execution.operation_id,
+                            execution.descriptor,
                             status,
                         )
                         .map_err(|error| CodingSessionError::Session {
@@ -110,15 +133,16 @@ impl SubmissionCommitGuard {
                     let anchor = snapshot_coordinator::SubmittedTerminalAnchor::OutcomeOnly {
                         acknowledgement:
                             public_projection::CodingAgentOutcomeAcknowledgementId::new(format!(
-                                "outcome:{operation_id}"
+                                "outcome:{}",
+                                execution.operation_id
                             )),
                     };
                     self.coordinator
                         .mark_terminal(
                             &self.handle,
-                            operation_id.clone(),
-                            self.descriptor.submitted_kind,
-                            self.descriptor,
+                            execution.operation_id.clone(),
+                            execution.kind,
+                            execution.descriptor,
                             anchor,
                             status,
                         )
@@ -138,11 +162,11 @@ impl Drop for SubmissionCommitGuard {
         if self.finished {
             return;
         }
-        if let Some(operation_id) = self.operation_id.as_deref() {
+        if let Some(execution) = self.execution.as_ref() {
             self.coordinator.abort_running_submission_if_matches(
                 &self.handle,
-                operation_id,
-                self.descriptor,
+                &execution.operation_id,
+                execution.descriptor,
             );
         } else if let Ok(mut lifecycle) = self.lifecycle.lock() {
             *lifecycle = SubmissionLeaseLifecycle::Abandoned;
@@ -237,7 +261,7 @@ impl CodingAgentSession {
             coordinator: self.snapshot_coordinator.clone(),
             handle: pending.handle,
             lifecycle: pending.lifecycle,
-            operation_id: None,
+            execution: None,
             descriptor,
             expected_prompt_draft: pending.expected_prompt_draft,
             finished: false,

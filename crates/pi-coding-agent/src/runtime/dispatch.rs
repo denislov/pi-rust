@@ -24,7 +24,7 @@ impl CodingAgentSession {
         )
         .map_err(|rejection| rejection.into_error())?;
         if let Some(guard) = submission.as_mut() {
-            guard.commit(operation_permit.capability_snapshot().operation_id.clone())?;
+            guard.commit_execution(operation_permit.execution())?;
         }
 
         let result = match operation {
@@ -73,7 +73,7 @@ impl CodingAgentSession {
         )
         .map_err(|rejection| rejection.into_error())?;
         if let Some(guard) = submission.as_mut() {
-            guard.commit(operation_permit.capability_snapshot().operation_id.clone())?;
+            guard.commit_execution(operation_permit.execution())?;
         }
 
         let result = (|| match operation {
@@ -220,7 +220,7 @@ impl CodingAgentSession {
         )
         .map_err(|rejection| rejection.into_error())?;
         if let Some(guard) = submission.as_mut() {
-            guard.commit(operation_permit.capability_snapshot().operation_id.clone())?;
+            guard.commit_execution(operation_permit.execution())?;
         }
         let execution = operation_permit.execution().clone();
         let snapshot = execution.capability_snapshot.clone();

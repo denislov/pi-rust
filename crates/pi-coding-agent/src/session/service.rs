@@ -2917,7 +2917,7 @@ mod tests {
         assert!(matches!(
             &error,
             CodingSessionError::PartialCommit { operation_id, message }
-                if operation_id.starts_with("op_")
+                if operation_id.starts_with("copy_")
                     && message.contains("cleanup failed")
         ));
     }
@@ -2961,7 +2961,7 @@ mod tests {
         assert!(matches!(
             &error,
             CodingSessionError::PartialCommit { operation_id, message }
-                if operation_id.starts_with("op_")
+                if operation_id.starts_with("copy_")
                     && message.contains("cleanup failed")
                     && message.contains("sess_")
         ));

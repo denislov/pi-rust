@@ -1647,8 +1647,9 @@ runtime = "lua"
         let mut mismatch_guard =
             submission_guard_for_test(&service, mismatch_handle.clone(), outcome_descriptor);
         mismatch_guard.commit("op-original".into()).unwrap();
-        mismatch_guard.operation_id = Some("op-stale".into());
-        mismatch_guard.descriptor = prompt_descriptor;
+        let mismatch_execution = mismatch_guard.execution.as_mut().unwrap();
+        mismatch_execution.operation_id = "op-stale".into();
+        mismatch_execution.descriptor = prompt_descriptor;
         let running_before = coordinator.state.lock().unwrap().clients[&mismatch_handle.id]
             .submitted_operation
             .clone();

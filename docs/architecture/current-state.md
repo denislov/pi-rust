@@ -36,8 +36,9 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   and scheduler-owned allocation supplies nested child IDs. Root, child,
   session-copy correlation, and recovery allocators are now explicit, and
   delegation approval facts reuse their admitted approval operation identity.
-  Full downstream finalization/projection propagation is still open under
-  `RIF-001`.
+  Submission commit, terminal association, outcome acknowledgement, and drop
+  cleanup retain the admitted execution as one value. Allocator ownership and
+  dispatcher boundary tests close `RIF-001` and `RIF-D001`.
 - The 16 public operation variants now share one exhaustive descriptor table.
   Internal operation payloads map to its contract keys, and internal metadata,
   capability session access, admission class, and dispatch mode are derived

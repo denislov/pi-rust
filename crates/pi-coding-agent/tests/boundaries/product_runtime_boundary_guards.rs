@@ -2228,6 +2228,65 @@ fn durable_operation_paths_consume_admitted_identity_without_regeneration() {
             && !delegation.contains("next_child_operation_id()"),
         "delegation execution must not mint an unadmitted approval identity"
     );
+
+    let dispatch = fs::read_to_string(scan.crate_root.join("src/runtime/dispatch.rs"))
+        .expect("read operation dispatch source");
+    let execution = fs::read_to_string(scan.crate_root.join("src/runtime/execution.rs"))
+        .expect("read runtime-owned execution source");
+    assert_eq!(
+        dispatch
+            .matches("commit_execution(operation_permit.execution())")
+            .count()
+            + execution
+                .matches("commit_execution(operation_permit.execution())")
+                .count(),
+        4,
+        "every dispatcher must hand the admitted execution to submission finalization"
+    );
+    let submission = fs::read_to_string(scan.crate_root.join("src/runtime/submission.rs"))
+        .expect("read submission finalization source");
+    assert!(
+        submission.contains("execution: Option<OperationExecution>"),
+        "submission finalization must retain the admitted execution"
+    );
+    assert!(
+        !submission.contains("pub(super) operation_id: Option<String>"),
+        "submission finalization must not reconstruct identity from a detached string"
+    );
+
+    let mut allocator_violations = Vec::new();
+    for path in rust_files_under(&scan.crate_root.join("src")) {
+        let relative = relative_path(&scan.repo_root, &path);
+        let source = fs::read_to_string(&path).expect("read product source");
+        for (line_index, line) in source.lines().enumerate() {
+            if line.contains(".next_root_operation_id()")
+                && !relative.ends_with("/src/runtime/admission.rs")
+                && !relative.ends_with("/src/session/transaction.rs")
+                && !relative.ends_with("/src/session/id.rs")
+            {
+                allocator_violations.push(format!(
+                    "{relative}:{}: {}",
+                    line_index + 1,
+                    line.trim()
+                ));
+            }
+            if line.contains(".next_child_operation_id()")
+                && !relative.ends_with("/src/runtime/scheduler.rs")
+                && !relative.ends_with("/src/session/id.rs")
+            {
+                allocator_violations.push(format!(
+                    "{relative}:{}: {}",
+                    line_index + 1,
+                    line.trim()
+                ));
+            }
+        }
+    }
+    assert!(
+        allocator_violations.is_empty(),
+        "operation identity allocator ownership was bypassed:\n{}",
+        allocator_violations.join("\n")
+    );
 }
 
 #[test]

@@ -19,14 +19,15 @@
 - Converged PluginLoad on the admitted operation identity and typed
   Completed/Failed/Aborted ProductEvent terminal evidence, with completion after
   capability generation installation.
-- Began `RIF-001` with immutable permit-owned `OperationExecution` identity,
+- Completed `RIF-001` with immutable permit-owned `OperationExecution` identity,
   freezing descriptor revision, origin, capability/session association, and
   resolved root/parent lineage at admission. Durable PluginLoad,
   SelfHealingEdit, and BranchSummary transactions now reuse that admitted
   identity; Agent/Team contexts receive it at construction and obtain nested
   child IDs through the scheduler. Root, child, session-copy correlation, and
   recovery allocation are explicitly separated, while delegation approval facts
-  reuse the admitted approval operation ID.
+  reuse the admitted approval operation ID. Submission and terminal projection
+  retain the admitted execution instead of detached identity/descriptor copies.
 - Replaced duplicated internal operation metadata values with one exhaustive
   descriptor table and orthogonal validated claims for lineage, session/runtime
   access, priority, capacity, durability, cancellation, children, outcomes, and
@@ -39,7 +40,7 @@
 
 ### Release Status
 
-- `RIF-005`, `RIF-006`, and `RIF-007` are complete; `RIF-001` is in progress.
+- `RIF-001`, `RIF-005`, `RIF-006`, and `RIF-007` are complete; `RIF-008` is next.
   Workspace packages remain at `0.3.1` until all `0.4.0` implementation, debt,
   and release gates close.
 
