@@ -59,6 +59,10 @@
   typed writer commands. Copy provenance, copied facts, and the target manifest
   now form one writer commit, and failed target writers are closed before
   session cleanup.
+- Added a canonical-session writer registry with per-open owner leases. Separate
+  `SessionService::open()` calls for one session reuse one actor; shutting down
+  one owner leaves other owners usable, and the last owner closes and joins the
+  actor. Closed actors are never reused by a later open.
 
 ### Release Status
 

@@ -2423,6 +2423,12 @@ fn turn_transaction_stages_through_typed_writer_commands_without_repository_hand
         );
     }
     for transport in [
+        "SESSION_WRITER_REGISTRY",
+        "Weak<SessionTransactionWriterInner>",
+        "writer_registry_key",
+        "owners: AtomicUsize",
+        "SessionWriterOwnerLease",
+        "release_owner",
         "const SESSION_TRANSACTION_WRITER_CAPACITY: usize",
         "sync_channel::<SessionTransactionWriterEnvelope>",
         ".try_send(envelope)",
@@ -2443,6 +2449,10 @@ fn turn_transaction_stages_through_typed_writer_commands_without_repository_hand
     assert!(
         service.contains("transaction_writer: SessionTransactionWriter"),
         "one SessionService owner must share one transaction writer transport"
+    );
+    assert!(
+        service.contains("SessionTransactionWriter::new(store.clone(), handle.clone())"),
+        "SessionService construction must acquire the canonical per-session writer"
     );
     let event_writer_start = service
         .find("pub(crate) struct SessionEventWriter")

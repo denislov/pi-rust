@@ -46,7 +46,11 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   initialize command, while copy/fork provenance, copied facts, and target
   manifest installation form one target-writer commit. `SessionService` no
   longer appends or patches repository handles directly. Independently opened
-  same-session coordination remains active `RIF-008` work.
+  same-session coordination now reuses a canonical-path writer actor through
+  per-open owner leases: one RuntimeHost can release its lease without closing
+  another open owner, while the final owner closes and joins the actor. Closed
+  actors are excluded from later registry acquisition. Projection/read freshness
+  across independent opens remains active `RIF-008` work.
 - `IntentRouter`, `OperationScheduler`, `OperationControl`, typed operation
   metadata, root/child lineage, capability snapshots, and generation-scoped
   cancellation exist.

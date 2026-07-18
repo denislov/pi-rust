@@ -1,6 +1,8 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{SyncSender, TrySendError, sync_channel};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 const SESSION_TRANSACTION_WRITER_CAPACITY: usize = 32;
 
@@ -35,15 +37,27 @@ enum TransactionState {
     InDoubt,
 }
 
-#[derive(Debug, Clone)]
+static SESSION_WRITER_REGISTRY: OnceLock<
+    Mutex<HashMap<PathBuf, Weak<SessionTransactionWriterInner>>>,
+> = OnceLock::new();
+
+#[derive(Debug)]
 pub(crate) struct SessionTransactionWriter {
     inner: Arc<SessionTransactionWriterInner>,
+    owner: Arc<SessionWriterOwnerLease>,
 }
 
 #[derive(Debug)]
 struct SessionTransactionWriterInner {
     sender: Mutex<Option<SyncSender<SessionTransactionWriterEnvelope>>>,
     worker: Mutex<Option<std::thread::JoinHandle<()>>>,
+    owners: AtomicUsize,
+}
+
+#[derive(Debug)]
+struct SessionWriterOwnerLease {
+    inner: Weak<SessionTransactionWriterInner>,
+    released: AtomicBool,
 }
 
 #[derive(Debug)]
@@ -79,6 +93,19 @@ enum SessionTransactionWriterCommand {
 
 impl SessionTransactionWriter {
     pub(crate) fn new(store: SessionLogStore, handle: SessionHandle) -> Self {
+        let key = writer_registry_key(&handle);
+        let registry = SESSION_WRITER_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()));
+        let mut registry = registry
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        registry.retain(|_, writer| writer.strong_count() > 0);
+        if let Some(inner) = registry.get(&key).and_then(Weak::upgrade)
+            && inner.is_open()
+        {
+            inner.acquire_owner();
+            return Self::from_owner(inner);
+        }
+
         let (sender, receiver) =
             sync_channel::<SessionTransactionWriterEnvelope>(SESSION_TRANSACTION_WRITER_CAPACITY);
         let worker = std::thread::spawn(move || {
@@ -88,11 +115,22 @@ impl SessionTransactionWriter {
                 let _ = envelope.reply.send(result);
             }
         });
+        let inner = Arc::new(SessionTransactionWriterInner {
+            sender: Mutex::new(Some(sender)),
+            worker: Mutex::new(Some(worker)),
+            owners: AtomicUsize::new(1),
+        });
+        registry.insert(key, Arc::downgrade(&inner));
+        Self::from_owner(inner)
+    }
+
+    fn from_owner(inner: Arc<SessionTransactionWriterInner>) -> Self {
         Self {
-            inner: Arc::new(SessionTransactionWriterInner {
-                sender: Mutex::new(Some(sender)),
-                worker: Mutex::new(Some(worker)),
+            owner: Arc::new(SessionWriterOwnerLease {
+                inner: Arc::downgrade(&inner),
+                released: AtomicBool::new(false),
             }),
+            inner,
         }
     }
 
@@ -157,24 +195,7 @@ impl SessionTransactionWriter {
     }
 
     pub(crate) fn shutdown(&self) -> Result<(), CodingSessionError> {
-        match self.inner.sender.lock() {
-            Ok(mut sender) => {
-                sender.take();
-            }
-            Err(poisoned) => {
-                poisoned.into_inner().take();
-            }
-        }
-        let worker = match self.inner.worker.lock() {
-            Ok(mut worker) => worker.take(),
-            Err(poisoned) => poisoned.into_inner().take(),
-        };
-        if let Some(worker) = worker {
-            worker.join().map_err(|_| CodingSessionError::Session {
-                message: "session transaction writer panicked during shutdown".into(),
-            })?;
-        }
-        Ok(())
+        self.owner.release()
     }
 
     #[cfg(test)]
@@ -191,6 +212,79 @@ impl SessionTransactionWriter {
     #[cfg(test)]
     fn close_for_tests(&self) {
         self.inner.sender.lock().unwrap().take();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn shares_actor_for_tests(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+}
+
+impl Clone for SessionTransactionWriter {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            owner: self.owner.clone(),
+        }
+    }
+}
+
+impl SessionWriterOwnerLease {
+    fn release(&self) -> Result<(), CodingSessionError> {
+        if self.released.swap(true, Ordering::AcqRel) {
+            return Ok(());
+        }
+        let Some(inner) = self.inner.upgrade() else {
+            return Ok(());
+        };
+        inner.release_owner()
+    }
+}
+
+impl Drop for SessionWriterOwnerLease {
+    fn drop(&mut self) {
+        let _ = self.release();
+    }
+}
+
+impl SessionTransactionWriterInner {
+    fn acquire_owner(&self) {
+        self.owners.fetch_add(1, Ordering::AcqRel);
+    }
+
+    fn release_owner(&self) -> Result<(), CodingSessionError> {
+        if self.owners.fetch_sub(1, Ordering::AcqRel) != 1 {
+            return Ok(());
+        }
+        self.close_and_join()
+    }
+
+    fn is_open(&self) -> bool {
+        self.sender
+            .lock()
+            .map(|sender| sender.is_some())
+            .unwrap_or(false)
+    }
+
+    fn close_and_join(&self) -> Result<(), CodingSessionError> {
+        match self.sender.lock() {
+            Ok(mut sender) => {
+                sender.take();
+            }
+            Err(poisoned) => {
+                poisoned.into_inner().take();
+            }
+        }
+        let worker = match self.worker.lock() {
+            Ok(mut worker) => worker.take(),
+            Err(poisoned) => poisoned.into_inner().take(),
+        };
+        if let Some(worker) = worker {
+            worker.join().map_err(|_| CodingSessionError::Session {
+                message: "session transaction writer panicked during shutdown".into(),
+            })?;
+        }
+        Ok(())
     }
 }
 
@@ -212,6 +306,13 @@ impl Drop for SessionTransactionWriterInner {
             let _ = worker.join();
         }
     }
+}
+
+fn writer_registry_key(handle: &SessionHandle) -> PathBuf {
+    handle
+        .session_dir()
+        .canonicalize()
+        .unwrap_or_else(|_| handle.session_dir().to_path_buf())
 }
 
 fn execute_writer_command(

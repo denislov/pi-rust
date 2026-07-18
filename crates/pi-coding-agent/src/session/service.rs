@@ -1935,6 +1935,53 @@ mod tests {
     }
 
     #[test]
+    fn independently_opened_same_session_reuses_one_writer_actor() {
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_shared_writer")
+            .with_session_log_root(temp.path());
+        let service = SessionService::create(&options).unwrap();
+        let reopened = SessionService::open(&options).unwrap();
+
+        assert!(
+            service
+                .transaction_writer
+                .shares_actor_for_tests(&reopened.transaction_writer)
+        );
+    }
+
+    #[test]
+    fn shutting_down_one_open_session_does_not_close_another_owner() {
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_shared_writer_lifecycle")
+            .with_session_log_root(temp.path());
+        let service = SessionService::create(&options).unwrap();
+        let reopened = SessionService::open(&options).unwrap();
+
+        service.shutdown_transaction_writer().unwrap();
+        let mut transaction = reopened.begin_prompt_transaction();
+        transaction.checkpoint().unwrap();
+    }
+
+    #[test]
+    fn closed_shared_actor_is_not_reused_by_a_new_open_owner() {
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_shared_writer_reopen")
+            .with_session_log_root(temp.path());
+        let service = SessionService::create(&options).unwrap();
+        let reopened = SessionService::open(&options).unwrap();
+        let old_writer = reopened.transaction_writer.clone();
+
+        service.shutdown_transaction_writer().unwrap();
+        reopened.shutdown_transaction_writer().unwrap();
+        let fresh = SessionService::open(&options).unwrap();
+
+        assert!(!old_writer.shares_actor_for_tests(&fresh.transaction_writer));
+    }
+
+    #[test]
     fn replay_hydration_keeps_assistant_content_kinds_structured() {
         let item = coding_transcript_item_from_replay(TranscriptItem::AssistantMessage {
             message_id: "message-1".into(),
