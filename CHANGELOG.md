@@ -98,7 +98,10 @@
   the candidate session and source event IDs against the sequenced fact batch.
 - `SessionReplay` now derives and carries the last committed session fact cursor;
   public snapshot cursors expose `last_session_sequence`. Atomic writer to
-  read-model handoff remains the next 0.4.x slice.
+  read-model handoff is now implemented through typed `SessionCommitReceipt`
+  responses and a monotonic SessionService cursor cache; projection refresh no
+  longer replays the session log. `RIF-009-003` is complete and `RIF-009-004`
+  recovery/redelivery matrix work is active.
 
 ### Release Status
 

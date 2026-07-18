@@ -320,11 +320,20 @@ impl SessionLogStore {
         Ok(sessions)
     }
 
+    #[cfg(test)]
     pub(crate) fn append_events(
         &self,
         handle: &SessionHandle,
         events: &[SessionEventEnvelope],
     ) -> Result<(), CodingSessionError> {
+        self.append_events_with_cursor(handle, events).map(|_| ())
+    }
+
+    pub(crate) fn append_events_with_cursor(
+        &self,
+        handle: &SessionHandle,
+        events: &[SessionEventEnvelope],
+    ) -> Result<u64, CodingSessionError> {
         let _append_guard = self.append_lock.lock().unwrap();
         self.append_events_locked(handle, events)
     }
@@ -334,7 +343,7 @@ impl SessionLogStore {
         handle: &SessionHandle,
         events: &[SessionEventEnvelope],
         records: &[DurableOutboxRecordCandidate],
-    ) -> Result<(), CodingSessionError> {
+    ) -> Result<u64, CodingSessionError> {
         let _append_guard = self.append_lock.lock().unwrap();
         let prepared_events = self.prepare_events_locked(handle, events)?;
         let committed_through_session_sequence = prepared_events
@@ -373,16 +382,21 @@ impl SessionLogStore {
             })
             .collect::<Result<Vec<_>, _>>()?;
         self.append_outbox_locked(handle, &records)?;
-        self.append_prepared_events_locked(handle, &prepared_events)
+        self.append_prepared_events_locked(handle, &prepared_events)?;
+        Ok(committed_through_session_sequence)
     }
 
     fn append_events_locked(
         &self,
         handle: &SessionHandle,
         events: &[SessionEventEnvelope],
-    ) -> Result<(), CodingSessionError> {
+    ) -> Result<u64, CodingSessionError> {
         let prepared_events = self.prepare_events_locked(handle, events)?;
-        self.append_prepared_events_locked(handle, &prepared_events)
+        self.append_prepared_events_locked(handle, &prepared_events)?;
+        Ok(prepared_events
+            .last()
+            .and_then(|event| event.session_sequence)
+            .unwrap_or_default())
     }
 
     fn prepare_events_locked(

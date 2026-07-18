@@ -2627,6 +2627,7 @@ mod tests {
             ],
             session_id: Some("sess_1".into()),
             leaf_id: Some("leaf_1".into()),
+            committed_session_sequence: Some(7),
         };
 
         service.emit_session_write_pending(&finalized);

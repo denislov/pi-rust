@@ -2481,20 +2481,30 @@ fn turn_transaction_stages_through_typed_writer_commands_without_repository_hand
     let event_writer_fields = &service[event_writer_start..event_writer_impl];
     assert!(event_writer_fields.contains("writer: SessionTransactionWriter"));
     assert!(event_writer_fields.contains("session_id: String"));
+    assert!(event_writer_fields.contains("committed_session_sequence: Arc<AtomicU64>"));
     assert!(
         !event_writer_fields.contains("store: SessionLogStore")
             && !event_writer_fields.contains("handle: SessionHandle"),
         "authorization event writer must not retain raw repository authority"
     );
     assert!(
-        service.contains("self.writer.append_checkpoint_events(events)"),
-        "authorization durable facts must use the shared bounded writer"
+        service.contains("self.writer.append_checkpoint_events_with_receipt(events)")
+            && service
+                .contains("observe_commit_receipt(&self.committed_session_sequence, receipt)"),
+        "authorization durable facts must use the shared bounded writer and retain its commit cursor"
     );
     let production_service = production_source(&sanitize_rust_source(&service));
     assert!(
         !production_service.contains(".store.append_events")
             && !production_service.contains(".store.update_manifest"),
         "SessionService must route live, bootstrap, and copy-target durable mutations through the writer"
+    );
+    let connection = fs::read_to_string(scan.crate_root.join("src/runtime/facade/connection.rs"))
+        .expect("read runtime facade connection source");
+    assert!(
+        connection.contains("session_service.committed_session_sequence()")
+            && !connection.contains("session_service.replay()"),
+        "snapshot projection must consume the writer-derived commit cursor without replaying"
     );
     assert!(
         !production_service.contains("self.handle =")

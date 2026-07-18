@@ -170,10 +170,9 @@ impl CodingAgentSession {
             .capabilities
             .current_generation();
         let committed_session_sequence = match &self.runtime_host.session_coordinator.persistence {
-            SessionPersistence::Persistent(session_service) => session_service
-                .replay()
-                .map(|replay| replay.committed_through_session_sequence)
-                .unwrap_or_default(),
+            SessionPersistence::Persistent(session_service) => {
+                session_service.committed_session_sequence()
+            }
             SessionPersistence::NonPersistent(_) => 0,
         };
         self.runtime_host

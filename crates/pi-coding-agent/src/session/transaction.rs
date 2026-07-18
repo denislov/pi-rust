@@ -47,6 +47,11 @@ pub(crate) struct SessionTransactionWriter {
     owner: Arc<SessionWriterOwnerLease>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct SessionCommitReceipt {
+    pub(crate) committed_session_sequence: Option<u64>,
+}
+
 #[derive(Debug)]
 struct SessionTransactionWriterInner {
     sender: Mutex<Option<SyncSender<SessionTransactionWriterEnvelope>>>,
@@ -64,7 +69,7 @@ struct SessionWriterOwnerLease {
 #[derive(Debug)]
 struct SessionTransactionWriterEnvelope {
     command: SessionTransactionWriterCommand,
-    reply: SyncSender<Result<(), CodingSessionError>>,
+    reply: SyncSender<Result<SessionCommitReceipt, CodingSessionError>>,
 }
 
 #[derive(Debug)]
@@ -145,7 +150,10 @@ impl SessionTransactionWriter {
         }
     }
 
-    fn execute(&self, command: SessionTransactionWriterCommand) -> Result<(), CodingSessionError> {
+    fn execute(
+        &self,
+        command: SessionTransactionWriterCommand,
+    ) -> Result<SessionCommitReceipt, CodingSessionError> {
         let (reply, response) = sync_channel(1);
         let envelope = SessionTransactionWriterEnvelope { command, reply };
         let sender = self
@@ -182,13 +190,29 @@ impl SessionTransactionWriter {
         &self,
         events: Vec<SessionEventEnvelope>,
     ) -> Result<(), CodingSessionError> {
+        self.append_checkpoint_events_with_receipt(events)
+            .map(|_| ())
+    }
+
+    pub(crate) fn append_checkpoint_events_with_receipt(
+        &self,
+        events: Vec<SessionEventEnvelope>,
+    ) -> Result<SessionCommitReceipt, CodingSessionError> {
         self.execute(SessionTransactionWriterCommand::Checkpoint { events })
     }
 
+    #[cfg(test)]
     pub(crate) fn initialize_session(
         &self,
         event: SessionEventEnvelope,
     ) -> Result<(), CodingSessionError> {
+        self.initialize_session_with_receipt(event).map(|_| ())
+    }
+
+    pub(crate) fn initialize_session_with_receipt(
+        &self,
+        event: SessionEventEnvelope,
+    ) -> Result<SessionCommitReceipt, CodingSessionError> {
         self.execute(SessionTransactionWriterCommand::InitializeSession { event })
     }
 
@@ -197,7 +221,7 @@ impl SessionTransactionWriter {
         events: Vec<SessionEventEnvelope>,
         manifest_patch: ManifestPatch,
         operation_id: Option<String>,
-    ) -> Result<(), CodingSessionError> {
+    ) -> Result<SessionCommitReceipt, CodingSessionError> {
         self.commit_session_mutation_with_outbox(events, Vec::new(), manifest_patch, operation_id)
     }
 
@@ -207,7 +231,7 @@ impl SessionTransactionWriter {
         outbox_records: Vec<DurableOutboxRecordCandidate>,
         manifest_patch: ManifestPatch,
         operation_id: Option<String>,
-    ) -> Result<(), CodingSessionError> {
+    ) -> Result<SessionCommitReceipt, CodingSessionError> {
         self.execute(SessionTransactionWriterCommand::CommitSessionMutation {
             events,
             outbox_records,
@@ -349,7 +373,7 @@ fn execute_writer_command(
     store: &SessionLogStore,
     handle: &mut SessionHandle,
     command: SessionTransactionWriterCommand,
-) -> Result<(), CodingSessionError> {
+) -> Result<SessionCommitReceipt, CodingSessionError> {
     match command {
         SessionTransactionWriterCommand::InitializeSession { event } => {
             if !matches!(&event.data, SessionEventData::SessionCreated { .. }) {
@@ -362,10 +386,20 @@ fn execute_writer_command(
                     message: "session writer cannot initialize a non-empty event log".into(),
                 });
             }
-            store.append_events(handle, &[event])
+            let sequence = store.append_events_with_cursor(handle, &[event])?;
+            Ok(SessionCommitReceipt {
+                committed_session_sequence: Some(sequence),
+            })
         }
         SessionTransactionWriterCommand::Checkpoint { events } => {
-            store.append_events(handle, &events)
+            let committed_session_sequence = if events.is_empty() {
+                None
+            } else {
+                Some(store.append_events_with_cursor(handle, &events)?)
+            };
+            Ok(SessionCommitReceipt {
+                committed_session_sequence,
+            })
         }
         SessionTransactionWriterCommand::Finalize {
             events,
@@ -373,7 +407,8 @@ fn execute_writer_command(
             updated_at,
             active_leaf_id,
         } => {
-            store.append_events_and_outbox(handle, &events, &outbox_records)?;
+            let committed_session_sequence =
+                store.append_events_and_outbox(handle, &events, &outbox_records)?;
             if active_leaf_id.is_some() {
                 store.update_manifest(
                     handle,
@@ -383,7 +418,9 @@ fn execute_writer_command(
                 )?;
                 refresh_writer_handle(store, handle)?;
             }
-            Ok(())
+            Ok(SessionCommitReceipt {
+                committed_session_sequence: Some(committed_session_sequence),
+            })
         }
         SessionTransactionWriterCommand::CommitSessionMutation {
             events,
@@ -391,24 +428,31 @@ fn execute_writer_command(
             manifest_patch,
             operation_id,
         } => {
-            if outbox_records.is_empty() {
-                store.append_events(handle, &events)?;
+            let committed_session_sequence = if events.is_empty() {
+                None
+            } else if outbox_records.is_empty() {
+                Some(store.append_events_with_cursor(handle, &events)?)
             } else {
-                store
-                    .append_events_and_outbox(handle, &events, &outbox_records)
-                    .map_err(|error| mutation_commit_error(operation_id.as_deref(), error))?;
-            }
+                Some(
+                    store
+                        .append_events_and_outbox(handle, &events, &outbox_records)
+                        .map_err(|error| mutation_commit_error(operation_id.as_deref(), error))?,
+                )
+            };
             store
                 .update_manifest(handle, manifest_patch)
                 .map_err(|error| mutation_commit_error(operation_id.as_deref(), error))?;
             refresh_writer_handle(store, handle)
-                .map_err(|error| mutation_commit_error(operation_id.as_deref(), error))
+                .map_err(|error| mutation_commit_error(operation_id.as_deref(), error))?;
+            Ok(SessionCommitReceipt {
+                committed_session_sequence,
+            })
         }
         #[cfg(test)]
         SessionTransactionWriterCommand::Block { entered, release } => {
             let _ = entered.send(());
             let _ = release.recv();
-            Ok(())
+            Ok(SessionCommitReceipt::default())
         }
     }
 }
@@ -460,6 +504,7 @@ where
     operation_id: String,
     turn_id: String,
     pending_events: Vec<SessionEventEnvelope>,
+    committed_session_sequence: Option<u64>,
     open_messages: HashSet<String>,
     open_tool_calls: HashSet<String>,
     state: TransactionState,
@@ -529,6 +574,7 @@ where
             operation_id,
             turn_id,
             pending_events: Vec::new(),
+            committed_session_sequence: None,
             open_messages: HashSet::new(),
             open_tool_calls: HashSet::new(),
             state: TransactionState::Open,
@@ -547,6 +593,10 @@ where
 
     pub(crate) fn turn_id(&self) -> &str {
         &self.turn_id
+    }
+
+    pub(crate) fn committed_session_sequence(&self) -> Option<u64> {
+        self.committed_session_sequence
     }
 
     #[cfg(test)]
@@ -1026,21 +1076,24 @@ where
         active_leaf_id: Option<String>,
         outbox_records: Vec<DurableOutboxRecordCandidate>,
     ) -> Result<(), CodingSessionError> {
-        if let Err(error) = self
+        let receipt = match self
             .writer
             .execute(SessionTransactionWriterCommand::Finalize {
                 events: self.pending_events.clone(),
                 outbox_records,
                 updated_at: self.clock.now_rfc3339(),
                 active_leaf_id,
-            })
-        {
-            self.state = TransactionState::InDoubt;
-            return Err(CodingSessionError::PartialCommit {
-                operation_id: self.operation_id.clone(),
-                message: error.to_string(),
-            });
-        }
+            }) {
+            Ok(receipt) => receipt,
+            Err(error) => {
+                self.state = TransactionState::InDoubt;
+                return Err(CodingSessionError::PartialCommit {
+                    operation_id: self.operation_id.clone(),
+                    message: error.to_string(),
+                });
+            }
+        };
+        self.committed_session_sequence = receipt.committed_session_sequence;
         self.pending_events.clear();
         Ok(())
     }

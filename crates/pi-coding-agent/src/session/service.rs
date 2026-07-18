@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use pi_agent_core::api::transcript::{SessionEntry, SessionTreeNode, StoredAgentMessage};
 use pi_ai::api::conversation::ContentBlock;
@@ -35,7 +37,9 @@ use crate::session::repository::{
     CreateSessionOptions, ManifestPatch, SessionCreateError, SessionHandle, SessionLogStore,
     SessionSummary,
 };
-use crate::session::transaction::{SessionTransactionWriter, TurnTransaction};
+use crate::session::transaction::{
+    SessionCommitReceipt, SessionTransactionWriter, TurnTransaction,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct StartupRecoveryMarker {
@@ -53,6 +57,7 @@ pub(crate) struct SessionService {
     store: SessionLogStore,
     handle: SessionHandle,
     transaction_writer: SessionTransactionWriter,
+    committed_session_sequence: Arc<AtomicU64>,
     startup_recovery_markers: Vec<StartupRecoveryMarker>,
 }
 
@@ -60,6 +65,7 @@ pub(crate) struct SessionService {
 pub(crate) struct SessionEventWriter {
     session_id: String,
     writer: SessionTransactionWriter,
+    committed_session_sequence: Arc<AtomicU64>,
 }
 
 impl SessionEventWriter {
@@ -88,7 +94,9 @@ impl SessionEventWriter {
                 .with_turn_id(turn_id)
             })
             .collect::<Vec<_>>();
-        self.writer.append_checkpoint_events(events)
+        let receipt = self.writer.append_checkpoint_events_with_receipt(events)?;
+        observe_commit_receipt(&self.committed_session_sequence, receipt);
+        Ok(())
     }
 }
 
@@ -97,6 +105,7 @@ pub(crate) struct FinalizedSessionWrite {
     pub(crate) events: Vec<SessionWriteEvent>,
     pub(crate) session_id: Option<String>,
     pub(crate) leaf_id: Option<String>,
+    pub(crate) committed_session_sequence: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -144,14 +153,23 @@ enum SessionCopyKind {
 }
 
 impl SessionService {
-    fn from_handle(store: SessionLogStore, handle: SessionHandle) -> Self {
+    fn from_handle(
+        store: SessionLogStore,
+        handle: SessionHandle,
+    ) -> Result<Self, CodingSessionError> {
+        let committed_session_sequence = store
+            .read_events(&handle)?
+            .last()
+            .and_then(|event| event.session_sequence)
+            .unwrap_or_default();
         let transaction_writer = SessionTransactionWriter::new(store.clone(), handle.clone());
-        Self {
+        Ok(Self {
             store,
             handle,
             transaction_writer,
+            committed_session_sequence: Arc::new(AtomicU64::new(committed_session_sequence)),
             startup_recovery_markers: Vec::new(),
-        }
+        })
     }
 
     pub(crate) fn create(options: &CodingAgentSessionOptions) -> Result<Self, CodingSessionError> {
@@ -180,7 +198,7 @@ impl SessionService {
         let target = open_target(options)?;
         let handle = store.open_session(&target)?;
 
-        let mut service = Self::from_handle(store, handle);
+        let mut service = Self::from_handle(store, handle)?;
         service.apply_startup_recovery()?;
         Ok(service)
     }
@@ -203,7 +221,7 @@ impl SessionService {
         let store = SessionLogStore::new(root);
 
         if let Some(handle) = store.try_open_session_id(&session_id)? {
-            let mut service = Self::from_handle(store, handle);
+            let mut service = Self::from_handle(store, handle)?;
             service.apply_startup_recovery()?;
             return Ok(service);
         }
@@ -310,7 +328,7 @@ impl SessionService {
             )
             .with_operation_id(operation_id),
         ];
-        self.transaction_writer.commit_session_mutation(
+        self.commit_writer_mutation(
             events,
             ManifestPatch::new().updated_at(updated_at.clone()),
             Some(operation_id.to_owned()),
@@ -375,7 +393,7 @@ impl SessionService {
         &mut self,
         profile_id: ProfileId,
     ) -> Result<(), CodingSessionError> {
-        self.transaction_writer.commit_session_mutation(
+        self.commit_writer_mutation(
             Vec::new(),
             ManifestPatch::new()
                 .updated_at(SystemClock.now_rfc3339())
@@ -499,7 +517,7 @@ impl SessionService {
                 leaf_id: target_leaf_id.clone(),
             },
         );
-        self.transaction_writer.commit_session_mutation(
+        self.commit_writer_mutation(
             vec![event],
             ManifestPatch::new()
                 .updated_at(updated_at)
@@ -650,11 +668,13 @@ impl SessionService {
         )];
         let (committed, outbox_intent) = session_write_outbox_intent(&session_id, &operation_id);
         transaction.commit_with_outbox(new_leaf_id.clone(), outbox_intent)?;
+        self.observe_committed_sequence(transaction.committed_session_sequence());
         events.push(committed);
         Ok(FinalizedSessionWrite {
             events,
             session_id: Some(session_id),
             leaf_id: new_leaf_id,
+            committed_session_sequence: transaction.committed_session_sequence(),
         })
     }
 
@@ -786,7 +806,8 @@ impl SessionService {
         )];
         let (committed, outbox_intent) = session_write_outbox_intent(&session_id, &operation_id);
         transaction.commit_with_outbox(None, outbox_intent)?;
-        self.transaction_writer.commit_session_mutation(
+        self.observe_committed_sequence(transaction.committed_session_sequence());
+        self.commit_writer_mutation(
             Vec::new(),
             ManifestPatch::new().updated_at(SystemClock.now_rfc3339()),
             Some(operation_id.clone()),
@@ -796,6 +817,7 @@ impl SessionService {
             events,
             session_id: Some(session_id),
             leaf_id: self.current_active_leaf_id(),
+            committed_session_sequence: transaction.committed_session_sequence(),
         })
     }
 
@@ -822,7 +844,8 @@ impl SessionService {
         )];
         let (committed, outbox_intent) = session_write_outbox_intent(&session_id, &operation_id);
         transaction.fail_with_outbox(error_code, message, outbox_intent)?;
-        self.transaction_writer.commit_session_mutation(
+        self.observe_committed_sequence(transaction.committed_session_sequence());
+        self.commit_writer_mutation(
             Vec::new(),
             ManifestPatch::new().updated_at(SystemClock.now_rfc3339()),
             Some(operation_id.clone()),
@@ -832,6 +855,7 @@ impl SessionService {
             events,
             session_id: Some(session_id),
             leaf_id: self.current_active_leaf_id(),
+            committed_session_sequence: transaction.committed_session_sequence(),
         })
     }
 
@@ -889,11 +913,13 @@ impl SessionService {
         )];
         let (committed, outbox_intent) = session_write_outbox_intent(&session_id, &operation_id);
         transaction.abort_with_outbox(reason, outbox_intent)?;
+        self.observe_committed_sequence(transaction.committed_session_sequence());
         events.push(committed);
         Ok(FinalizedSessionWrite {
             events,
             session_id: Some(session_id),
             leaf_id: None,
+            committed_session_sequence: transaction.committed_session_sequence(),
         })
     }
 
@@ -921,6 +947,7 @@ impl SessionService {
             ],
             session_id: None,
             leaf_id: None,
+            committed_session_sequence: None,
         }
     }
 
@@ -946,11 +973,38 @@ impl SessionService {
         SessionEventWriter {
             session_id: self.handle.manifest().session_id.clone(),
             writer: self.transaction_writer(),
+            committed_session_sequence: self.committed_session_sequence.clone(),
+        }
+    }
+
+    pub(crate) fn committed_session_sequence(&self) -> u64 {
+        self.committed_session_sequence.load(Ordering::Acquire)
+    }
+
+    fn observe_committed_sequence(&self, sequence: Option<u64>) {
+        if let Some(sequence) = sequence {
+            self.committed_session_sequence
+                .fetch_max(sequence, Ordering::AcqRel);
         }
     }
 
     fn transaction_writer(&self) -> SessionTransactionWriter {
         self.transaction_writer.clone()
+    }
+
+    fn commit_writer_mutation(
+        &self,
+        events: Vec<SessionEventEnvelope>,
+        manifest_patch: ManifestPatch,
+        operation_id: Option<String>,
+    ) -> Result<(), CodingSessionError> {
+        let receipt = self.transaction_writer.commit_session_mutation(
+            events,
+            manifest_patch,
+            operation_id,
+        )?;
+        observe_commit_receipt(&self.committed_session_sequence, receipt);
+        Ok(())
     }
 
     pub(crate) fn shutdown_transaction_writer(&self) -> Result<(), CodingSessionError> {
@@ -1044,11 +1098,7 @@ impl SessionService {
             .with_turn_id(request.turn_id)
         }));
 
-        self.transaction_writer.commit_session_mutation(
-            events,
-            ManifestPatch::new().updated_at(recovered_at),
-            None,
-        )?;
+        self.commit_writer_mutation(events, ManifestPatch::new().updated_at(recovered_at), None)?;
         self.startup_recovery_markers.extend(markers);
         Ok(())
     }
@@ -1175,7 +1225,7 @@ impl SessionService {
                     .map(|event| rewrite_event_for_session(event, target.session_id(), &mut ids))
                     .collect::<Vec<_>>(),
             );
-            target.transaction_writer.commit_session_mutation(
+            target.commit_writer_mutation(
                 target_events,
                 ManifestPatch::new()
                     .updated_at(clock.now_rfc3339())
@@ -1252,29 +1302,36 @@ impl SessionService {
             created_at,
             SessionEventData::SessionCreated { cwd },
         );
-        let service = Self::from_handle(store, handle);
-        if let Err(error) = service.transaction_writer.initialize_session(created) {
-            if let Err(shutdown_error) = service.transaction_writer.shutdown() {
+        let service = Self::from_handle(store, handle)?;
+        let receipt = match service
+            .transaction_writer
+            .initialize_session_with_receipt(created)
+        {
+            Ok(receipt) => receipt,
+            Err(error) => {
+                if let Err(shutdown_error) = service.transaction_writer.shutdown() {
+                    return Err(match copy_operation_id {
+                        Some(operation_id) => CodingSessionError::PartialCommit {
+                            operation_id: operation_id.to_owned(),
+                            message: format!(
+                                "{error}; failed to close new session writer before cleanup: {shutdown_error}"
+                            ),
+                        },
+                        None => shutdown_error,
+                    });
+                }
                 return Err(match copy_operation_id {
-                    Some(operation_id) => CodingSessionError::PartialCommit {
-                        operation_id: operation_id.to_owned(),
-                        message: format!(
-                            "{error}; failed to close new session writer before cleanup: {shutdown_error}"
-                        ),
-                    },
-                    None => shutdown_error,
+                    Some(operation_id) => cleanup_failed_session_copy(
+                        &service.store,
+                        &service.handle,
+                        operation_id,
+                        error,
+                    ),
+                    None => error,
                 });
             }
-            return Err(match copy_operation_id {
-                Some(operation_id) => cleanup_failed_session_copy(
-                    &service.store,
-                    &service.handle,
-                    operation_id,
-                    error,
-                ),
-                None => error,
-            });
-        }
+        };
+        observe_commit_receipt(&service.committed_session_sequence, receipt);
 
         Ok(service)
     }
@@ -1297,7 +1354,7 @@ impl SessionService {
         );
         event.operation_id = operation_id.clone();
         event.turn_id = turn_id;
-        self.transaction_writer.commit_session_mutation(
+        self.commit_writer_mutation(
             vec![event],
             ManifestPatch::new().updated_at(updated_at),
             operation_id.clone(),
@@ -1316,6 +1373,7 @@ impl SessionService {
             )],
             session_id: None,
             leaf_id: None,
+            committed_session_sequence: None,
         }
     }
 
@@ -1337,6 +1395,12 @@ fn session_write_outbox_intent(
         committed.clone().into_product_draft(),
     );
     (committed, intent)
+}
+
+fn observe_commit_receipt(cursor: &AtomicU64, receipt: SessionCommitReceipt) {
+    if let Some(sequence) = receipt.committed_session_sequence {
+        cursor.fetch_max(sequence, Ordering::AcqRel);
+    }
 }
 
 fn cleanup_failed_session_copy(
@@ -2037,6 +2101,8 @@ mod tests {
 
         let replay = service.replay().unwrap();
         assert_eq!(replay.session_id, "sess_test");
+        assert_eq!(service.committed_session_sequence(), 1);
+        assert_eq!(replay.committed_through_session_sequence, 1);
         assert!(replay.transcript.is_empty());
     }
 
@@ -2579,6 +2645,14 @@ mod tests {
         assert_eq!(replay.transcript.len(), 1);
         assert_eq!(replay.active_leaf_id, finalized.leaf_id);
         let events = service.store.read_events(&service.handle).unwrap();
+        assert_eq!(
+            finalized.committed_session_sequence,
+            Some(replay.committed_through_session_sequence)
+        );
+        assert_eq!(
+            service.committed_session_sequence(),
+            replay.committed_through_session_sequence
+        );
         assert_eq!(
             replay.committed_through_session_sequence,
             events

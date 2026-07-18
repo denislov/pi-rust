@@ -113,9 +113,11 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   outbox schema v2 stores `committed_through_session_sequence`, while only the
   repository may turn a validated candidate into a cursor-bearing durable
   record. `SessionReplay` now derives the same cursor from sequenced facts, and
-  public snapshots expose `last_session_sequence`. The refresh path still reads
-  replay before installing the projection, so the writer/read-model handoff is
-  not yet an atomic consistency point.
+  public snapshots expose `last_session_sequence`. Completed `RIF-009-003`
+  returns a typed `SessionCommitReceipt` from the bounded writer, retains that
+  cursor monotonically in SessionService, and installs projection state from the
+  receipt-derived cursor without replaying. `RIF-009-004` now owns the recovery
+  and redelivery matrix.
 - The current transaction may append facts and then fail a manifest refresh,
   producing partial-commit uncertainty that startup recovery can inspect.
 
