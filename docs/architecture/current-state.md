@@ -51,8 +51,11 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   another open owner, while the final owner closes and joins the actor. Closed
   actors are excluded from later registry acquisition. The writer-owned
   manifest snapshot feeds session view, tree, summary, active-leaf, and
-  default-profile reads across independent opens. Client projection refresh and
-  the remaining writer-pressure/recovery gates remain active `RIF-008` work.
+  default-profile reads across independent opens. Navigation refresh ordering,
+  writer pressure, independent-session concurrency, startup recovery, and
+  workspace gates pass; the runtime/session owner slice `RIF-008` is complete.
+  Durable outbox, reconnect, and snapshot-consistency work belongs to the
+  subsequent `RIF-009` plan.
   `SessionService` no longer replaces its repository handle after writes, so
   that handle is read/path authority only; deterministic coverage also proves
   one session writer can progress while another session writer is blocked.

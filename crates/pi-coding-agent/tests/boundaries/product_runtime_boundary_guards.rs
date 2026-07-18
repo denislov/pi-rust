@@ -2486,6 +2486,24 @@ fn turn_transaction_stages_through_typed_writer_commands_without_repository_hand
             && !production_service.contains("target.handle ="),
         "repository handles remain read authority; mutable owner state must stay in the writer"
     );
+    let repository_path = scan.crate_root.join("src/session/repository.rs");
+    let transaction_path = scan.crate_root.join("src/session/transaction.rs");
+    let mut durable_write_bypasses = Vec::new();
+    for path in rust_files_under(&scan.crate_root.join("src")) {
+        if path == repository_path || path == transaction_path {
+            continue;
+        }
+        let source = fs::read_to_string(&path).expect("read product source");
+        let production = production_source(&sanitize_rust_source(&source));
+        if production.contains(".append_events(") || production.contains(".update_manifest(") {
+            durable_write_bypasses.push(relative_path(&scan.repo_root, &path));
+        }
+    }
+    assert!(
+        durable_write_bypasses.is_empty(),
+        "production durable session writes must enter the writer owner; bypasses:\n{}",
+        durable_write_bypasses.join("\n")
+    );
     for mutation in [
         "set_tree_label",
         "set_default_agent_profile_id",

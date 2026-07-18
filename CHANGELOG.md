@@ -74,11 +74,14 @@
 - Closed `RIF-D007`: the owner graph and boundary evidence now show that runtime,
   session, and event mutation authority no longer overlaps through mutable
   service handles.
+- Closed `RIF-008`: the per-session writer owner, cross-open registry, immutable
+  read authority, bounded pressure behavior, shutdown drain, independent-session
+  concurrency, navigation projection ordering, and workspace release gates now
+  pass. The next planned slice is `RIF-009` outbox/snapshot consistency.
 
 ### Release Status
 
-- `RIF-001`, `RIF-005`, `RIF-006`, and `RIF-007` are complete; `RIF-008` is in
-  progress.
+- `RIF-001`, `RIF-005`, `RIF-006`, `RIF-007`, and `RIF-008` are complete.
   Workspace packages remain at `0.3.1` until all `0.4.0` implementation, debt,
   and release gates close.
 
