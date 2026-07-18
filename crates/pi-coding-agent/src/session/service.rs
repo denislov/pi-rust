@@ -1536,7 +1536,15 @@ impl SessionService {
         let session_id = self.session_id().to_owned();
         let last_attempt_at = SystemClock.now_rfc3339();
         let attempt_count = pending.attempt_count + 1;
-        let reason = "recovery retry inspected durable facts and outbox; operation remains pending";
+        let reason = if request.schedule_with_backoff {
+            "recovery retry scheduled deterministic backoff after durable inspection"
+        } else {
+            "recovery retry inspected durable facts and outbox; operation remains pending"
+        };
+        let next_attempt_at = request
+            .schedule_with_backoff
+            .then(|| recovery_next_attempt_at(&last_attempt_at, attempt_count))
+            .transpose()?;
         let mut ids = SystemIdGenerator;
         let event = SessionEventEnvelope::new(
             session_id.clone(),
@@ -1550,7 +1558,7 @@ impl SessionService {
                 capability_generation: pending.capability_generation,
                 attempt_count,
                 last_attempt_at: Some(last_attempt_at.clone()),
-                next_attempt_at: None,
+                next_attempt_at: next_attempt_at.clone(),
             },
         )
         .with_operation_id(request.operation_id.clone());
@@ -1564,7 +1572,7 @@ impl SessionService {
             capability_generation: pending.capability_generation,
             attempt_count,
             last_attempt_at: Some(last_attempt_at.clone()),
-            next_attempt_at: None,
+            next_attempt_at: next_attempt_at.clone(),
         }
         .into_product_draft();
         let outbox = DurableOutboxRecordCandidate::new(
@@ -1595,7 +1603,7 @@ impl SessionService {
             draft,
             attempt_count,
             last_attempt_at,
-            next_attempt_at: None,
+            next_attempt_at,
         })
     }
 
@@ -2038,6 +2046,30 @@ fn persisted_operation_kind_name(kind: &OperationKind) -> String {
         OperationKind::SessionTreeLabel => "session_tree_label".into(),
         OperationKind::Other { name } => name.clone(),
     }
+}
+
+fn recovery_next_attempt_at(
+    last_attempt_at: &str,
+    attempt_count: u32,
+) -> Result<String, CodingSessionError> {
+    let seconds = 1_i64 << attempt_count.saturating_sub(1).min(2);
+    let timestamp = time::OffsetDateTime::parse(
+        last_attempt_at,
+        &time::format_description::well_known::Rfc3339,
+    )
+    .map_err(|error| CodingSessionError::Session {
+        message: format!("recovery retry timestamp is invalid: {error}"),
+    })?
+    .checked_add(time::Duration::seconds(seconds))
+    .ok_or_else(|| CodingSessionError::Session {
+        message: "recovery retry timestamp overflow".into(),
+    })?;
+    timestamp
+        .format(&time::format_description::well_known::Rfc3339)
+        .map(|value| value.replace("+00:00", "Z"))
+        .map_err(|error| CodingSessionError::Session {
+            message: format!("recovery retry timestamp formatting failed: {error}"),
+        })
 }
 
 fn session_write_outbox_intent(

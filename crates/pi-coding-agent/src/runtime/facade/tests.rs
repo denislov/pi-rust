@@ -475,17 +475,33 @@ mod cases {
         let mut pending = session.recovery_pending().unwrap().pop().unwrap();
         assert_eq!(pending.attempt_count, 0);
         for expected_attempt in 1..=3 {
-            let result = session
-                .retry_recovery(
-                    crate::runtime::facade::CodingAgentRecoveryRetryRequest::from_pending(&pending),
+            let request =
+                crate::runtime::facade::CodingAgentRecoveryRetryRequest::from_pending(&pending);
+            let request = if expected_attempt == 1 {
+                request.with_backoff()
+            } else {
+                request
+            };
+            let result = session.retry_recovery(request).unwrap();
+            assert_eq!(result.attempt_count, expected_attempt);
+            assert_eq!(result.next_attempt_at.is_some(), expected_attempt == 1);
+            if expected_attempt == 1 {
+                let last = time::OffsetDateTime::parse(
+                    &result.last_attempt_at,
+                    &time::format_description::well_known::Rfc3339,
                 )
                 .unwrap();
-            assert_eq!(result.attempt_count, expected_attempt);
-            assert!(result.next_attempt_at.is_none());
+                let next = time::OffsetDateTime::parse(
+                    result.next_attempt_at.as_deref().unwrap(),
+                    &time::format_description::well_known::Rfc3339,
+                )
+                .unwrap();
+                assert_eq!(next - last, time::Duration::seconds(1));
+            }
             pending = session.recovery_pending().unwrap().pop().unwrap();
             assert_eq!(pending.attempt_count, expected_attempt);
             assert!(pending.last_attempt_at.is_some());
-            assert!(pending.next_attempt_at.is_none());
+            assert_eq!(pending.next_attempt_at.is_some(), expected_attempt == 1);
         }
         let before = store.read_events(&handle).unwrap().len();
         let error = session

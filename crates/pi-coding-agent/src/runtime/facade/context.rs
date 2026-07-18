@@ -164,6 +164,7 @@ pub struct CodingAgentRecoveryRetryRequest {
     pub expected_record_version: u64,
     pub expected_descriptor_revision: u16,
     pub expected_capability_generation: Option<u64>,
+    pub schedule_with_backoff: bool,
 }
 
 impl CodingAgentRecoveryRetryRequest {
@@ -174,7 +175,13 @@ impl CodingAgentRecoveryRetryRequest {
             expected_record_version: pending.record_version,
             expected_descriptor_revision: pending.descriptor_revision,
             expected_capability_generation: pending.capability_generation,
+            schedule_with_backoff: false,
         }
+    }
+
+    pub fn with_backoff(mut self) -> Self {
+        self.schedule_with_backoff = true;
+        self
     }
 }
 

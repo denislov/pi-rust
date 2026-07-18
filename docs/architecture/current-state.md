@@ -114,8 +114,9 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   `RecoveryPending` now survives caller exit/restart. Trusted-host
   `retry_recovery()` performs a durable, non-terminal facts/outbox inspection
   attempt with a three-attempt cap and restart-visible timestamps; it never
-  reruns an external side effect. Automatic backoff scheduling, authenticated
-  RPC control/audit identity, and subsequent-work policy remain incomplete.
+  reruns an external side effect. Scheduled retries use deterministic `+1s`,
+  `+2s`, and `+4s` timestamps; automatic due-time execution, authenticated RPC
+  control/audit identity, and subsequent-work policy remain incomplete.
 
 ## Events, Sessions, And Clients
 
