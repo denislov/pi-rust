@@ -182,6 +182,7 @@ pub(crate) enum PluginLoadEvent {
 }
 
 impl PluginLoadEvent {
+    #[cfg(test)]
     pub(crate) fn root_terminal_evidence(&self) -> Option<OperationRootTerminalEvidence> {
         match self {
             Self::Completed { .. } => Some(OperationRootTerminalEvidence::PluginLoadCompleted),

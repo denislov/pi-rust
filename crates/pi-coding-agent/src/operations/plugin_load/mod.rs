@@ -56,7 +56,6 @@ pub(crate) async fn run(
                 )?;
                 event_service.emit_session_write_events(&finalized);
             }
-            event_service.emit_plugin_load_error(&operation_id, &error);
             return Err(error);
         }
     };
@@ -74,7 +73,6 @@ pub(crate) async fn run(
             )?;
             event_service.emit_session_write_events(&finalized);
         }
-        event_service.emit_plugin_load_error(&operation_id, &error);
         return Err(error);
     } else if cancellation
         .as_ref()
@@ -92,7 +90,6 @@ pub(crate) async fn run(
             )?;
             event_service.emit_session_write_events(&finalized);
         }
-        event_service.emit_plugin_load_error(&operation_id, &error);
         return Err(error);
     }
     if let Some(transaction) = transaction.as_mut() {

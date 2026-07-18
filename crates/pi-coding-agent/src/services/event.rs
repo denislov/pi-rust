@@ -489,6 +489,7 @@ impl EventService {
         )
     }
 
+    #[cfg(test)]
     fn publish_plugin_load_event(&self, event: PluginLoadEvent) -> ProductEvent {
         let evidence = event.root_terminal_evidence();
         self.publish(
@@ -667,6 +668,15 @@ impl EventService {
             CodingAgentProductEventKind::Session(
                 crate::events::CodingAgentSessionProductEvent::CompactionCompleted { .. },
             ) => Some(crate::runtime::outcome::OperationRootTerminalEvidence::CompactionCompleted),
+            CodingAgentProductEventKind::Workflow(
+                crate::events::CodingAgentWorkflowProductEvent::PluginLoadCompleted { .. },
+            ) => Some(crate::runtime::outcome::OperationRootTerminalEvidence::PluginLoadCompleted),
+            CodingAgentProductEventKind::Workflow(
+                crate::events::CodingAgentWorkflowProductEvent::PluginLoadFailed { .. },
+            ) => Some(crate::runtime::outcome::OperationRootTerminalEvidence::PluginLoadFailed),
+            CodingAgentProductEventKind::Workflow(
+                crate::events::CodingAgentWorkflowProductEvent::PluginLoadAborted { .. },
+            ) => Some(crate::runtime::outcome::OperationRootTerminalEvidence::PluginLoadAborted),
             _ => None,
         };
         self.publish(
@@ -754,15 +764,41 @@ impl EventService {
         });
     }
 
-    pub(crate) fn emit_plugin_load_outcome(&self, operation_id: &str, outcome: &PluginLoadOutcome) {
+    pub(crate) fn emit_plugin_load_diagnostics(&self, outcome: &PluginLoadOutcome) {
         for diagnostic in &outcome.diagnostics {
             self.emit_diagnostic(None::<String>, diagnostic.message.clone());
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn emit_plugin_load_outcome(&self, operation_id: &str, outcome: &PluginLoadOutcome) {
+        self.emit_plugin_load_diagnostics(outcome);
         self.publish_plugin_load_event(PluginLoadEvent::Completed {
             operation_id: operation_id.to_owned(),
         });
     }
 
+    pub(crate) fn plugin_load_terminal_draft(
+        operation_id: &str,
+        error: Option<&CodingSessionError>,
+    ) -> ProductEventDraft {
+        match error {
+            None => PluginLoadEvent::Completed {
+                operation_id: operation_id.to_owned(),
+            },
+            Some(CodingSessionError::Cancelled) => PluginLoadEvent::Aborted {
+                operation_id: operation_id.to_owned(),
+                reason: CodingSessionError::Cancelled.to_string(),
+            },
+            Some(error) => PluginLoadEvent::Failed {
+                operation_id: operation_id.to_owned(),
+                error: error.clone(),
+            },
+        }
+        .into_product_draft()
+    }
+
+    #[cfg(test)]
     pub(crate) fn emit_plugin_load_failed(&self, operation_id: &str, error: &CodingSessionError) {
         self.publish_plugin_load_event(PluginLoadEvent::Failed {
             operation_id: operation_id.to_owned(),
@@ -770,6 +806,7 @@ impl EventService {
         });
     }
 
+    #[cfg(test)]
     pub(crate) fn emit_plugin_load_aborted(&self, operation_id: &str, reason: impl Into<String>) {
         self.publish_plugin_load_event(PluginLoadEvent::Aborted {
             operation_id: operation_id.to_owned(),
@@ -777,6 +814,7 @@ impl EventService {
         });
     }
 
+    #[cfg(test)]
     pub(crate) fn emit_plugin_load_error(&self, operation_id: &str, error: &CodingSessionError) {
         if error == &CodingSessionError::Cancelled {
             self.emit_plugin_load_aborted(operation_id, error.to_string());

@@ -806,12 +806,26 @@ mod cases {
                 PluginLoadManifest::new("", "Invalid Plugin", "1.0.0", PluginSource::Project),
                 PluginRegistry::new(),
             ));
+        let mut product_events = session.subscribe_product_events();
 
         // D-03: explicit candidates remain behind the internal operation owner.
         session
             .run_operation(Operation::PluginLoad(options), None)
             .await
             .unwrap();
+        let emitted_events =
+            std::iter::from_fn(|| product_events.try_recv().unwrap()).collect::<Vec<_>>();
+        assert!(emitted_events.iter().any(|event| {
+            matches!(
+                event.event(),
+                CodingAgentProductEventKind::Workflow(
+                    CodingAgentWorkflowProductEvent::PluginLoadCompleted { .. }
+                )
+            ) && event.terminal_operation().is_some_and(|terminal| {
+                terminal.kind
+                    == crate::events::CodingAgentProductEventTerminalOperationKind::PluginLoad
+            })
+        }));
 
         let event_log = std::fs::read_to_string(
             temp.path()
@@ -829,6 +843,10 @@ mod cases {
             .collect::<Vec<_>>();
         assert!(kinds.contains(&"plugin.load.completed"), "{event_log}");
         assert!(kinds.contains(&"operation.committed"), "{event_log}");
+        assert!(
+            kinds.contains(&"operation.terminal.recorded"),
+            "{event_log}"
+        );
         let plugin_event = events
             .iter()
             .find(|event| event["kind"] == "plugin.load.completed")
@@ -844,6 +862,149 @@ mod cases {
                 .unwrap()
                 .contains("plugin id must not be empty")
         );
+        let outbox = std::fs::read_to_string(
+            temp.path()
+                .join("sess_plugin_load_events")
+                .join("outbox.jsonl"),
+        )
+        .unwrap();
+        assert!(outbox.contains("operation_terminal"));
+        assert!(outbox.contains("\"operation_kind\":\"plugin_load\""));
+
+        session.shutdown().await.unwrap();
+        drop(session);
+        let reopened = CodingAgentSession::open(
+            CodingAgentSessionOptions::new()
+                .with_session_id("sess_plugin_load_events")
+                .with_session_log_root(temp.path()),
+        )
+        .await
+        .unwrap();
+        let connection = reopened
+            .connect(public_projection::CodingAgentClientId::new(
+                "plugin-load-replay",
+            ))
+            .unwrap();
+        let public_projection::CodingAgentReconnect::Replayed { events, .. } =
+            connection.reconnect(0).unwrap()
+        else {
+            panic!("plugin-load terminal must be retained for restart redelivery")
+        };
+        assert!(events.iter().any(|event| {
+            matches!(
+                event.event(),
+                CodingAgentProductEventKind::Workflow(
+                    CodingAgentWorkflowProductEvent::PluginLoadCompleted { .. }
+                )
+            ) && event.terminal_operation().is_some_and(|terminal| {
+                terminal.kind
+                    == crate::events::CodingAgentProductEventTerminalOperationKind::PluginLoad
+            })
+        }));
+    }
+
+    #[tokio::test]
+    async fn failed_plugin_load_persists_terminal_outbox_and_restarts_as_plugin_load() {
+        let temp = tempfile::tempdir().unwrap();
+        let plugin_dir = temp.path().join("plugins/invalid-ui");
+        fs::create_dir_all(&plugin_dir).unwrap();
+        fs::write(
+            plugin_dir.join("plugin.toml"),
+            r#"
+id = "invalid-ui"
+name = "Invalid UI"
+version = "0.1.0"
+runtime = "lua"
+entry = "plugin.lua"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            plugin_dir.join("plugin.lua"),
+            r#"
+function register(host)
+  host:ui_action({
+    id = "ui.missing",
+    label = "Missing",
+    description = "targets a missing command",
+    action_id = "lua.missing_command"
+  })
+end
+"#,
+        )
+        .unwrap();
+        let session_root = temp.path().join("sessions");
+        let session_id = "sess_plugin_load_failure";
+        let mut session = CodingAgentSession::create(
+            CodingAgentSessionOptions::new()
+                .with_session_id(session_id)
+                .with_session_log_root(&session_root),
+        )
+        .await
+        .unwrap();
+        let mut product_events = session.subscribe_product_events();
+        let error = session
+            .run_operation(
+                Operation::PluginLoad(
+                    PluginLoadOptions::new()
+                        .with_discovery_root(temp.path().join("plugins"), PluginSource::Project),
+                ),
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), "plugin");
+        let emitted = std::iter::from_fn(|| product_events.try_recv().unwrap()).collect::<Vec<_>>();
+        assert!(emitted.iter().any(|event| {
+            matches!(
+                event.event(),
+                CodingAgentProductEventKind::Workflow(
+                    CodingAgentWorkflowProductEvent::PluginLoadFailed { .. }
+                )
+            ) && event.terminal_operation().is_some_and(|terminal| {
+                terminal.kind
+                    == crate::events::CodingAgentProductEventTerminalOperationKind::PluginLoad
+            })
+        }));
+        let event_log =
+            std::fs::read_to_string(session_root.join(session_id).join("events.jsonl")).unwrap();
+        assert!(event_log.contains("operation.failed"));
+        assert!(event_log.contains("operation.terminal.recorded"));
+        let outbox =
+            std::fs::read_to_string(session_root.join(session_id).join("outbox.jsonl")).unwrap();
+        assert!(outbox.contains("operation_terminal"));
+        assert!(outbox.contains("\"operation_kind\":\"plugin_load\""));
+
+        session.shutdown().await.unwrap();
+        drop(session);
+        let reopened = CodingAgentSession::open(
+            CodingAgentSessionOptions::new()
+                .with_session_id(session_id)
+                .with_session_log_root(&session_root),
+        )
+        .await
+        .unwrap();
+        let connection = reopened
+            .connect(public_projection::CodingAgentClientId::new(
+                "plugin-load-failure-replay",
+            ))
+            .unwrap();
+        let public_projection::CodingAgentReconnect::Replayed { events, .. } =
+            connection.reconnect(0).unwrap()
+        else {
+            panic!("plugin-load failure must be retained for restart redelivery")
+        };
+        assert!(events.iter().any(|event| {
+            matches!(
+                event.event(),
+                CodingAgentProductEventKind::Workflow(
+                    CodingAgentWorkflowProductEvent::PluginLoadFailed { .. }
+                )
+            ) && event.terminal_operation().is_some_and(|terminal| {
+                terminal.kind
+                    == crate::events::CodingAgentProductEventTerminalOperationKind::PluginLoad
+            })
+        }));
     }
 
     #[tokio::test]

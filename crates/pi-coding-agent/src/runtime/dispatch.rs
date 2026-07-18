@@ -457,7 +457,7 @@ impl CodingAgentSession {
                         self.runtime_host
                             .event_hub
                             .service
-                            .emit_plugin_load_outcome(&snapshot.operation_id, &execution.outcome);
+                            .emit_plugin_load_diagnostics(&execution.outcome);
                         Ok(OperationOutcome::PluginLoad(execution.outcome))
                     }
                     Operation::BranchSummary {
@@ -651,27 +651,54 @@ impl CodingAgentSession {
             decision.operation_kind,
             crate::runtime::control::OperationKind::Prompt
                 | crate::runtime::control::OperationKind::Compact
+                | crate::runtime::control::OperationKind::PluginLoad
         ) || !matches!(
             commit_result,
             super::finalization::FinalizationCommitResult::Committed
         ) {
             return Ok(());
         }
-        let (draft, prompt_outcome) = match result.as_ref().ok().and_then(|outcome| match outcome {
-            OperationOutcome::Prompt(outcome) => Some((
-                crate::services::event::EventService::prompt_terminal_draft(outcome),
-                Some(outcome),
-            )),
-            OperationOutcome::ManualCompaction(outcome) => Some((
-                self.runtime_host
+        let (draft, prompt_outcome) = match decision.operation_kind {
+            crate::runtime::control::OperationKind::Prompt => {
+                let Some(OperationOutcome::Prompt(outcome)) = result.as_ref().ok() else {
+                    return Ok(());
+                };
+                let Some(draft) =
+                    crate::services::event::EventService::prompt_terminal_draft(outcome)
+                else {
+                    return Ok(());
+                };
+                (draft, Some(outcome))
+            }
+            crate::runtime::control::OperationKind::Compact => {
+                let Some(OperationOutcome::ManualCompaction(outcome)) = result.as_ref().ok() else {
+                    return Ok(());
+                };
+                let Some(draft) = self
+                    .runtime_host
                     .event_hub
                     .service
-                    .take_deferred_terminal_draft(&decision.operation_id),
-                Some(outcome),
-            )),
-            _ => None,
-        }) {
-            Some((Some(draft), prompt_outcome)) => (draft, prompt_outcome),
+                    .take_deferred_terminal_draft(&decision.operation_id)
+                else {
+                    return Ok(());
+                };
+                (draft, Some(outcome))
+            }
+            crate::runtime::control::OperationKind::PluginLoad => {
+                if result
+                    .as_ref()
+                    .is_ok_and(|outcome| !matches!(outcome, OperationOutcome::PluginLoad(_)))
+                {
+                    return Ok(());
+                }
+                (
+                    crate::services::event::EventService::plugin_load_terminal_draft(
+                        &decision.operation_id,
+                        result.as_ref().err(),
+                    ),
+                    None,
+                )
+            }
             _ => return Ok(()),
         };
         let compact_terminal_is_session_event = matches!(
@@ -688,6 +715,7 @@ impl CodingAgentSession {
                 if matches!(
                     decision.operation_kind,
                     crate::runtime::control::OperationKind::Compact
+                        | crate::runtime::control::OperationKind::PluginLoad
                 ) {
                     self.runtime_host
                         .event_hub

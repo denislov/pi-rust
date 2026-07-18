@@ -135,8 +135,10 @@
   Compact success/failure now use the same terminal fact/outbox batch, publish
   only after commit, and reconstruct `Compact` terminal metadata after restart.
   Operation-terminal outbox records carry an optional operation-kind recovery
-  hint so shared `PromptFailed` payloads retain their admitted family. Remaining
-  operation families still need the same terminal draft migration.
+  hint so shared payloads retain their admitted family. PluginLoad
+  success/failure/abort now use the same coordinator path and restart as typed
+  PluginLoad terminals. Remaining operation families still need the same
+  terminal draft migration.
 
 ### Release Status
 
