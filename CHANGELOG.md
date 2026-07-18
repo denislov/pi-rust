@@ -55,6 +55,10 @@
   delegation durable facts, and startup recovery now submit event-plus-manifest
   mutations through that writer; the live `SessionService` no longer appends or
   patches its own repository handle directly.
+- Routed `SessionCreated` and copy/fork target payload installation through
+  typed writer commands. Copy provenance, copied facts, and the target manifest
+  now form one writer commit, and failed target writers are closed before
+  session cleanup.
 
 ### Release Status
 

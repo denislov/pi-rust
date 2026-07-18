@@ -54,6 +54,9 @@ struct SessionTransactionWriterEnvelope {
 
 #[derive(Debug)]
 enum SessionTransactionWriterCommand {
+    InitializeSession {
+        event: SessionEventEnvelope,
+    },
     Checkpoint {
         events: Vec<SessionEventEnvelope>,
     },
@@ -133,6 +136,13 @@ impl SessionTransactionWriter {
         self.execute(SessionTransactionWriterCommand::Checkpoint { events })
     }
 
+    pub(crate) fn initialize_session(
+        &self,
+        event: SessionEventEnvelope,
+    ) -> Result<(), CodingSessionError> {
+        self.execute(SessionTransactionWriterCommand::InitializeSession { event })
+    }
+
     pub(crate) fn commit_session_mutation(
         &self,
         events: Vec<SessionEventEnvelope>,
@@ -210,6 +220,19 @@ fn execute_writer_command(
     command: SessionTransactionWriterCommand,
 ) -> Result<(), CodingSessionError> {
     match command {
+        SessionTransactionWriterCommand::InitializeSession { event } => {
+            if !matches!(&event.data, SessionEventData::SessionCreated { .. }) {
+                return Err(CodingSessionError::Session {
+                    message: "session writer initialize command requires SessionCreated".into(),
+                });
+            }
+            if !store.read_events(handle)?.is_empty() {
+                return Err(CodingSessionError::Session {
+                    message: "session writer cannot initialize a non-empty event log".into(),
+                });
+            }
+            store.append_events(handle, &[event])
+        }
         SessionTransactionWriterCommand::Checkpoint { events } => {
             store.append_events(handle, &events)
         }
@@ -972,6 +995,24 @@ mod tests {
             .unwrap_err();
 
         assert!(error.to_string().contains("writer is closed"));
+    }
+
+    #[test]
+    fn writer_initialize_rejects_non_creation_fact() {
+        let (_temp, store, handle) = setup();
+        let writer = SessionTransactionWriter::new(store, handle);
+        let event = SessionEventEnvelope::new(
+            "sess_tx",
+            "evt_not_created",
+            "2026-06-29T00:00:01Z",
+            SessionEventData::ActiveLeafChanged {
+                leaf_id: "leaf_invalid".into(),
+            },
+        );
+
+        let error = writer.initialize_session(event).unwrap_err();
+
+        assert!(error.to_string().contains("requires SessionCreated"));
     }
 
     fn event_kinds(events: &[SessionEventEnvelope]) -> Vec<&'static str> {

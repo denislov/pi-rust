@@ -2412,6 +2412,7 @@ fn turn_transaction_stages_through_typed_writer_commands_without_repository_hand
         "workflow transaction must not retain raw repository authority"
     );
     for command in [
+        "SessionTransactionWriterCommand::InitializeSession",
         "SessionTransactionWriterCommand::Checkpoint",
         "SessionTransactionWriterCommand::Finalize",
         "SessionTransactionWriterCommand::CommitSessionMutation",
@@ -2464,9 +2465,9 @@ fn turn_transaction_stages_through_typed_writer_commands_without_repository_hand
     );
     let production_service = production_source(&sanitize_rust_source(&service));
     assert!(
-        !production_service.contains("self.store.append_events")
-            && !production_service.contains("self.store.update_manifest"),
-        "the live SessionService owner must route its own durable mutations through the writer"
+        !production_service.contains(".store.append_events")
+            && !production_service.contains(".store.update_manifest"),
+        "SessionService must route live, bootstrap, and copy-target durable mutations through the writer"
     );
     for mutation in [
         "set_tree_label",

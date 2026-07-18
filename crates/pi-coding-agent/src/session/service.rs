@@ -346,6 +346,14 @@ impl SessionService {
         operation_id: &str,
         error: CodingSessionError,
     ) -> CodingSessionError {
+        if let Err(shutdown_error) = self.transaction_writer.shutdown() {
+            return CodingSessionError::PartialCommit {
+                operation_id: operation_id.to_owned(),
+                message: format!(
+                    "{error}; failed to close target session writer before cleanup: {shutdown_error}"
+                ),
+            };
+        }
         cleanup_failed_session_copy(&self.store, &self.handle, operation_id, error)
     }
 
@@ -1176,7 +1184,6 @@ impl SessionService {
                 clock.now_rfc3339(),
                 kind.provenance_event(self.session_id().to_owned(), target_leaf_id.clone()),
             );
-            target.store.append_events(&target.handle, &[provenance])?;
 
             let branch_summary_operations = branch_summary_operation_ids_for_target(
                 &source_events[cutoff + 1..],
@@ -1187,30 +1194,40 @@ impl SessionService {
                 &source_events[cutoff + 1..],
                 &copied_leaf_ids,
             );
-            let copied_events = source_events[..=cutoff]
-                .iter()
-                .chain(source_events[cutoff + 1..].iter().filter(|event| {
-                    should_copy_branch_summary_operation(
-                        event,
-                        &target_leaf_id,
-                        &branch_summary_operations,
-                    ) || should_copy_tree_label_operation(event, &tree_label_operations)
-                }))
-                .filter(|event| should_copy_source_event(event))
-                .map(|event| rewrite_event_for_session(event, target.session_id(), &mut ids))
-                .collect::<Vec<_>>();
-            target.store.append_events(&target.handle, &copied_events)?;
-            target.store.update_manifest(
-                &target.handle,
+            let mut target_events = vec![provenance];
+            target_events.extend(
+                source_events[..=cutoff]
+                    .iter()
+                    .chain(source_events[cutoff + 1..].iter().filter(|event| {
+                        should_copy_branch_summary_operation(
+                            event,
+                            &target_leaf_id,
+                            &branch_summary_operations,
+                        ) || should_copy_tree_label_operation(event, &tree_label_operations)
+                    }))
+                    .filter(|event| should_copy_source_event(event))
+                    .map(|event| rewrite_event_for_session(event, target.session_id(), &mut ids))
+                    .collect::<Vec<_>>(),
+            );
+            target.transaction_writer.commit_session_mutation(
+                target_events,
                 ManifestPatch::new()
                     .updated_at(clock.now_rfc3339())
                     .active_leaf_id(Some(target_leaf_id)),
+                None,
             )?;
-            let session_id = target.session_id().to_owned();
-            target.handle = target.store.open_session_id(&session_id)?;
+            target.refresh_read_handle(None)?;
             Ok(())
         })();
         if let Err(error) = copy_result {
+            if let Err(shutdown_error) = target.transaction_writer.shutdown() {
+                return Err(CodingSessionError::PartialCommit {
+                    operation_id,
+                    message: format!(
+                        "{error}; failed to close target session writer before cleanup: {shutdown_error}"
+                    ),
+                });
+            }
             return Err(cleanup_failed_session_copy(
                 &target.store,
                 &target.handle,
@@ -1270,16 +1287,31 @@ impl SessionService {
             created_at,
             SessionEventData::SessionCreated { cwd },
         );
-        if let Err(error) = store.append_events(&handle, &[created]) {
+        let service = Self::from_handle(store, handle);
+        if let Err(error) = service.transaction_writer.initialize_session(created) {
+            if let Err(shutdown_error) = service.transaction_writer.shutdown() {
+                return Err(match copy_operation_id {
+                    Some(operation_id) => CodingSessionError::PartialCommit {
+                        operation_id: operation_id.to_owned(),
+                        message: format!(
+                            "{error}; failed to close new session writer before cleanup: {shutdown_error}"
+                        ),
+                    },
+                    None => shutdown_error,
+                });
+            }
             return Err(match copy_operation_id {
-                Some(operation_id) => {
-                    cleanup_failed_session_copy(&store, &handle, operation_id, error)
-                }
+                Some(operation_id) => cleanup_failed_session_copy(
+                    &service.store,
+                    &service.handle,
+                    operation_id,
+                    error,
+                ),
                 None => error,
             });
         }
 
-        Ok(Self::from_handle(store, handle))
+        Ok(service)
     }
 
     fn append_durable_session_event(
@@ -2888,7 +2920,7 @@ mod tests {
     }
 
     #[test]
-    fn fork_current_cleans_up_when_provenance_append_fails() {
+    fn fork_current_cleans_up_when_target_payload_commit_fails() {
         let temp = tempfile::tempdir().unwrap();
         let options = CodingAgentSessionOptions::new()
             .with_session_id("sess_fork_cleanup_provenance")
