@@ -126,6 +126,9 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   replace the root failure lifecycle evidence.
 - Runtime-owned non-session submissions now finalize and publish terminal drafts
   independently of client submission leases, covering RPC background execution.
+- Runtime-owned cancellation and drop paths retain the admitted operation
+  identity through terminal projection, closing the post-admission ownership
+  bypass tracked by `RIF-D002`.
 
 ## Events, Sessions, And Clients
 

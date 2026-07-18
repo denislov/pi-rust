@@ -23,6 +23,9 @@
 - Fixed runtime-owned RPC submission finalization when no submission lease is
   present. Background AgentInvocation/AgentTeam operations now always freeze
   their terminal decision and publish the deferred root draft after finalization.
+- Closed the post-admission exit debt for runtime-owned roots: success, definite
+  failure, and cancellation now all retain supervisor-owned terminal ownership
+  through lease-free submission and operation-identity cancellation paths.
 
 - Added a typed `RecoveryPending` admission rejection. `SessionWriteRoot`
   operations now inspect durable recovery evidence before
