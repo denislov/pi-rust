@@ -108,8 +108,8 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   source event correlation, and session-write outbox persistence for prompt
   success/failure/abort and non-leaf commit/failure paths. Operation-terminal
   and recovery publication plus restart reconciliation remain open under
-  `RIF-002` and `RIF-009-004`, respectively. `RIF-009-003` now owns the next
-  committed projection/snapshot cursor slice. Its first slice is implemented:
+  `RIF-002` and `RIF-009-004`, respectively. `RIF-009-004` now owns the next
+  restart/reconnect/redelivery consistency slice. The completed cursor work:
   outbox schema v2 stores `committed_through_session_sequence`, while only the
   repository may turn a validated candidate into a cursor-bearing durable
   record. `SessionReplay` now derives the same cursor from sequenced facts, and
