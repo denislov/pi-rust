@@ -26,6 +26,9 @@
 - Closed the post-admission exit debt for runtime-owned roots: success, definite
   failure, and cancellation now all retain supervisor-owned terminal ownership
   through lease-free submission and operation-identity cancellation paths.
+- Closed projection root-invention debt: unknown local events no longer create
+  running operation roots without admitted kind, terminal evidence, or explicit
+  root identity.
 
 - Added a typed `RecoveryPending` admission rejection. `SessionWriteRoot`
   operations now inspect durable recovery evidence before

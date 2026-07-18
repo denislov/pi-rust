@@ -153,6 +153,12 @@ impl UiContextProjection {
         let index = match index {
             Some(index) => index,
             None => {
+                let is_root_evidence = operation_kind.is_some()
+                    || event.terminal_operation().is_some()
+                    || event.root_operation_id() == Some(operation_id);
+                if !is_root_evidence {
+                    return;
+                }
                 self.operations.push(UiOperationProjection {
                     operation_id: operation_id.to_owned(),
                     kind: inferred_kind.to_owned(),
@@ -543,6 +549,26 @@ mod tests {
             kind: CodingAgentProductEventTerminalOperationKind::Prompt,
             status,
         }
+    }
+
+    #[test]
+    fn ignores_local_event_without_root_evidence_for_unknown_operation() {
+        let mut projection = UiContextProjection::default();
+        projection.apply_product_event(
+            &event(
+                1,
+                "op-local-only",
+                CodingAgentProductEventKind::Diagnostic(
+                    CodingAgentDiagnosticProductEvent::Diagnostic {
+                        operation_id: Some("op-local-only".into()),
+                        message: "child diagnostic".into(),
+                    },
+                ),
+                None,
+            ),
+            None,
+        );
+        assert!(projection.operations.is_empty());
     }
 
     #[test]

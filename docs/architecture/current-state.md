@@ -129,6 +129,8 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
 - Runtime-owned cancellation and drop paths retain the admitted operation
   identity through terminal projection, closing the post-admission ownership
   bypass tracked by `RIF-D002`.
+- Client operation projection now fails closed for unknown local events; a new
+  running root requires explicit admission/root evidence or terminal evidence.
 
 ## Events, Sessions, And Clients
 
