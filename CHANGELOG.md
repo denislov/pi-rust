@@ -9,6 +9,10 @@
   and parallel tools, and tool hooks now have host-enforced cancellation waits.
 - Added an active-tool cancellation regression proving a cancelled tool wait
   returns promptly even when the tool emits no progress updates.
+- Accepted `ADR-013` and recorded the complete Flow inventory. Generic Flow is
+  now explicitly non-durable and retained only for tests/compatibility and the
+  temporary AgentTurn migration scaffold; fixed product workflows are assigned
+  to typed pipelines or structured concurrency.
 
 ## 0.4.0 - 2026-07-19
 
