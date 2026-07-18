@@ -27,8 +27,10 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   in `SessionCoordinator`, product-event fan-out in `EventHub`, and client
   snapshots/controls in `ClientProjectionCoordinator`. An identity-bearing
   `SessionWriterCommand`/`SessionWriterReply` protocol owns default-profile,
-  active-leaf, and tree-label mutation; bounded transport and the remaining
-  session mutations are still active `RIF-008` work.
+  fork, active-leaf, and tree-label mutation; fork installation replaces
+  persistence and replay-derived pending/recovery owner state as one coordinator
+  action. Bounded transport and the remaining session mutations are still active
+  `RIF-008` work.
 - `IntentRouter`, `OperationScheduler`, `OperationControl`, typed operation
   metadata, root/child lineage, capability snapshots, and generation-scoped
   cancellation exist.

@@ -4,6 +4,7 @@ use super::capability::CapabilityGeneration;
 use super::facade::CodingSessionError;
 use crate::operations::delegation::PendingDelegationConfirmationQueue;
 use crate::profiles::ProfileId;
+use crate::services::session::{ReplayDerivedOwnerState, replay_derived_owner_state};
 #[cfg(test)]
 use crate::session::id::{Clock, SystemClock};
 use crate::session::service::{SessionPersistence, StartupRecoveryMarker};
@@ -66,6 +67,18 @@ impl SessionWriterCommand {
             },
         }
     }
+
+    pub(super) fn fork_session(
+        operation_id: impl Into<String>,
+        capability_generation: CapabilityGeneration,
+        target_leaf_id: Option<String>,
+    ) -> Self {
+        Self {
+            operation_id: operation_id.into(),
+            capability_generation,
+            mutation: SessionMutation::ForkSession { target_leaf_id },
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -79,6 +92,9 @@ pub(super) enum SessionMutation {
     SetSessionTreeLabel {
         entry_id: String,
         label: Option<String>,
+    },
+    ForkSession {
+        target_leaf_id: Option<String>,
     },
 }
 
@@ -152,6 +168,9 @@ pub(super) enum SessionWriterReply {
         label: Option<String>,
         updated_at: String,
     },
+    ForkedSession {
+        session_id: String,
+    },
 }
 
 impl SessionCoordinator {
@@ -218,6 +237,36 @@ impl SessionCoordinator {
                     updated_at: update.updated_at,
                 })
             }
+            SessionMutation::ForkSession { target_leaf_id } => {
+                let SessionPersistence::Persistent(session_service) = &self.persistence else {
+                    return Err(CodingSessionError::UnsupportedCapability {
+                        capability: "fork requires a persistent Rust-native session".into(),
+                    });
+                };
+                let mut forked_service = session_service
+                    .fork_current_admitted(target_leaf_id.as_deref(), &command.operation_id)?;
+                let owner_state = match replay_derived_owner_state(&mut forked_service) {
+                    Ok(owner_state) => owner_state,
+                    Err(error) => {
+                        return Err(
+                            forked_service.cleanup_failed_transition(&command.operation_id, error)
+                        );
+                    }
+                };
+                let session_id = forked_service.session_id().to_owned();
+                self.install_forked_session(forked_service, owner_state);
+                Ok(SessionWriterReply::ForkedSession { session_id })
+            }
         }
+    }
+
+    fn install_forked_session(
+        &mut self,
+        session_service: crate::session::service::SessionService,
+        owner_state: ReplayDerivedOwnerState,
+    ) {
+        self.persistence = SessionPersistence::Persistent(session_service);
+        self.pending_delegation_confirmations = owner_state.pending_delegation_confirmations;
+        *self.startup_recovery_markers.lock().unwrap() = owner_state.startup_recovery_markers;
     }
 }

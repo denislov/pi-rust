@@ -110,30 +110,28 @@ impl CodingAgentSession {
                         .session_write
                         .as_ref(),
                 )?;
-                let operation_id = operation_permit.capability_snapshot().operation_id.clone();
-                let transition = crate::operations::session_navigation::fork(
-                    &self.runtime_host.session_coordinator.persistence,
-                    target_leaf_id.as_deref(),
-                    &operation_id,
-                )?;
+                let command =
+                    crate::runtime::session_coordinator::SessionWriterCommand::fork_session(
+                        operation_permit.execution().operation_id.clone(),
+                        operation_permit.execution().capability_generation,
+                        target_leaf_id,
+                    );
                 drop(operation_permit);
-                self.runtime_host.session_coordinator.persistence =
-                    SessionPersistence::Persistent(transition.session_service);
-                self.runtime_host
-                    .session_coordinator
-                    .pending_delegation_confirmations =
-                    transition.owner_state.pending_delegation_confirmations;
-                *self
+                let reply = self
                     .runtime_host
                     .session_coordinator
-                    .startup_recovery_markers
-                    .lock()
-                    .unwrap() = transition.owner_state.startup_recovery_markers;
+                    .execute_writer_command(command)?;
+                let crate::runtime::session_coordinator::SessionWriterReply::ForkedSession {
+                    session_id,
+                } = reply
+                else {
+                    unreachable!("fork writer command returns its typed reply")
+                };
                 self.refresh_snapshot_projection();
                 self.runtime_host
                     .event_hub
                     .service
-                    .emit_session_opened(transition.session_id);
+                    .emit_session_opened(session_id);
                 Ok(OperationOutcome::ForkSession)
             }
             Operation::SwitchActiveLeaf { target_leaf_id } => {

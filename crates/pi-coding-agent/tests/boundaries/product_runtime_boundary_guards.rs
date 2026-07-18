@@ -2352,6 +2352,7 @@ fn runtime_host_owner_graph_and_first_writer_command_are_explicit() {
         "default-profile mutation must not bypass the writer command protocol"
     );
     for bypass in [
+        "session_navigation::fork(",
         "session_navigation::switch_active_leaf(",
         "session_navigation::set_tree_label(",
     ] {

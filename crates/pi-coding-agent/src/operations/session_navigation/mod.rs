@@ -2,39 +2,7 @@ use crate::runtime::facade::{
     CodingAgentSessionHydration, CodingAgentSessionOptions, CodingAgentSessionTree,
     CodingSessionError,
 };
-use crate::services::session::{ReplayDerivedOwnerState, replay_derived_owner_state};
-use crate::session::service::{SessionPersistence, SessionService};
-
-pub(crate) struct ForkTransition {
-    pub(crate) session_service: SessionService,
-    pub(crate) session_id: String,
-    pub(crate) owner_state: ReplayDerivedOwnerState,
-}
-
-pub(crate) fn fork(
-    persistence: &SessionPersistence,
-    target_leaf_id: Option<&str>,
-    operation_id: &str,
-) -> Result<ForkTransition, CodingSessionError> {
-    let SessionPersistence::Persistent(session_service) = persistence else {
-        return Err(CodingSessionError::UnsupportedCapability {
-            capability: "fork requires a persistent Rust-native session".into(),
-        });
-    };
-    let mut forked_service = session_service.fork_current_admitted(target_leaf_id, operation_id)?;
-    let session_id = forked_service.session_id().to_owned();
-    let owner_state = match replay_derived_owner_state(&mut forked_service) {
-        Ok(owner_state) => owner_state,
-        Err(error) => {
-            return Err(forked_service.cleanup_failed_transition(operation_id, error));
-        }
-    };
-    Ok(ForkTransition {
-        session_service: forked_service,
-        session_id,
-        owner_state,
-    })
-}
+use crate::session::service::SessionService;
 
 pub(crate) fn hydrate(
     options: CodingAgentSessionOptions,
