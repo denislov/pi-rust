@@ -745,6 +745,7 @@ mod tests {
             UiSnapshotCursor {
                 stream_id: base.cursor.stream_id.clone(),
                 last_event_sequence,
+                last_session_sequence: base.cursor.last_session_sequence,
                 capability_generation: base.cursor.capability_generation,
             },
             base.version,

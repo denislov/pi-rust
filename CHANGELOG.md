@@ -97,7 +97,8 @@
   candidate, and only the repository assigns its durable cursor after validating
   the candidate session and source event IDs against the sequenced fact batch.
 - `SessionReplay` now derives and carries the last committed session fact cursor;
-  public snapshot cursor consumption remains the next 0.4.x slice.
+  public snapshot cursors expose `last_session_sequence`. Atomic writer to
+  read-model handoff remains the next 0.4.x slice.
 
 ### Release Status
 

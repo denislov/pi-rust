@@ -3110,6 +3110,7 @@ mod tests {
             },
             crate::runtime::facade::CodingAgentCapabilities::idle(false),
             crate::runtime::capability::CapabilityGeneration::new(1),
+            0,
         );
         let service =
             EventService::with_event_capacity_and_coordinator_for_tests(2, coordinator.clone());

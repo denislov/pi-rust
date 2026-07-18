@@ -10,6 +10,7 @@ use crate::runtime::facade::context::{CodingAgentCapabilities, CodingAgentSessio
 pub(crate) struct UiSnapshotCursor {
     pub(crate) stream_id: String,
     pub(crate) last_event_sequence: ProductEventSequence,
+    pub(crate) last_session_sequence: u64,
     pub(crate) capability_generation: CapabilityGeneration,
 }
 
@@ -136,6 +137,7 @@ mod tests {
             UiSnapshotCursor {
                 stream_id: "stream_ui".into(),
                 last_event_sequence: ProductEventSequence::new(7),
+                last_session_sequence: 0,
                 capability_generation: CapabilityGeneration::new(3),
             },
             UI_SNAPSHOT_PROTOCOL_VERSION,
@@ -162,6 +164,7 @@ mod tests {
             UiSnapshotCursor {
                 stream_id: "stream_ui".into(),
                 last_event_sequence: ProductEventSequence::new(7),
+                last_session_sequence: 0,
                 capability_generation: CapabilityGeneration::new(3),
             },
             UI_SNAPSHOT_PROTOCOL_VERSION,

@@ -174,6 +174,7 @@ pub(crate) struct SnapshotState {
     pub(crate) event_stream_id: String,
     pub(crate) operation_event_contexts: HashMap<String, OperationEventContext>,
     pub(crate) next_event_sequence: u64,
+    pub(crate) committed_session_sequence: u64,
     pub(crate) retained_product_events: VecDeque<ProductEvent>,
     pub(crate) dropped_before: Option<ProductEventSequence>,
     pub(crate) recovery_revision: u64,
@@ -194,6 +195,7 @@ impl Default for SnapshotState {
             event_stream_id: crate::session::id::new_product_event_stream_id(),
             operation_event_contexts: HashMap::new(),
             next_event_sequence: 1,
+            committed_session_sequence: 0,
             retained_product_events: VecDeque::new(),
             dropped_before: None,
             recovery_revision: 0,
@@ -886,6 +888,7 @@ impl SnapshotCoordinator {
         session: CodingAgentSessionView,
         capabilities: CodingAgentCapabilities,
         capability_generation: CapabilityGeneration,
+        committed_session_sequence: u64,
     ) {
         let mut state = self.state.lock().unwrap();
         let active_operation = state
@@ -904,6 +907,7 @@ impl SnapshotCoordinator {
             capability_generation,
         });
         state.capability_generation = capability_generation;
+        state.committed_session_sequence = committed_session_sequence;
     }
 
     pub(crate) fn current_capability_generation(&self) -> CapabilityGeneration {
@@ -1033,6 +1037,7 @@ impl SnapshotCoordinator {
                 last_event_sequence: ProductEventSequence::new(
                     state.next_event_sequence.saturating_sub(1),
                 ),
+                last_session_sequence: state.committed_session_sequence,
                 capability_generation: projection.capability_generation,
             },
             UI_SNAPSHOT_PROTOCOL_VERSION,
@@ -1189,6 +1194,7 @@ impl SnapshotCoordinator {
                 last_event_sequence: ProductEventSequence::new(
                     state.next_event_sequence.saturating_sub(1),
                 ),
+                last_session_sequence: state.committed_session_sequence,
                 capability_generation: projection.capability_generation,
             },
             UI_SNAPSHOT_PROTOCOL_VERSION,

@@ -464,6 +464,8 @@ pub struct CodingAgentSnapshotCursor {
     pub stream_id: String,
     pub snapshot_protocol_major: u32,
     pub last_event_sequence: u64,
+    #[serde(default)]
+    pub last_session_sequence: u64,
     pub capability_generation: u64,
 }
 
@@ -683,6 +685,7 @@ impl CodingAgentClientConnection {
                     stream_id: self.snapshot.cursor.stream_id.clone(),
                     snapshot_protocol_major: UI_SNAPSHOT_PROTOCOL_VERSION.major,
                     last_event_sequence: boundary.replayed_through.get(),
+                    last_session_sequence: self.snapshot.cursor.last_session_sequence,
                     capability_generation: boundary.capability_generation,
                 },
                 receiver: CodingAgentReconnectReceiver {
@@ -1082,6 +1085,7 @@ impl From<UiSnapshot> for CodingAgentSnapshot {
                 stream_id: snapshot.cursor.stream_id.clone(),
                 snapshot_protocol_major: UI_SNAPSHOT_PROTOCOL_VERSION.major,
                 last_event_sequence: snapshot.cursor.last_event_sequence.get(),
+                last_session_sequence: snapshot.cursor.last_session_sequence,
                 capability_generation: snapshot.cursor.capability_generation.get(),
             },
             version: snapshot.version,

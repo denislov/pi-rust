@@ -169,10 +169,22 @@ impl CodingAgentSession {
             .operation_supervisor
             .capabilities
             .current_generation();
+        let committed_session_sequence = match &self.runtime_host.session_coordinator.persistence {
+            SessionPersistence::Persistent(session_service) => session_service
+                .replay()
+                .map(|replay| replay.committed_through_session_sequence)
+                .unwrap_or_default(),
+            SessionPersistence::NonPersistent(_) => 0,
+        };
         self.runtime_host
             .client_projection
             .coordinator
-            .install_projection(session, capabilities, generation);
+            .install_projection(
+                session,
+                capabilities,
+                generation,
+                committed_session_sequence,
+            );
     }
 
     #[allow(dead_code)]
