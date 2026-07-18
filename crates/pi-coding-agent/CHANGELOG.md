@@ -1,5 +1,20 @@
 # Changes
 
+## 0.4.0 - Unreleased
+
+### Runtime Integrity
+
+- PluginLoad now reuses its admitted operation identity through persistent
+  transactions, public outcomes, projection, and ProductEvents.
+- PluginLoad publishes one typed Completed, Failed, or Aborted root terminal;
+  cancellation is no longer represented as failure, and completion follows
+  capability generation installation.
+
+### Release Status
+
+- This is partial `RIF-003` evidence. The owning task remains planned behind the
+  `0.4.0` supervisor, finalization, and outbox prerequisites.
+
 ## 0.3.0 - 2026-07-17
 
 ### Agent Runtime

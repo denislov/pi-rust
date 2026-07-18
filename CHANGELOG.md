@@ -1,5 +1,28 @@
 # Changes
 
+## 0.4.0 - Unreleased
+
+### Architecture And Planning
+
+- Added the dependency-reviewed `0.4.x` release train and independent `0.4.0`
+  through `0.4.5` release contracts.
+- Split the monolithic architecture document into normative principles, runtime,
+  extension-platform, dependency, and testing contracts, plus versioned current
+  state, ADRs, and migration evidence.
+- Accepted the runtime-owner/finalization and `RecoveryPending` management
+  decisions; future extension decisions remain blocked on their named prototypes.
+
+### Runtime Integrity
+
+- Converged PluginLoad on the admitted operation identity and typed
+  Completed/Failed/Aborted ProductEvent terminal evidence, with completion after
+  capability generation installation.
+
+### Release Status
+
+- `RIF-005` is complete and `RIF-006` is in progress. Workspace packages remain
+  at `0.3.1` until all `0.4.0` implementation, debt, and release gates close.
+
 ## 0.3.1 - 2026-07-18
 
 ### Added
