@@ -495,7 +495,33 @@ pub(crate) fn terminal_operation_kind(
 pub(crate) fn recovered_product_terminal_operation(
     kind: OperationKind,
 ) -> Option<CodingAgentProductEventTerminalOperation> {
-    let kind = match kind {
+    Some(CodingAgentProductEventTerminalOperation {
+        kind: recovery_terminal_operation_kind(kind)?,
+        status: CodingAgentProductEventTerminalStatus::Recovered,
+    })
+}
+
+pub(crate) fn recovery_resolution_terminal_operation(
+    kind: OperationKind,
+    status: CodingAgentProductEventTerminalStatus,
+) -> Option<CodingAgentProductEventTerminalOperation> {
+    if !matches!(
+        status,
+        CodingAgentProductEventTerminalStatus::Failed
+            | CodingAgentProductEventTerminalStatus::Aborted
+    ) {
+        return None;
+    }
+    Some(CodingAgentProductEventTerminalOperation {
+        kind: recovery_terminal_operation_kind(kind)?,
+        status,
+    })
+}
+
+fn recovery_terminal_operation_kind(
+    kind: OperationKind,
+) -> Option<CodingAgentProductEventTerminalOperationKind> {
+    Some(match kind {
         OperationKind::Prompt => CodingAgentProductEventTerminalOperationKind::Prompt,
         OperationKind::Compact => CodingAgentProductEventTerminalOperationKind::Compact,
         OperationKind::BranchSummary => CodingAgentProductEventTerminalOperationKind::BranchSummary,
@@ -512,10 +538,6 @@ pub(crate) fn recovered_product_terminal_operation(
         | OperationKind::SwitchActiveLeaf
         | OperationKind::SetSessionTreeLabel
         | OperationKind::SetDefaultAgentProfile => return None,
-    };
-    Some(CodingAgentProductEventTerminalOperation {
-        kind,
-        status: CodingAgentProductEventTerminalStatus::Recovered,
     })
 }
 

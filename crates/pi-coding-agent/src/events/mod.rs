@@ -97,6 +97,13 @@ pub enum CodingAgentProductEventTerminalStatus {
     Recovered,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CodingAgentRecoveryResolution {
+    Failed,
+    Aborted,
+}
+
 impl CodingAgentProductEventTerminalStatus {
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -561,6 +568,15 @@ pub enum CodingAgentWorkflowProductEvent {
         #[serde(default)]
         capability_generation: Option<u64>,
     },
+    OperationRecoveryResolved {
+        operation_id: String,
+        recovery_id: String,
+        resolution: CodingAgentRecoveryResolution,
+        reason: String,
+        record_version: u64,
+        descriptor_revision: u16,
+        capability_generation: Option<u64>,
+    },
     OperationRecovered {
         operation_id: String,
         recovery_id: String,
@@ -737,6 +753,9 @@ impl CodingAgentProductEventKind {
             Self::Workflow(CodingAgentWorkflowProductEvent::OperationRecoveryPending {
                 ..
             }) => "operation_recovery_pending",
+            Self::Workflow(CodingAgentWorkflowProductEvent::OperationRecoveryResolved {
+                ..
+            }) => "operation_recovery_resolved",
             Self::Workflow(CodingAgentWorkflowProductEvent::OperationRecovered { .. }) => {
                 "operation_recovered"
             }

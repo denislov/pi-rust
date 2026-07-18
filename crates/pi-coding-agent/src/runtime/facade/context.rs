@@ -119,6 +119,42 @@ pub struct CodingAgentRecoveryPending {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodingAgentRecoveryResolutionRequest {
+    pub operation_id: String,
+    pub recovery_id: String,
+    pub expected_record_version: u64,
+    pub expected_descriptor_revision: u16,
+    pub expected_capability_generation: Option<u64>,
+    pub resolution: super::CodingAgentRecoveryResolution,
+    pub reason: String,
+}
+
+impl CodingAgentRecoveryResolutionRequest {
+    pub fn from_pending(
+        pending: &CodingAgentRecoveryPending,
+        resolution: super::CodingAgentRecoveryResolution,
+        reason: impl Into<String>,
+    ) -> Self {
+        Self {
+            operation_id: pending.operation_id.clone(),
+            recovery_id: pending.recovery_id.clone(),
+            expected_record_version: pending.record_version,
+            expected_descriptor_revision: pending.descriptor_revision,
+            expected_capability_generation: pending.capability_generation,
+            resolution,
+            reason: reason.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodingAgentRecoveryResolutionResult {
+    pub operation_id: String,
+    pub recovery_id: String,
+    pub resolution: super::CodingAgentRecoveryResolution,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodingAgentSessionSummary {
     pub session_id: String,
     pub session_dir: PathBuf,

@@ -420,6 +420,21 @@ pub enum ProtocolEvent {
         #[serde(rename = "capabilityGeneration")]
         capability_generation: Option<u64>,
     },
+    #[serde(rename = "operation_recovery_resolved")]
+    OperationRecoveryResolved {
+        #[serde(rename = "operationId")]
+        operation_id: String,
+        #[serde(rename = "recoveryId")]
+        recovery_id: String,
+        resolution: String,
+        reason: String,
+        #[serde(rename = "recordVersion")]
+        record_version: u64,
+        #[serde(rename = "descriptorRevision")]
+        descriptor_revision: u16,
+        #[serde(rename = "capabilityGeneration")]
+        capability_generation: Option<u64>,
+    },
     #[serde(rename = "operation_recovered")]
     OperationRecovered {
         #[serde(rename = "operationId")]

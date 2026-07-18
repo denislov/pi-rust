@@ -312,6 +312,29 @@ impl CodingProtocolEventAdapter {
                 capability_generation: *capability_generation,
             }],
             CodingAgentProductEventKind::Workflow(
+                CodingAgentWorkflowProductEvent::OperationRecoveryResolved {
+                    operation_id,
+                    recovery_id,
+                    resolution,
+                    reason,
+                    record_version,
+                    descriptor_revision,
+                    capability_generation,
+                },
+            ) => vec![ProtocolEvent::OperationRecoveryResolved {
+                operation_id: operation_id.clone(),
+                recovery_id: recovery_id.clone(),
+                resolution: match resolution {
+                    crate::events::CodingAgentRecoveryResolution::Failed => "failed",
+                    crate::events::CodingAgentRecoveryResolution::Aborted => "aborted",
+                }
+                .into(),
+                reason: reason.clone(),
+                record_version: *record_version,
+                descriptor_revision: *descriptor_revision,
+                capability_generation: *capability_generation,
+            }],
+            CodingAgentProductEventKind::Workflow(
                 CodingAgentWorkflowProductEvent::OperationRecovered {
                     operation_id,
                     recovery_id,

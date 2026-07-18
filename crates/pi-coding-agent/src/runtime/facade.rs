@@ -2,6 +2,7 @@ mod connection;
 pub(crate) mod context;
 mod control;
 mod lifecycle;
+mod recovery;
 #[cfg(test)]
 mod test_support;
 #[cfg(test)]
@@ -19,9 +20,9 @@ pub use crate::events::{
     CodingAgentProductEventProfileKind, CodingAgentProductEventReplacement,
     CodingAgentProductEventTerminalOperation, CodingAgentProductEventTerminalOperationKind,
     CodingAgentProductEventTerminalStatus, CodingAgentProductEventUsage,
-    CodingAgentProfileProductEvent, CodingAgentRuntimeProductEvent, CodingAgentSessionProductEvent,
-    CodingAgentSessionWriteFailureStatus, CodingAgentTeamProductEvent, CodingAgentToolProductEvent,
-    CodingAgentWorkflowProductEvent,
+    CodingAgentProfileProductEvent, CodingAgentRecoveryResolution, CodingAgentRuntimeProductEvent,
+    CodingAgentSessionProductEvent, CodingAgentSessionWriteFailureStatus,
+    CodingAgentTeamProductEvent, CodingAgentToolProductEvent, CodingAgentWorkflowProductEvent,
 };
 #[allow(unused_imports)]
 pub(crate) use crate::events::{ProductEvent, ProductEventSequence};
@@ -76,6 +77,7 @@ pub use crate::runtime::error::{CodingAgentLifecycleRejection, CodingSessionErro
 pub use crate::runtime::execution::CodingAgentOperationTask;
 pub use crate::runtime::facade::context::{
     CapabilityStatus, CodingAgentCapabilities, CodingAgentRecoveryPending,
+    CodingAgentRecoveryResolutionRequest, CodingAgentRecoveryResolutionResult,
     CodingAgentSessionOptions, CodingAgentSessionSummary, CodingAgentSessionView,
 };
 pub(crate) use crate::runtime::facade::context::{

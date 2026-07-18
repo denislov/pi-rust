@@ -301,6 +301,143 @@ mod cases {
     }
 
     #[tokio::test]
+    async fn recovery_resolution_is_version_guarded_audited_terminal_and_restartable() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = crate::session::repository::SessionLogStore::new(temp.path());
+        let handle = store
+            .create_session(crate::session::repository::CreateSessionOptions::new(
+                "sess_recovery_resolve",
+                "2026-07-19T00:00:00Z",
+            ))
+            .unwrap();
+        store
+            .append_events(
+                &handle,
+                &[SessionEventEnvelope::new(
+                    "sess_recovery_resolve",
+                    "evt_started",
+                    "2026-07-19T00:00:01Z",
+                    SessionEventData::OperationStarted {
+                        operation: crate::session::event::OperationKind::Prompt,
+                        runtime_generation: crate::session::event::PersistedRuntimeGenerationRef {
+                            profile_id: Some("default".into()),
+                            capability_generation: Some(11),
+                        },
+                    },
+                )
+                .with_operation_id("op_recovery_resolve")],
+            )
+            .unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_recovery_resolve")
+            .with_session_log_root(temp.path());
+        let mut session = CodingAgentSession::open(options.clone()).await.unwrap();
+        let pending = session.recovery_pending().unwrap().pop().unwrap();
+        let mut stale = crate::runtime::facade::CodingAgentRecoveryResolutionRequest::from_pending(
+            &pending,
+            crate::events::CodingAgentRecoveryResolution::Failed,
+            "operator rejected uncertain commit",
+        );
+        stale.expected_record_version += 1;
+        let error = session.resolve_recovery(stale).unwrap_err();
+        assert!(error.to_string().contains("version is stale"));
+        assert_eq!(session.recovery_pending().unwrap(), vec![pending.clone()]);
+
+        let mut receiver = session.subscribe_product_events();
+        let _pending_event = receiver.try_recv().unwrap().unwrap();
+        let result = session
+            .resolve_recovery(
+                crate::runtime::facade::CodingAgentRecoveryResolutionRequest::from_pending(
+                    &pending,
+                    crate::events::CodingAgentRecoveryResolution::Failed,
+                    "token=super-secret-value operator rejected uncertain commit",
+                ),
+            )
+            .unwrap();
+        assert_eq!(result.operation_id, "op_recovery_resolve");
+        assert_eq!(result.recovery_id, pending.recovery_id);
+        assert_eq!(
+            result.resolution,
+            crate::events::CodingAgentRecoveryResolution::Failed
+        );
+        assert!(session.recovery_pending().unwrap().is_empty());
+        let terminal = receiver.try_recv().unwrap().unwrap();
+        assert_eq!(
+            terminal.terminal_status(),
+            Some(crate::events::CodingAgentProductEventTerminalStatus::Failed)
+        );
+        assert_eq!(
+            terminal.terminal_operation(),
+            Some(crate::events::CodingAgentProductEventTerminalOperation {
+                kind: crate::events::CodingAgentProductEventTerminalOperationKind::Prompt,
+                status: crate::events::CodingAgentProductEventTerminalStatus::Failed,
+            })
+        );
+        assert!(matches!(
+            terminal.event(),
+            CodingAgentProductEventKind::Workflow(
+                CodingAgentWorkflowProductEvent::OperationRecoveryResolved {
+                    reason,
+                    descriptor_revision: 1,
+                    capability_generation: Some(11),
+                    ..
+                }
+            ) if reason.contains("token=<redacted>")
+                && !reason.contains("super-secret-value")
+        ));
+
+        let durable_outbox = store.read_outbox(&handle).unwrap();
+        assert!(durable_outbox.iter().any(|record| matches!(
+            record.draft.event,
+            CodingAgentProductEventKind::Workflow(
+                CodingAgentWorkflowProductEvent::OperationRecoveryResolved { .. }
+            )
+        )));
+
+        drop(session);
+        let reopened = CodingAgentSession::open(options).await.unwrap();
+        assert!(reopened.recovery_pending().unwrap().is_empty());
+        let restarted_events = reopened
+            .runtime_host
+            .event_hub
+            .service
+            .product_events_after(crate::events::ProductEventSequence::default())
+            .unwrap();
+        let redelivered_terminal = restarted_events
+            .into_iter()
+            .find(|event| {
+                matches!(
+                    event.event(),
+                    CodingAgentProductEventKind::Workflow(
+                        CodingAgentWorkflowProductEvent::OperationRecoveryResolved { .. }
+                    )
+                )
+            })
+            .unwrap();
+        assert_eq!(
+            redelivered_terminal.terminal_operation(),
+            Some(crate::events::CodingAgentProductEventTerminalOperation {
+                kind: crate::events::CodingAgentProductEventTerminalOperationKind::Prompt,
+                status: crate::events::CodingAgentProductEventTerminalStatus::Failed,
+            })
+        );
+        assert_eq!(redelivered_terminal.capability_generation(), Some(11));
+
+        let reopened_handle = store.open_session_id("sess_recovery_resolve").unwrap();
+        let serialized = store
+            .read_events(&reopened_handle)
+            .unwrap()
+            .into_iter()
+            .map(|event| serde_json::to_string(&event).unwrap())
+            .collect::<String>();
+        assert!(serialized.contains("operation.recovery_resolved"));
+        assert!(serialized.contains("operation.failed"));
+        assert!(serialized.contains("operation.terminal.recorded"));
+        assert!(serialized.contains("token=<redacted>"));
+        assert!(!serialized.contains("super-secret-value"));
+    }
+
+    #[tokio::test]
     async fn public_product_event_receiver_maps_internal_product_events() {
         let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
             .await
@@ -6355,6 +6492,9 @@ runtime = "lua"
                 CodingAgentWorkflowProductEvent::PromptAborted { .. } => "prompt_aborted",
                 CodingAgentWorkflowProductEvent::OperationRecoveryPending { .. } => {
                     "operation_recovery_pending"
+                }
+                CodingAgentWorkflowProductEvent::OperationRecoveryResolved { .. } => {
+                    "operation_recovery_resolved"
                 }
                 CodingAgentWorkflowProductEvent::OperationRecovered { .. } => "operation_recovered",
                 CodingAgentWorkflowProductEvent::PluginLoadCompleted { .. } => {

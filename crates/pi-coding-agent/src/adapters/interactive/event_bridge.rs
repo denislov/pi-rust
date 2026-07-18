@@ -471,6 +471,18 @@ impl CodingEventBridge {
                 ),
             }],
             CodingAgentProductEventKind::Workflow(
+                CodingAgentWorkflowProductEvent::OperationRecoveryResolved {
+                    operation_id,
+                    resolution,
+                    reason,
+                    ..
+                },
+            ) => vec![UiEvent::SystemNotice {
+                text: format!(
+                    "Operation {operation_id} recovery resolved as {resolution:?}: {reason}"
+                ),
+            }],
+            CodingAgentProductEventKind::Workflow(
                 CodingAgentWorkflowProductEvent::SelfHealingEditRepairAttempted {
                     path,
                     attempt,

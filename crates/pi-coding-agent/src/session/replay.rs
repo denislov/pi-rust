@@ -371,6 +371,7 @@ impl ReplayBuilder {
             | SessionEventData::SelfHealingEditStarted { .. }
             | SessionEventData::SelfHealingEditRepairAttempted { .. }
             | SessionEventData::SelfHealingEditCompleted { .. }
+            | SessionEventData::OperationRecoveryResolved { .. }
             | SessionEventData::MetadataUpdated { .. } => {}
             SessionEventData::SessionTreeLabelUpdated { entry_id, label } => {
                 self.tree_labels.insert(

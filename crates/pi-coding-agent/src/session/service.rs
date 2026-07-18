@@ -70,6 +70,15 @@ pub(crate) struct RecoveryPendingInspection {
     pub(crate) capability_generation: Option<u64>,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct RecoveryResolutionCommit {
+    pub(crate) operation_id: String,
+    pub(crate) recovery_id: String,
+    pub(crate) resolution: crate::events::CodingAgentRecoveryResolution,
+    pub(crate) operation_kind: crate::session::event::OperationKind,
+    pub(crate) draft: ProductEventDraft,
+}
+
 #[derive(Debug)]
 pub(crate) struct SessionService {
     #[allow(dead_code)]
@@ -1175,6 +1184,8 @@ impl SessionService {
                         status,
                         crate::session::replay::OperationReplayStatus::Recovered
                             | crate::session::replay::OperationReplayStatus::Committed
+                            | crate::session::replay::OperationReplayStatus::Failed
+                            | crate::session::replay::OperationReplayStatus::Aborted
                     )
                 })
                 && let Some(operation_id) = &record.operation_id
@@ -1247,6 +1258,181 @@ impl SessionService {
                 })
             })
             .collect()
+    }
+
+    pub(crate) fn resolve_recovery(
+        &self,
+        request: &crate::runtime::facade::CodingAgentRecoveryResolutionRequest,
+    ) -> Result<RecoveryResolutionCommit, CodingSessionError> {
+        let pending = self
+            .inspect_recovery_pending()?
+            .into_iter()
+            .find(|pending| pending.recovery_id == request.recovery_id)
+            .ok_or_else(|| CodingSessionError::Input {
+                message: format!(
+                    "unknown or already resolved recovery: {}",
+                    request.recovery_id
+                ),
+            })?;
+        if pending.operation_id != request.operation_id {
+            return Err(CodingSessionError::Input {
+                message: "recovery operation identity mismatch".into(),
+            });
+        }
+        if pending.record_version != request.expected_record_version {
+            return Err(CodingSessionError::Input {
+                message: "recovery record version is stale".into(),
+            });
+        }
+        if pending.descriptor_revision != request.expected_descriptor_revision {
+            return Err(CodingSessionError::Input {
+                message: "recovery descriptor revision is stale".into(),
+            });
+        }
+        if pending.capability_generation != request.expected_capability_generation {
+            return Err(CodingSessionError::Input {
+                message: "recovery capability generation is stale".into(),
+            });
+        }
+        let reason = request.reason.trim();
+        if reason.is_empty() {
+            return Err(CodingSessionError::Input {
+                message: "recovery resolution reason must not be empty".into(),
+            });
+        }
+        if reason.chars().count() > 1_200 {
+            return Err(CodingSessionError::Input {
+                message: "recovery resolution reason exceeds 1200 characters".into(),
+            });
+        }
+        let reason = crate::services::authorization::redact_sensitive_text(reason);
+        let operation_kind = self
+            .store
+            .read_events(&self.handle)?
+            .into_iter()
+            .find_map(|event| match event.data {
+                SessionEventData::OperationStarted { operation, .. }
+                    if event.operation_id.as_deref() == Some(request.operation_id.as_str()) =>
+                {
+                    Some(operation)
+                }
+                _ => None,
+            })
+            .ok_or_else(|| CodingSessionError::Session {
+                message: "recovery resolution requires the original operation kind".into(),
+            })?;
+        if matches!(
+            operation_kind,
+            crate::session::event::OperationKind::Other { .. }
+                | crate::session::event::OperationKind::SessionTreeLabel
+        ) {
+            return Err(CodingSessionError::UnsupportedCapability {
+                capability: "recovery resolution requires a durable root operation family".into(),
+            });
+        }
+        let persisted_resolution = match request.resolution {
+            crate::events::CodingAgentRecoveryResolution::Failed => {
+                crate::session::event::PersistedRecoveryResolution::Failed
+            }
+            crate::events::CodingAgentRecoveryResolution::Aborted => {
+                crate::session::event::PersistedRecoveryResolution::Aborted
+            }
+        };
+        let session_id = self.session_id().to_owned();
+        let observed_at = SystemClock.now_rfc3339();
+        let semantic_event_id = format!(
+            "{}/{}/recovery_resolution/v{}",
+            session_id, request.operation_id, pending.record_version
+        );
+        let mut ids = SystemIdGenerator;
+        let audit_event = SessionEventEnvelope::new(
+            session_id.clone(),
+            ids.next_event_id(),
+            observed_at.clone(),
+            SessionEventData::OperationRecoveryResolved {
+                recovery_id: pending.recovery_id.clone(),
+                record_version: pending.record_version,
+                descriptor_revision: pending.descriptor_revision,
+                capability_generation: pending.capability_generation,
+                resolution: persisted_resolution,
+                reason: reason.clone(),
+            },
+        )
+        .with_operation_id(request.operation_id.clone());
+        let status_event = SessionEventEnvelope::new(
+            session_id.clone(),
+            ids.next_event_id(),
+            observed_at.clone(),
+            match request.resolution {
+                crate::events::CodingAgentRecoveryResolution::Failed => {
+                    SessionEventData::OperationFailed {
+                        error_code: "recovery_resolved".into(),
+                        message: reason.clone(),
+                    }
+                }
+                crate::events::CodingAgentRecoveryResolution::Aborted => {
+                    SessionEventData::OperationAborted {
+                        reason: reason.clone(),
+                    }
+                }
+            },
+        )
+        .with_operation_id(request.operation_id.clone());
+        let terminal_event = SessionEventEnvelope::new(
+            session_id.clone(),
+            ids.next_event_id(),
+            observed_at.clone(),
+            SessionEventData::OperationTerminalRecorded {
+                status: match request.resolution {
+                    crate::events::CodingAgentRecoveryResolution::Failed => "failed",
+                    crate::events::CodingAgentRecoveryResolution::Aborted => "aborted",
+                }
+                .into(),
+                semantic_event_id: semantic_event_id.clone(),
+            },
+        )
+        .with_operation_id(request.operation_id.clone());
+        let draft = crate::events::recovery::RecoveryResolvedEvent {
+            operation_id: request.operation_id.clone(),
+            recovery_id: pending.recovery_id.clone(),
+            resolution: request.resolution,
+            reason,
+            session_id: session_id.clone(),
+            record_version: pending.record_version,
+            descriptor_revision: pending.descriptor_revision,
+            capability_generation: pending.capability_generation,
+        }
+        .into_product_draft();
+        let source_event_ids = vec![
+            audit_event.event_id.clone(),
+            status_event.event_id.clone(),
+            terminal_event.event_id.clone(),
+        ];
+        let outbox = DurableOutboxRecordCandidate::new(
+            semantic_event_id,
+            session_id,
+            Some(request.operation_id.clone()),
+            source_event_ids,
+            DurableOutboxRecordKind::OperationTerminal,
+            draft.clone(),
+        )
+        .map_err(|message| CodingSessionError::Session {
+            message: message.into(),
+        })?
+        .with_operation_kind(persisted_operation_kind_name(&operation_kind));
+        self.commit_writer_mutation_with_outbox(
+            vec![audit_event, status_event, terminal_event],
+            vec![outbox],
+            ManifestPatch::new().updated_at(observed_at),
+            Some(request.operation_id.clone()),
+        )?;
+        Ok(RecoveryResolutionCommit {
+            operation_id: request.operation_id.clone(),
+            recovery_id: pending.recovery_id,
+            resolution: request.resolution,
+            operation_kind,
+            draft,
+        })
     }
 
     fn apply_startup_recovery(&mut self) -> Result<(), CodingSessionError> {

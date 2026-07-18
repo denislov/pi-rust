@@ -207,7 +207,7 @@ impl CodingAgentSession {
     }
 }
 
-fn persisted_runtime_operation_kind(
+pub(super) fn persisted_runtime_operation_kind(
     kind: crate::session::event::OperationKind,
 ) -> Option<crate::runtime::control::OperationKind> {
     use crate::runtime::control::OperationKind as RuntimeKind;

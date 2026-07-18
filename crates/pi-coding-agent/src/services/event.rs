@@ -658,6 +658,21 @@ impl EventService {
         draft: ProductEventDraft,
         operation_kind_hint: Option<crate::runtime::control::OperationKind>,
     ) -> ProductEvent {
+        let recovery_resolution_generation = match &draft.event {
+            CodingAgentProductEventKind::Workflow(
+                crate::events::CodingAgentWorkflowProductEvent::OperationRecoveryResolved {
+                    capability_generation,
+                    ..
+                },
+            ) => *capability_generation,
+            _ => None,
+        };
+        let is_recovery_resolution = matches!(
+            &draft.event,
+            CodingAgentProductEventKind::Workflow(
+                crate::events::CodingAgentWorkflowProductEvent::OperationRecoveryResolved { .. }
+            )
+        );
         let evidence = match &draft.event {
             CodingAgentProductEventKind::Workflow(
                 crate::events::CodingAgentWorkflowProductEvent::PromptCompleted { .. },
@@ -725,10 +740,19 @@ impl EventService {
             draft,
             ProductEventEmissionContext {
                 operation_kind: operation_kind_hint,
+                capability_generation: recovery_resolution_generation
+                    .map(crate::runtime::capability::CapabilityGeneration::new),
                 ..ProductEventEmissionContext::default()
             },
             move |operation_kind, terminal_status| {
                 terminal_status.and_then(|status| {
+                    if is_recovery_resolution {
+                        return operation_kind.and_then(|kind| {
+                            crate::runtime::outcome::recovery_resolution_terminal_operation(
+                                kind, status,
+                            )
+                        });
+                    }
                     let kind = operation_kind.or_else(|| {
                         evidence.map(|evidence| match evidence {
                             crate::runtime::outcome::OperationRootTerminalEvidence::CompactionCompleted => {

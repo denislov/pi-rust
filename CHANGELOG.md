@@ -121,6 +121,13 @@
   record version, descriptor revision, and capability generation through the
   durable fact/outbox, public Rust API/events, and JSON/RPC protocol, with
   defaults for pending facts written before these fields were introduced.
+- Added trusted-host `resolve_recovery()` control for durable pending operations.
+  Requests must match the recovery/operation identity, record version,
+  descriptor revision, and capability generation, and may resolve only to
+  Failed or Aborted. The bounded reason is secret-redacted before the writer
+  atomically commits the audit fact, terminal fact, terminal marker, and
+  `OperationTerminal` outbox; EventHub publishes only after commit and restart
+  redelivery preserves the original operation family and terminal status.
 - Began `RIF-002`: `OperationSupervisor` now owns typed immutable
   `FinalizationDecision` creation for every dispatch path. Decisions freeze the
   admitted identity, lineage, descriptor, capability generation, terminal

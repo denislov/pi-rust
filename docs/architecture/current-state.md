@@ -95,20 +95,25 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   resolves durable evidence to `Committed`/`DefinitelyFailed`/`InDoubt`;
   partial commits with evidence enter non-terminal `RecoveryPending`, and
   EventHub emits typed `OperationRecoveryPending` evidence without terminal
-  fields. Missing evidence preserves the original `PartialCommit`; retry,
-  operator resolution, and final operation-terminal outbox commit remain open.
+  fields. Missing evidence preserves the original `PartialCommit`; automatic
+  retry and authenticated remote control remain open.
   The public session facade now exposes a read-only `recovery_pending()` list
-  with stable recovery IDs and persisted operation-kind hints; retry/resolve
-  controls are not yet exposed. Startup scan atomically persists a non-terminal
+  with stable recovery IDs and persisted operation-kind hints. Its trusted-host
+  `resolve_recovery()` control accepts only Failed/Aborted and rejects stale
+  record/descriptor/capability evidence. Startup scan atomically persists a non-terminal
   `operation.recovery_pending` fact plus `Recovery` outbox record, keeps the
   replayed operation `InDoubt`, and reuses the same session/operation-derived
   recovery ID and outbox record across repeated opens. Recovery evidence v1
   carries record version, admitted descriptor revision, and capability
   generation through durable facts/outbox, public inspection/events, and the
-  JSON/RPC protocol; legacy pending facts deserialize as v1.
+  JSON/RPC protocol; legacy pending facts deserialize as v1. Successful local
+  resolution writes a redacted audit fact, Failed/Aborted fact, terminal marker,
+  and `OperationTerminal` outbox atomically, publishes only after commit, and
+  redelivers the original family terminal after restart.
 - Commit uncertainty is represented by `PartialCommit`, and durable
-  `RecoveryPending` now survives caller exit/restart. Bounded retry, explicit
-  resolve/audit, and subsequent-work policy remain incomplete.
+  `RecoveryPending` now survives caller exit/restart. Bounded retry,
+  authenticated RPC control/audit identity, and subsequent-work policy remain
+  incomplete.
 
 ## Events, Sessions, And Clients
 

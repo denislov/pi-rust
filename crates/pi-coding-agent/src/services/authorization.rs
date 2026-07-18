@@ -753,7 +753,7 @@ fn mutation_content_preview(context: &BeforeToolCallContext) -> Option<String> {
     (!bounded.is_empty()).then(|| redact_sensitive_text(&bounded))
 }
 
-fn redact_sensitive_text(text: &str) -> String {
+pub(crate) fn redact_sensitive_text(text: &str) -> String {
     static ASSIGNMENT: OnceLock<Regex> = OnceLock::new();
     static JSON_FIELD: OnceLock<Regex> = OnceLock::new();
     static BEARER: OnceLock<Regex> = OnceLock::new();

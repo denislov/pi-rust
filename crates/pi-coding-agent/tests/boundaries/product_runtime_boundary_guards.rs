@@ -170,6 +170,7 @@ fn final_receiver_aware_compatibility_absence_and_retained_api_guard() {
             "capabilities",
             "view",
             "recovery_pending",
+            "resolve_recovery",
             "agent_profiles",
             "team_profiles",
             "profile_diagnostics",

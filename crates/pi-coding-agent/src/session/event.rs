@@ -207,6 +207,16 @@ pub(crate) enum SessionEventData {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         capability_generation: Option<u64>,
     },
+    #[serde(rename = "operation.recovery_resolved")]
+    OperationRecoveryResolved {
+        recovery_id: String,
+        record_version: u64,
+        descriptor_revision: u16,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        capability_generation: Option<u64>,
+        resolution: PersistedRecoveryResolution,
+        reason: String,
+    },
     #[serde(rename = "operation.recovered")]
     OperationRecovered { reason: String, recovery_id: String },
     #[serde(rename = "turn.started")]
@@ -286,6 +296,13 @@ pub(crate) enum SessionEventData {
     MetadataUpdated { key: String, value: Value },
     #[serde(rename = "active_leaf.changed")]
     ActiveLeafChanged { leaf_id: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PersistedRecoveryResolution {
+    Failed,
+    Aborted,
 }
 
 fn default_recovery_record_version() -> u64 {
