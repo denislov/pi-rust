@@ -34,7 +34,7 @@ use crate::session::repository::{
     CreateSessionOptions, ManifestPatch, SessionCreateError, SessionHandle, SessionLogStore,
     SessionSummary,
 };
-use crate::session::transaction::TurnTransaction;
+use crate::session::transaction::{SessionTransactionWriter, TurnTransaction};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct StartupRecoveryMarker {
@@ -51,6 +51,7 @@ pub(crate) struct SessionService {
     #[allow(dead_code)]
     store: SessionLogStore,
     handle: SessionHandle,
+    transaction_writer: SessionTransactionWriter,
     startup_recovery_markers: Vec<StartupRecoveryMarker>,
 }
 
@@ -144,9 +145,11 @@ enum SessionCopyKind {
 
 impl SessionService {
     fn from_handle(store: SessionLogStore, handle: SessionHandle) -> Self {
+        let transaction_writer = SessionTransactionWriter::new(store.clone(), handle.clone());
         Self {
             store,
             handle,
+            transaction_writer,
             startup_recovery_markers: Vec::new(),
         }
     }
@@ -535,8 +538,8 @@ impl SessionService {
         snapshot: &OperationCapabilitySnapshot,
     ) -> PromptTurnTransaction {
         TurnTransaction::begin_admitted_with_runtime_generation(
-            &self.store,
-            self.handle.clone(),
+            self.transaction_writer(),
+            self.session_id().to_owned(),
             SystemIdGenerator,
             SystemClock,
             OperationKind::Prompt,
@@ -550,8 +553,8 @@ impl SessionService {
         snapshot: &OperationCapabilitySnapshot,
     ) -> PromptTurnTransaction {
         TurnTransaction::begin_admitted_with_runtime_generation(
-            &self.store,
-            self.handle.clone(),
+            self.transaction_writer(),
+            self.session_id().to_owned(),
             SystemIdGenerator,
             SystemClock,
             OperationKind::ManualCompaction,
@@ -565,8 +568,8 @@ impl SessionService {
         snapshot: &OperationCapabilitySnapshot,
     ) -> PromptTurnTransaction {
         TurnTransaction::begin_admitted_with_runtime_generation(
-            &self.store,
-            self.handle.clone(),
+            self.transaction_writer(),
+            self.session_id().to_owned(),
             SystemIdGenerator,
             SystemClock,
             OperationKind::BranchSummary,
@@ -591,8 +594,8 @@ impl SessionService {
         snapshot: &OperationCapabilitySnapshot,
     ) -> PromptTurnTransaction {
         TurnTransaction::begin_admitted_with_runtime_generation(
-            &self.store,
-            self.handle.clone(),
+            self.transaction_writer(),
+            self.session_id().to_owned(),
             SystemIdGenerator,
             SystemClock,
             OperationKind::PluginLoad,
@@ -606,8 +609,8 @@ impl SessionService {
         snapshot: &OperationCapabilitySnapshot,
     ) -> PromptTurnTransaction {
         TurnTransaction::begin_admitted_with_runtime_generation(
-            &self.store,
-            self.handle.clone(),
+            self.transaction_writer(),
+            self.session_id().to_owned(),
             SystemIdGenerator,
             SystemClock,
             OperationKind::SelfHealingEdit,
@@ -991,6 +994,10 @@ impl SessionService {
             store: self.store.clone(),
             handle: self.handle.clone(),
         }
+    }
+
+    fn transaction_writer(&self) -> SessionTransactionWriter {
+        self.transaction_writer.clone()
     }
 
     #[allow(dead_code)]

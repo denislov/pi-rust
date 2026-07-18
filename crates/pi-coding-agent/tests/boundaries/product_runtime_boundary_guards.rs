@@ -2393,6 +2393,67 @@ fn runtime_host_owner_graph_and_first_writer_command_are_explicit() {
 }
 
 #[test]
+fn turn_transaction_stages_through_typed_writer_commands_without_repository_handles() {
+    let scan = SourceScan::new();
+    let transaction = fs::read_to_string(scan.crate_root.join("src/session/transaction.rs"))
+        .expect("read transaction source");
+    let struct_start = transaction
+        .find("pub(crate) struct TurnTransaction")
+        .expect("TurnTransaction declaration");
+    let impl_start = transaction[struct_start..]
+        .find("impl<G, C> TurnTransaction")
+        .map(|offset| struct_start + offset)
+        .expect("TurnTransaction implementation");
+    let fields = &transaction[struct_start..impl_start];
+    assert!(fields.contains("writer: SessionTransactionWriter"));
+    assert!(fields.contains("session_id: String"));
+    assert!(
+        !fields.contains("store: SessionLogStore") && !fields.contains("handle: SessionHandle"),
+        "workflow transaction must not retain raw repository authority"
+    );
+    for command in [
+        "SessionTransactionWriterCommand::Checkpoint",
+        "SessionTransactionWriterCommand::Finalize",
+    ] {
+        assert!(
+            transaction.contains(command),
+            "missing typed transaction writer command: {command}"
+        );
+    }
+    for transport in [
+        "const SESSION_TRANSACTION_WRITER_CAPACITY: usize",
+        "sync_channel::<SessionTransactionWriterEnvelope>",
+        ".try_send(envelope)",
+        "session transaction writer queue is full",
+    ] {
+        assert!(
+            transaction.contains(transport),
+            "missing bounded transaction writer transport contract: {transport}"
+        );
+    }
+    let service = fs::read_to_string(scan.crate_root.join("src/session/service.rs"))
+        .expect("read session service source");
+    assert!(
+        service.contains("transaction_writer: SessionTransactionWriter"),
+        "one SessionService owner must share one transaction writer transport"
+    );
+
+    let mut workflow_repository_leaks = Vec::new();
+    for path in rust_files_under(&scan.crate_root.join("src/operations")) {
+        let source = fs::read_to_string(&path).expect("read workflow source");
+        let production = production_source(&sanitize_rust_source(&source));
+        if production.contains("SessionLogStore") || production.contains("SessionHandle") {
+            workflow_repository_leaks.push(relative_path(&scan.repo_root, &path));
+        }
+    }
+    assert!(
+        workflow_repository_leaks.is_empty(),
+        "workflow sources must not acquire raw session repository handles:\n{}",
+        workflow_repository_leaks.join("\n")
+    );
+}
+
+#[test]
 fn delegated_child_flows_require_scheduler_lineage_admission() {
     let scan = SourceScan::new();
     for relative in [

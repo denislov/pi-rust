@@ -1,4 +1,7 @@
 use std::collections::HashSet;
+use std::sync::mpsc::{SyncSender, TrySendError, sync_channel};
+
+const SESSION_TRANSACTION_WRITER_CAPACITY: usize = 32;
 
 use pi_ai::api::conversation::Usage;
 use serde_json::Value;
@@ -31,6 +34,103 @@ enum TransactionState {
     InDoubt,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct SessionTransactionWriter {
+    sender: SyncSender<SessionTransactionWriterEnvelope>,
+}
+
+#[derive(Debug)]
+struct SessionTransactionWriterEnvelope {
+    command: SessionTransactionWriterCommand,
+    reply: SyncSender<Result<(), CodingSessionError>>,
+}
+
+#[derive(Debug)]
+enum SessionTransactionWriterCommand {
+    Checkpoint {
+        events: Vec<SessionEventEnvelope>,
+    },
+    Finalize {
+        events: Vec<SessionEventEnvelope>,
+        updated_at: String,
+        active_leaf_id: Option<String>,
+    },
+    #[cfg(test)]
+    Block {
+        entered: SyncSender<()>,
+        release: std::sync::mpsc::Receiver<()>,
+    },
+}
+
+impl SessionTransactionWriter {
+    pub(crate) fn new(store: SessionLogStore, handle: SessionHandle) -> Self {
+        let (sender, receiver) =
+            sync_channel::<SessionTransactionWriterEnvelope>(SESSION_TRANSACTION_WRITER_CAPACITY);
+        std::thread::spawn(move || {
+            while let Ok(envelope) = receiver.recv() {
+                let result = execute_writer_command(&store, &handle, envelope.command);
+                let _ = envelope.reply.send(result);
+            }
+        });
+        Self { sender }
+    }
+
+    fn execute(&self, command: SessionTransactionWriterCommand) -> Result<(), CodingSessionError> {
+        let (reply, response) = sync_channel(1);
+        let envelope = SessionTransactionWriterEnvelope { command, reply };
+        match self.sender.try_send(envelope) {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) => {
+                return Err(CodingSessionError::Session {
+                    message: "session transaction writer queue is full".into(),
+                });
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                return Err(CodingSessionError::Session {
+                    message: "session transaction writer is closed".into(),
+                });
+            }
+        }
+        response.recv().map_err(|_| CodingSessionError::Session {
+            message: "session transaction writer closed before replying".into(),
+        })?
+    }
+}
+
+fn execute_writer_command(
+    store: &SessionLogStore,
+    handle: &SessionHandle,
+    command: SessionTransactionWriterCommand,
+) -> Result<(), CodingSessionError> {
+    match command {
+        SessionTransactionWriterCommand::Checkpoint { events } => {
+            store.append_events(handle, &events)
+        }
+        SessionTransactionWriterCommand::Finalize {
+            events,
+            updated_at,
+            active_leaf_id,
+        } => {
+            store.append_events(handle, &events)?;
+            if active_leaf_id.is_some() {
+                store.update_manifest(
+                    handle,
+                    ManifestPatch::new()
+                        .updated_at(updated_at)
+                        .active_leaf_id(active_leaf_id),
+                )?;
+            }
+            Ok(())
+        }
+        #[cfg(test)]
+        SessionTransactionWriterCommand::Block { entered, release } => {
+            let _ = entered.send(());
+            let _ = release.recv();
+            Ok(())
+        }
+    }
+}
+
 impl TransactionState {
     fn as_str(self) -> &'static str {
         match self {
@@ -49,8 +149,8 @@ where
     G: IdGenerator,
     C: Clock,
 {
-    store: SessionLogStore,
-    handle: SessionHandle,
+    writer: SessionTransactionWriter,
+    session_id: String,
     ids: G,
     clock: C,
     operation_id: String,
@@ -95,9 +195,10 @@ where
         runtime_generation: PersistedRuntimeGenerationRef,
     ) -> Self {
         let operation_id = ids.next_root_operation_id();
+        let session_id = handle.manifest().session_id.clone();
         Self::begin_admitted_with_runtime_generation(
-            store,
-            handle,
+            SessionTransactionWriter::new(store.clone(), handle),
+            session_id,
             ids,
             clock,
             operation,
@@ -107,8 +208,8 @@ where
     }
 
     pub(crate) fn begin_admitted_with_runtime_generation(
-        store: &SessionLogStore,
-        handle: SessionHandle,
+        writer: SessionTransactionWriter,
+        session_id: String,
         mut ids: G,
         clock: C,
         operation: OperationKind,
@@ -117,8 +218,8 @@ where
     ) -> Self {
         let turn_id = ids.next_turn_id();
         let mut transaction = Self {
-            store: store.clone(),
-            handle,
+            writer,
+            session_id,
             ids,
             clock,
             operation_id,
@@ -468,21 +569,7 @@ where
         self.push_event(SessionEventData::OperationCommitted {
             new_leaf_id: new_leaf_id.clone(),
         });
-        self.flush_pending()?;
-        if let Some(leaf_id) = new_leaf_id {
-            if let Err(error) = self.store.update_manifest(
-                &self.handle,
-                ManifestPatch::new()
-                    .updated_at(self.clock.now_rfc3339())
-                    .active_leaf_id(Some(leaf_id)),
-            ) {
-                self.state = TransactionState::InDoubt;
-                return Err(CodingSessionError::PartialCommit {
-                    operation_id: self.operation_id.clone(),
-                    message: error.to_string(),
-                });
-            }
-        }
+        self.finalize_pending(new_leaf_id)?;
         self.state = TransactionState::Committed;
         Ok(())
     }
@@ -497,7 +584,7 @@ where
         let reason = reason.into();
         self.cancel_open_lifecycle_events(&reason);
         self.push_event(SessionEventData::OperationAborted { reason });
-        self.flush_pending()?;
+        self.finalize_pending(None)?;
         self.state = TransactionState::Aborted;
         Ok(())
     }
@@ -519,14 +606,14 @@ where
             error_code,
             message,
         });
-        self.flush_pending()?;
+        self.finalize_pending(None)?;
         self.state = TransactionState::Failed;
         Ok(())
     }
 
     fn push_event(&mut self, data: SessionEventData) {
         let event = SessionEventEnvelope::new(
-            self.handle.manifest().session_id.clone(),
+            self.session_id.clone(),
             self.ids.next_event_id(),
             self.clock.now_rfc3339(),
             data,
@@ -537,7 +624,34 @@ where
     }
 
     fn flush_pending(&mut self) -> Result<(), CodingSessionError> {
-        if let Err(error) = self.store.append_events(&self.handle, &self.pending_events) {
+        if let Err(error) = self
+            .writer
+            .execute(SessionTransactionWriterCommand::Checkpoint {
+                events: self.pending_events.clone(),
+            })
+        {
+            self.state = TransactionState::InDoubt;
+            return Err(CodingSessionError::PartialCommit {
+                operation_id: self.operation_id.clone(),
+                message: error.to_string(),
+            });
+        }
+        self.pending_events.clear();
+        Ok(())
+    }
+
+    fn finalize_pending(
+        &mut self,
+        active_leaf_id: Option<String>,
+    ) -> Result<(), CodingSessionError> {
+        if let Err(error) = self
+            .writer
+            .execute(SessionTransactionWriterCommand::Finalize {
+                events: self.pending_events.clone(),
+                updated_at: self.clock.now_rfc3339(),
+                active_leaf_id,
+            })
+        {
             self.state = TransactionState::InDoubt;
             return Err(CodingSessionError::PartialCommit {
                 operation_id: self.operation_id.clone(),
@@ -653,6 +767,43 @@ mod tests {
             FixedClock::new("2026-06-29T00:00:01Z"),
             OperationKind::Prompt,
         )
+    }
+
+    #[test]
+    fn bounded_writer_rejects_when_queue_is_saturated() {
+        let (_temp, store, handle) = setup();
+        let writer = SessionTransactionWriter::new(store, handle);
+        let (entered_sender, entered_receiver) = sync_channel(1);
+        let (release_sender, release_receiver) = sync_channel(1);
+        let (block_reply, _block_response) = sync_channel(1);
+        writer
+            .sender
+            .try_send(SessionTransactionWriterEnvelope {
+                command: SessionTransactionWriterCommand::Block {
+                    entered: entered_sender,
+                    release: release_receiver,
+                },
+                reply: block_reply,
+            })
+            .unwrap();
+        entered_receiver.recv().unwrap();
+
+        for _ in 0..SESSION_TRANSACTION_WRITER_CAPACITY {
+            let (reply, _response) = sync_channel(1);
+            writer
+                .sender
+                .try_send(SessionTransactionWriterEnvelope {
+                    command: SessionTransactionWriterCommand::Checkpoint { events: Vec::new() },
+                    reply,
+                })
+                .unwrap();
+        }
+
+        let error = writer
+            .execute(SessionTransactionWriterCommand::Checkpoint { events: Vec::new() })
+            .unwrap_err();
+        assert!(error.to_string().contains("writer queue is full"));
+        release_sender.send(()).unwrap();
     }
 
     fn event_kinds(events: &[SessionEventEnvelope]) -> Vec<&'static str> {

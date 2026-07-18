@@ -31,8 +31,12 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   persistence and replay-derived pending/recovery owner state as one coordinator
   action. Delegation approval/rejection durable facts and pending-queue changes
   also share one writer action, while child execution and EventHub publication
-  occur after the writer reply. Bounded transport and the remaining session
-  mutations are still active `RIF-008` work.
+  occur after the writer reply. `TurnTransaction` no longer owns raw store/handle
+  fields; checkpoint and finalization use typed `SessionTransactionWriter`
+  commands while staged events remain workflow-local. Transactions created by
+  one `SessionService` share a bounded writer actor and reject queue saturation.
+  Deterministic actor shutdown, independently opened same-session coordination,
+  and remaining direct session mutations are active `RIF-008` work.
 - `IntentRouter`, `OperationScheduler`, `OperationControl`, typed operation
   metadata, root/child lineage, capability snapshots, and generation-scoped
   cancellation exist.

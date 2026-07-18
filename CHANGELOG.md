@@ -42,6 +42,10 @@
   ClientProjectionCoordinator ownership. Added the identity-bearing session
   writer command/reply protocol and routed default-profile, fork, active-leaf,
   tree-label, and delegation approval/rejection mutations through it.
+- Removed raw SessionLogStore/SessionHandle authority from TurnTransaction;
+  workflow-local staging now reaches persistence through typed checkpoint and
+  finalize writer commands over a shared bounded transaction actor, preserving
+  checkpoint and PartialCommit semantics while rejecting queue saturation.
 
 ### Release Status
 
