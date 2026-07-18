@@ -1861,6 +1861,35 @@ mod tests {
     }
 
     #[test]
+    fn branch_summary_and_self_healing_edit_have_explicit_lifecycle_policies() {
+        let branch = operation_contract_cases()
+            .into_iter()
+            .find(|case| case.public_variant == "BranchSummary")
+            .expect("branch summary contract");
+        let edit = operation_contract_cases()
+            .into_iter()
+            .find(|case| case.public_variant == "SelfHealingEdit")
+            .expect("self-healing edit contract");
+        assert_eq!(
+            branch.expected_terminal_policy,
+            OperationTerminalPolicy::OutcomeAcknowledgement
+        );
+        assert!(branch.expected_root_evidence.is_empty());
+        assert_eq!(
+            edit.expected_terminal_policy,
+            OperationTerminalPolicy::ProductEvent
+        );
+        assert_eq!(
+            edit.expected_root_evidence,
+            &[
+                OperationRootTerminalEvidence::SelfHealingEditCompleted,
+                OperationRootTerminalEvidence::SelfHealingEditFailed,
+                OperationRootTerminalEvidence::SelfHealingEditAborted,
+            ]
+        );
+    }
+
+    #[test]
     fn recovery_terminal_contract_covers_durable_operation_families() {
         let cases = [
             (

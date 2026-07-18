@@ -32,6 +32,9 @@
 - Closed durable publication/snapshot consistency debt: session commit, outbox
   cursor, manifest-failure reopen, and startup redelivery now have explicit
   cross-checks in the session matrix.
+- Closed the BranchSummary/SelfHealingEdit lifecycle debt. BranchSummary is
+  explicitly outcome-acknowledged without a ProductEvent terminal, while
+  SelfHealingEdit requires ProductEvent Completed/Failed/Aborted root evidence.
 
 - Added a typed `RecoveryPending` admission rejection. `SessionWriteRoot`
   operations now inspect durable recovery evidence before

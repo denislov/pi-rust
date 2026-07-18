@@ -134,6 +134,9 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
 - Durable session commit tests cross-check the final event cursor, replay cursor,
   manifest snapshot, and outbox cursor, including manifest-failure reopen and
   startup redelivery evidence.
+- BranchSummary and SelfHealingEdit now have an explicit descriptor-level
+  lifecycle matrix: outcome acknowledgement for branch summaries, and
+  ProductEvent terminal evidence for self-healing edits.
 
 ## Events, Sessions, And Clients
 
