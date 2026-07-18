@@ -326,6 +326,7 @@ fn collect_legacy_jsonl_files(root: &std::path::Path, out: &mut Vec<std::path::P
                 collect_legacy_jsonl_files(&path, out);
             } else if path.extension().and_then(|ext| ext.to_str()) == Some("jsonl")
                 && path.file_name().and_then(|name| name.to_str()) != Some("events.jsonl")
+                && path.file_name().and_then(|name| name.to_str()) != Some("outbox.jsonl")
             {
                 out.push(path);
             }
