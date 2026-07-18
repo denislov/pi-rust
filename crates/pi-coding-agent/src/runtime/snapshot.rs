@@ -10,7 +10,7 @@ use crate::runtime::error::CodingAgentLifecycleRejection;
 use crate::runtime::facade::CodingSessionError;
 use crate::runtime::facade::context::{CodingAgentCapabilities, CodingAgentSessionView};
 use crate::runtime::outcome::OperationDescriptor;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 use tokio::sync::watch;
 
@@ -180,6 +180,7 @@ pub(crate) struct SnapshotState {
     pub(crate) recovery_revision: u64,
     pub(crate) shutdown_drain_boundary: Option<ProductEventSequence>,
     pub(crate) pending_authorizations: Vec<crate::authorization::ToolAuthorizationRequest>,
+    pub(crate) published_outbox_record_ids: HashSet<String>,
     pub(crate) context_projection: UiContextProjection,
     shutdown_drain_eligibility: HashMap<ClientConnectionId, ClientGeneration>,
 }
@@ -201,6 +202,7 @@ impl Default for SnapshotState {
             recovery_revision: 0,
             shutdown_drain_boundary: None,
             pending_authorizations: Vec::new(),
+            published_outbox_record_ids: HashSet::new(),
             context_projection: UiContextProjection::default(),
             shutdown_drain_eligibility: HashMap::new(),
         }

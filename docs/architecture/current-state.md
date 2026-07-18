@@ -118,7 +118,8 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   cursor monotonically in SessionService, and installs projection state from the
   receipt-derived cursor without replaying. `RIF-009-004` now owns the recovery
   and redelivery matrix; session open rejects malformed, regressed, or duplicate
-  outbox records before runtime startup.
+  outbox records before runtime startup, and EventService redelivers startup
+  records once per runtime by semantic record ID.
 - The current transaction may append facts and then fail a manifest refresh,
   producing partial-commit uncertainty that startup recovery can inspect.
 

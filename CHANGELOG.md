@@ -105,6 +105,9 @@
 - Began the `RIF-009-004` restart slice: opening a session now validates durable
   outbox schema/version, session identity, monotonic commit cursors, source
   event IDs, and duplicate semantic identities before runtime startup.
+- Added runtime-local idempotent outbox redelivery: startup records are emitted
+  through EventService after `SessionOpened`, and duplicate record IDs are
+  suppressed within the runtime.
 
 ### Release Status
 

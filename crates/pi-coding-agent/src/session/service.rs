@@ -7,7 +7,7 @@ use pi_agent_core::api::transcript::{SessionEntry, SessionTreeNode, StoredAgentM
 use pi_ai::api::conversation::ContentBlock;
 
 use crate::events::CodingAgentSessionWriteFailureStatus;
-use crate::events::outbox::{DurableOutboxIntent, DurableOutboxRecordKind};
+use crate::events::outbox::{DurableOutboxIntent, DurableOutboxRecord, DurableOutboxRecordKind};
 use crate::events::session::SessionWriteEvent;
 use crate::operations::export::flow::{ExportContext, ExportOptions};
 use crate::operations::prompt::context::{
@@ -58,6 +58,7 @@ pub(crate) struct SessionService {
     handle: SessionHandle,
     transaction_writer: SessionTransactionWriter,
     committed_session_sequence: Arc<AtomicU64>,
+    startup_outbox_records: Vec<DurableOutboxRecord>,
     startup_recovery_markers: Vec<StartupRecoveryMarker>,
 }
 
@@ -164,13 +165,14 @@ impl SessionService {
             .unwrap_or_default();
         // Opening a session validates the durable outbox before any runtime
         // owner can publish or redeliver its records after restart.
-        let _ = store.read_outbox(&handle)?;
+        let startup_outbox_records = store.read_outbox(&handle)?;
         let transaction_writer = SessionTransactionWriter::new(store.clone(), handle.clone());
         Ok(Self {
             store,
             handle,
             transaction_writer,
             committed_session_sequence: Arc::new(AtomicU64::new(committed_session_sequence)),
+            startup_outbox_records,
             startup_recovery_markers: Vec::new(),
         })
     }
@@ -982,6 +984,10 @@ impl SessionService {
 
     pub(crate) fn committed_session_sequence(&self) -> u64 {
         self.committed_session_sequence.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn take_startup_outbox_records(&mut self) -> Vec<DurableOutboxRecord> {
+        std::mem::take(&mut self.startup_outbox_records)
     }
 
     fn observe_committed_sequence(&self, sequence: Option<u64>) {

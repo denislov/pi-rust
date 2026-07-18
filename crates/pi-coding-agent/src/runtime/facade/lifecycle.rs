@@ -149,6 +149,7 @@ impl CodingAgentSession {
     ) -> Result<Self, CodingSessionError> {
         let mut session_service = session_service;
         let replay_state = replay_derived_owner_state(&mut session_service)?;
+        let startup_outbox_records = session_service.take_startup_outbox_records();
         let snapshot_coordinator = SnapshotCoordinator::new();
         let event_service = EventService::with_snapshot_coordinator(snapshot_coordinator.clone());
         let client_service = ClientService::new(snapshot_coordinator.clone());
@@ -196,6 +197,13 @@ impl CodingAgentSession {
             .event_hub
             .service
             .emit_session_opened(session.view().session_id);
+        for record in startup_outbox_records {
+            session
+                .runtime_host
+                .event_hub
+                .service
+                .emit_durable_outbox_record(&record);
+        }
         Ok(session)
     }
 

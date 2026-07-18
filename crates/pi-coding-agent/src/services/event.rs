@@ -13,6 +13,7 @@ use crate::events::delegation::{DelegationEvent, DelegationEventContext};
 use crate::events::diagnostic::DiagnosticEvent;
 use crate::events::emission::ProductEventDraft;
 use crate::events::message::MessageEvent;
+use crate::events::outbox::DurableOutboxRecord;
 use crate::events::profile::ProfileEvent;
 use crate::events::prompt::PromptEvent;
 use crate::events::prompt_stream::PromptStreamEvent;
@@ -591,6 +592,22 @@ impl EventService {
             }
             .into_product_draft(),
         )
+    }
+
+    /// Redeliver one committed durable obligation at most once per runtime.
+    pub(crate) fn emit_durable_outbox_record(
+        &self,
+        record: &DurableOutboxRecord,
+    ) -> Option<ProductEvent> {
+        let mut state = self.snapshot_coordinator.state.lock().unwrap();
+        if !state
+            .published_outbox_record_ids
+            .insert(record.record_id.clone())
+        {
+            return None;
+        }
+        drop(state);
+        Some(self.publish_without_root_terminal(record.draft.clone()))
     }
 
     pub(crate) fn emit_diagnostic(
@@ -3307,5 +3324,27 @@ mod tests {
             event.event().family(),
             CodingAgentProductEventFamily::Workflow
         );
+    }
+
+    #[test]
+    fn durable_outbox_redelivery_is_idempotent_per_runtime() {
+        let service = EventService::new();
+        let draft =
+            EventService::session_write_committed_event("op_redelivery", "session_redelivery")
+                .into_product_draft();
+        let record = crate::events::outbox::DurableOutboxRecord::new(
+            "session_redelivery/op_redelivery/session_write_committed",
+            "session_redelivery",
+            Some("op_redelivery".into()),
+            vec!["evt_redelivery".into()],
+            crate::events::outbox::DurableOutboxRecordKind::SessionWrite,
+            draft,
+            3,
+        )
+        .unwrap();
+
+        assert!(service.emit_durable_outbox_record(&record).is_some());
+        assert!(service.emit_durable_outbox_record(&record).is_none());
+        assert_eq!(service.current_product_sequence().get(), 1);
     }
 }
