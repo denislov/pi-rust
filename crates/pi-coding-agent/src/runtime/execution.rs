@@ -181,9 +181,13 @@ impl CodingAgentSession {
                 .map(OperationOutcome::AgentTeam),
                 _ => unreachable!("runtime-owned operation class checked before spawn"),
             };
+            let decision = operation_finalizer.freeze(&execution, &result);
+            let commit_result = operation_finalizer.resolve_non_session(&decision)?;
+            if let Some(draft) = event_service.take_deferred_terminal_draft(&decision.operation_id)
+            {
+                event_service.emit_committed_terminal_draft(draft, execution.kind);
+            }
             if let Some(guard) = submission.as_mut() {
-                let decision = operation_finalizer.freeze(&execution, &result);
-                let commit_result = operation_finalizer.resolve_non_session(&decision)?;
                 guard.finish(&decision, &commit_result)?;
             }
             drop(operation_permit);

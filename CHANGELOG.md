@@ -20,6 +20,9 @@
   `DefinitelyFailed` results now retain and publish their root terminal draft,
   matching committed-success publication and preventing child-only failure
   projections.
+- Fixed runtime-owned RPC submission finalization when no submission lease is
+  present. Background AgentInvocation/AgentTeam operations now always freeze
+  their terminal decision and publish the deferred root draft after finalization.
 
 - Added a typed `RecoveryPending` admission rejection. `SessionWriteRoot`
   operations now inspect durable recovery evidence before

@@ -124,6 +124,8 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
 - AgentInvocation and AgentTeam definite failures now publish their root
   terminal drafts after finalization; child PromptFailed events no longer
   replace the root failure lifecycle evidence.
+- Runtime-owned non-session submissions now finalize and publish terminal drafts
+  independently of client submission leases, covering RPC background execution.
 
 ## Events, Sessions, And Clients
 
