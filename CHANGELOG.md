@@ -140,7 +140,9 @@
   PluginLoad terminals. SelfHealingEdit success/failure/abort now follow the
   same commit-before-publication and typed restart path; cancellation arriving
   after Flow success no longer drops its session transaction. Remaining
-  operation families still need the same terminal draft migration.
+  operation families still need the same terminal draft migration. Standalone
+  AgentInvocation/AgentTeam roots now publish terminal ProductEvents after
+  supervisor finalization while delegated child ownership remains explicit.
 
 ### Release Status
 

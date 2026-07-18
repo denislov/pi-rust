@@ -2602,7 +2602,6 @@ runtime = "lua"
             "",
             PromptTurnOptions::new(PromptInvocation::Text("task".into())),
         ));
-
         let error = session.run_operation(operation, None).await.unwrap_err();
 
         assert_eq!(error.code(), "input");
@@ -3788,7 +3787,6 @@ runtime = "lua"
             "",
             PromptTurnOptions::new(PromptInvocation::Text("task".into())),
         ));
-
         let error = session.run_operation(operation, None).await.unwrap_err();
 
         assert_eq!(error.code(), "input");

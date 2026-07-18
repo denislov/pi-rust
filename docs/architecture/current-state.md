@@ -113,6 +113,8 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   Prompt, Compact, PluginLoad, and SelfHealingEdit `OperationTerminal` records
   are implemented; remaining supervisor-owned operation-terminal records remain
   open under `RIF-002`.
+  Standalone AgentInvocation and AgentTeam terminal ProductEvents now publish
+  after finalization; delegated child publication remains child-admission owned.
 - The retained broadcast window is live delivery/replay state, not durable
   evidence. `RIF-009-001` must define an outbox record and semantic identity
   before a writer batch can claim session/outbox atomicity. The record contract
@@ -128,7 +130,8 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   commit succeeds. Compact success/failure, PluginLoad success/failure/abort,
   and SelfHealingEdit success/failure/abort now use the same ordering and an
   outbox operation-kind hint for correct restart redelivery; remaining
-  operation-terminal families remain open.
+  session terminal families remain open. Standalone AgentInvocation/AgentTeam
+  are non-session ProductEvent terminals and do not create session outbox rows.
   `RIF-009-004` now owns the next
   restart/reconnect/redelivery consistency slice. The completed cursor work:
   outbox schema v2 stores `committed_through_session_sequence`, while only the

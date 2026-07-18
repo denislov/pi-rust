@@ -249,6 +249,7 @@ pub(crate) struct AgentInvocationContext {
     child_admission: Option<crate::runtime::intent::OperationPermit>,
     pending_delegation_confirmations: Vec<PendingDelegationConfirmationState>,
     failure_error: Option<CodingSessionError>,
+    defer_terminal_publication: bool,
 }
 
 impl AgentInvocationContext {
@@ -279,6 +280,7 @@ impl AgentInvocationContext {
             child_admission: None,
             pending_delegation_confirmations: Vec::new(),
             failure_error: None,
+            defer_terminal_publication: false,
         }
     }
 
@@ -287,6 +289,11 @@ impl AgentInvocationContext {
         snapshot: OperationCapabilitySnapshot,
     ) -> Self {
         self.parent_capability_snapshot = Some(snapshot);
+        self
+    }
+
+    pub(crate) fn with_deferred_terminal_publication(mut self) -> Self {
+        self.defer_terminal_publication = true;
         self
     }
 
@@ -616,12 +623,19 @@ impl AgentInvocationContext {
                 }
                 self.event_service
                     .emit_prompt_completed(self.child_operation_id.clone(), turn_id.clone());
-                self.event_service.emit_agent_invocation_completed(
+                let draft = EventService::agent_invocation_completed_draft(
                     self.operation_id.clone(),
                     self.child_operation_id.clone(),
                     self.options.profile_id.clone(),
                     final_text.clone(),
                 );
+                if self.defer_terminal_publication {
+                    self.event_service
+                        .defer_terminal_draft(self.operation_id.clone(), draft);
+                } else {
+                    self.event_service
+                        .emit_committed_terminal_draft(draft, OperationKind::AgentInvocation);
+                }
                 Ok(())
             }
             PromptTurnOutcome::Aborted { reason, .. } => {
@@ -629,24 +643,38 @@ impl AgentInvocationContext {
                 self.failure_error = Some(error.clone());
                 self.event_service
                     .emit_prompt_aborted(self.child_operation_id.clone(), reason.clone());
-                self.event_service.emit_agent_invocation_aborted(
+                let draft = EventService::agent_invocation_aborted_draft(
                     self.operation_id.clone(),
                     self.child_operation_id.clone(),
                     self.options.profile_id.clone(),
                     reason.clone(),
                 );
+                if self.defer_terminal_publication {
+                    self.event_service
+                        .defer_terminal_draft(self.operation_id.clone(), draft);
+                } else {
+                    self.event_service
+                        .emit_committed_terminal_draft(draft, OperationKind::AgentInvocation);
+                }
                 Err(error)
             }
             PromptTurnOutcome::Failed { error, .. } => {
                 self.failure_error = Some(error.clone());
                 self.event_service
                     .emit_prompt_failed(self.child_operation_id.clone(), error.clone());
-                self.event_service.emit_agent_invocation_failed(
+                let draft = EventService::agent_invocation_failed_draft(
                     self.operation_id.clone(),
                     self.child_operation_id.clone(),
                     self.options.profile_id.clone(),
-                    error.clone(),
+                    error,
                 );
+                if self.defer_terminal_publication {
+                    self.event_service
+                        .defer_terminal_draft(self.operation_id.clone(), draft);
+                } else {
+                    self.event_service
+                        .emit_committed_terminal_draft(draft, OperationKind::AgentInvocation);
+                }
                 Err(error.clone())
             }
         }
@@ -657,19 +685,33 @@ impl AgentInvocationContext {
         if self.failure_error.is_none() {
             self.failure_error = Some(error.clone());
             if error == CodingSessionError::Cancelled {
-                self.event_service.emit_agent_invocation_aborted(
+                let draft = EventService::agent_invocation_aborted_draft(
                     self.operation_id.clone(),
                     self.child_operation_id.clone(),
                     self.options.profile_id.clone(),
                     error.to_string(),
                 );
+                if self.defer_terminal_publication {
+                    self.event_service
+                        .defer_terminal_draft(self.operation_id.clone(), draft);
+                } else {
+                    self.event_service
+                        .emit_committed_terminal_draft(draft, OperationKind::AgentInvocation);
+                }
             } else {
-                self.event_service.emit_agent_invocation_failed(
+                let draft = EventService::agent_invocation_failed_draft(
                     self.operation_id.clone(),
                     self.child_operation_id.clone(),
                     self.options.profile_id.clone(),
-                    error.clone(),
+                    &error,
                 );
+                if self.defer_terminal_publication {
+                    self.event_service
+                        .defer_terminal_draft(self.operation_id.clone(), draft);
+                } else {
+                    self.event_service
+                        .emit_committed_terminal_draft(draft, OperationKind::AgentInvocation);
+                }
             }
         }
         error.to_string()

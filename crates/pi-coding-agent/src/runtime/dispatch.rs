@@ -653,6 +653,8 @@ impl CodingAgentSession {
                 | crate::runtime::control::OperationKind::Compact
                 | crate::runtime::control::OperationKind::PluginLoad
                 | crate::runtime::control::OperationKind::SelfHealingEdit
+                | crate::runtime::control::OperationKind::AgentInvocation
+                | crate::runtime::control::OperationKind::AgentTeam
         ) || !matches!(
             commit_result,
             super::finalization::FinalizationCommitResult::Committed
@@ -711,6 +713,18 @@ impl CodingAgentSession {
                 };
                 (draft, None)
             }
+            crate::runtime::control::OperationKind::AgentInvocation
+            | crate::runtime::control::OperationKind::AgentTeam => {
+                let Some(draft) = self
+                    .runtime_host
+                    .event_hub
+                    .service
+                    .take_deferred_terminal_draft(&decision.operation_id)
+                else {
+                    return Ok(());
+                };
+                (draft, None)
+            }
             _ => return Ok(()),
         };
         let compact_terminal_is_session_event = matches!(
@@ -720,6 +734,17 @@ impl CodingAgentSession {
             )
         );
         let live_draft = draft.clone();
+        if matches!(
+            decision.operation_kind,
+            crate::runtime::control::OperationKind::AgentInvocation
+                | crate::runtime::control::OperationKind::AgentTeam
+        ) {
+            self.runtime_host
+                .event_hub
+                .service
+                .emit_committed_terminal_draft(live_draft, decision.operation_kind);
+            return Ok(());
+        }
         self.runtime_host
             .session_coordinator
             .persist_terminal_decision(decision, draft)

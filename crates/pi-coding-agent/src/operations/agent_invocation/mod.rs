@@ -30,6 +30,7 @@ pub(crate) async fn run(
         operation_control.clone(),
         scheduler_parent_operation_id,
     )
+    .with_deferred_terminal_publication()
     .with_parent_capability_snapshot(parent_capability_snapshot);
     if let Some(receiver) = prompt_control_receiver {
         context.set_prompt_control_receiver(receiver);

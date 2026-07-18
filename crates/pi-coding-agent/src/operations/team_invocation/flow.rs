@@ -268,6 +268,7 @@ pub(crate) struct AgentTeamContext {
     child_capability_snapshot: Option<OperationCapabilitySnapshot>,
     pending_delegation_confirmations: Vec<PendingDelegationConfirmationState>,
     failure_error: Option<CodingSessionError>,
+    defer_terminal_publication: bool,
 }
 
 impl AgentTeamContext {
@@ -296,6 +297,7 @@ impl AgentTeamContext {
             child_capability_snapshot: None,
             pending_delegation_confirmations: Vec::new(),
             failure_error: None,
+            defer_terminal_publication: false,
         }
     }
 
@@ -304,6 +306,11 @@ impl AgentTeamContext {
         snapshot: OperationCapabilitySnapshot,
     ) -> Self {
         self.parent_capability_snapshot = Some(snapshot);
+        self
+    }
+
+    pub(crate) fn with_deferred_terminal_publication(mut self) -> Self {
+        self.defer_terminal_publication = true;
         self
     }
 
@@ -433,11 +440,18 @@ impl AgentTeamContext {
             self.event_service
                 .emit_diagnostic(Some(self.operation_id.clone()), diagnostic.message);
         }
-        self.event_service.emit_agent_team_completed(
+        let draft = EventService::agent_team_completed_draft(
             self.operation_id.clone(),
             self.options.team_id.clone(),
             final_text,
         );
+        if self.defer_terminal_publication {
+            self.event_service
+                .defer_terminal_draft(self.operation_id.clone(), draft);
+        } else {
+            self.event_service
+                .emit_committed_terminal_draft(draft, OperationKind::AgentTeam);
+        }
         Ok(())
     }
 
@@ -737,18 +751,32 @@ impl AgentTeamContext {
             self.failure_error = Some(error.clone());
             match &error {
                 CodingSessionError::Cancelled => {
-                    self.event_service.emit_agent_team_aborted(
+                    let draft = EventService::agent_team_aborted_draft(
                         self.operation_id.clone(),
                         self.options.team_id.clone(),
                         error.to_string(),
                     );
+                    if self.defer_terminal_publication {
+                        self.event_service
+                            .defer_terminal_draft(self.operation_id.clone(), draft);
+                    } else {
+                        self.event_service
+                            .emit_committed_terminal_draft(draft, OperationKind::AgentTeam);
+                    }
                 }
                 _ => {
-                    self.event_service.emit_agent_team_failed(
+                    let draft = EventService::agent_team_failed_draft(
                         self.operation_id.clone(),
                         self.options.team_id.clone(),
-                        error.clone(),
+                        &error,
                     );
+                    if self.defer_terminal_publication {
+                        self.event_service
+                            .defer_terminal_draft(self.operation_id.clone(), draft);
+                    } else {
+                        self.event_service
+                            .emit_committed_terminal_draft(draft, OperationKind::AgentTeam);
+                    }
                 }
             }
         }

@@ -692,6 +692,30 @@ impl EventService {
             ) => {
                 Some(crate::runtime::outcome::OperationRootTerminalEvidence::SelfHealingEditAborted)
             }
+            CodingAgentProductEventKind::Agent(
+                crate::events::CodingAgentAgentProductEvent::InvocationCompleted { .. },
+            ) => Some(
+                crate::runtime::outcome::OperationRootTerminalEvidence::AgentInvocationCompleted,
+            ),
+            CodingAgentProductEventKind::Agent(
+                crate::events::CodingAgentAgentProductEvent::InvocationFailed { .. },
+            ) => {
+                Some(crate::runtime::outcome::OperationRootTerminalEvidence::AgentInvocationFailed)
+            }
+            CodingAgentProductEventKind::Agent(
+                crate::events::CodingAgentAgentProductEvent::InvocationAborted { .. },
+            ) => {
+                Some(crate::runtime::outcome::OperationRootTerminalEvidence::AgentInvocationAborted)
+            }
+            CodingAgentProductEventKind::Team(
+                crate::events::CodingAgentTeamProductEvent::Completed { .. },
+            ) => Some(crate::runtime::outcome::OperationRootTerminalEvidence::AgentTeamCompleted),
+            CodingAgentProductEventKind::Team(
+                crate::events::CodingAgentTeamProductEvent::Failed { .. },
+            ) => Some(crate::runtime::outcome::OperationRootTerminalEvidence::AgentTeamFailed),
+            CodingAgentProductEventKind::Team(
+                crate::events::CodingAgentTeamProductEvent::Aborted { .. },
+            ) => Some(crate::runtime::outcome::OperationRootTerminalEvidence::AgentTeamAborted),
             _ => None,
         };
         self.publish(
@@ -1054,6 +1078,52 @@ impl EventService {
         })
     }
 
+    pub(crate) fn agent_invocation_completed_draft(
+        operation_id: impl Into<String>,
+        child_operation_id: impl Into<String>,
+        profile_id: impl Into<ProfileId>,
+        final_text: impl Into<String>,
+    ) -> ProductEventDraft {
+        AgentInvocationEvent::Completed {
+            operation_id: operation_id.into(),
+            child_operation_id: child_operation_id.into(),
+            profile_id: profile_id.into(),
+            final_text: final_text.into(),
+        }
+        .into_product_draft()
+    }
+
+    pub(crate) fn agent_invocation_failed_draft(
+        operation_id: impl Into<String>,
+        child_operation_id: impl Into<String>,
+        profile_id: impl Into<ProfileId>,
+        error: &CodingSessionError,
+    ) -> ProductEventDraft {
+        AgentInvocationEvent::Failed {
+            operation_id: operation_id.into(),
+            child_operation_id: child_operation_id.into(),
+            profile_id: profile_id.into(),
+            error: error.clone(),
+        }
+        .into_product_draft()
+    }
+
+    pub(crate) fn agent_invocation_aborted_draft(
+        operation_id: impl Into<String>,
+        child_operation_id: impl Into<String>,
+        profile_id: impl Into<ProfileId>,
+        reason: impl Into<String>,
+    ) -> ProductEventDraft {
+        AgentInvocationEvent::Aborted {
+            operation_id: operation_id.into(),
+            child_operation_id: child_operation_id.into(),
+            profile_id: profile_id.into(),
+            reason: reason.into(),
+        }
+        .into_product_draft()
+    }
+
+    #[cfg(test)]
     pub(crate) fn emit_agent_invocation_completed(
         &self,
         operation_id: impl Into<String>,
@@ -1069,6 +1139,7 @@ impl EventService {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn emit_agent_invocation_failed(
         &self,
         operation_id: impl Into<String>,
@@ -1084,6 +1155,7 @@ impl EventService {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn emit_agent_invocation_aborted(
         &self,
         operation_id: impl Into<String>,
@@ -1110,6 +1182,45 @@ impl EventService {
             team_id: team_id.into(),
             task: task.into(),
         })
+    }
+
+    pub(crate) fn agent_team_completed_draft(
+        operation_id: impl Into<String>,
+        team_id: impl Into<ProfileId>,
+        final_text: impl Into<String>,
+    ) -> ProductEventDraft {
+        TeamEvent::Completed {
+            operation_id: operation_id.into(),
+            team_id: team_id.into(),
+            final_text: final_text.into(),
+        }
+        .into_product_draft()
+    }
+
+    pub(crate) fn agent_team_failed_draft(
+        operation_id: impl Into<String>,
+        team_id: impl Into<ProfileId>,
+        error: &CodingSessionError,
+    ) -> ProductEventDraft {
+        TeamEvent::Failed {
+            operation_id: operation_id.into(),
+            team_id: team_id.into(),
+            error: error.clone(),
+        }
+        .into_product_draft()
+    }
+
+    pub(crate) fn agent_team_aborted_draft(
+        operation_id: impl Into<String>,
+        team_id: impl Into<ProfileId>,
+        reason: impl Into<String>,
+    ) -> ProductEventDraft {
+        TeamEvent::Aborted {
+            operation_id: operation_id.into(),
+            team_id: team_id.into(),
+            reason: reason.into(),
+        }
+        .into_product_draft()
     }
 
     pub(crate) fn emit_agent_team_member_started(
@@ -1146,6 +1257,7 @@ impl EventService {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn emit_agent_team_completed(
         &self,
         operation_id: impl Into<String>,
@@ -1159,6 +1271,7 @@ impl EventService {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn emit_agent_team_failed(
         &self,
         operation_id: impl Into<String>,
@@ -1172,6 +1285,7 @@ impl EventService {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn emit_agent_team_aborted(
         &self,
         operation_id: impl Into<String>,
