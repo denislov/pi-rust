@@ -132,8 +132,10 @@
   writes an `operation.terminal.recorded` SessionEvent and `OperationTerminal`
   outbox draft atomically, publishes the Prompt terminal only after that commit,
   and restart redelivery reconstructs the Prompt root terminal metadata.
-  Compact and remaining operation families still need the same terminal draft
-  migration.
+  Compact success now uses the same terminal fact/outbox batch, publishes its
+  full compaction payload after commit, and reconstructs `Compact` terminal
+  metadata after restart. Compact failure and remaining operation families
+  still need the same terminal draft migration.
 
 ### Release Status
 

@@ -5118,8 +5118,8 @@ runtime = "lua"
             &emitted_events,
             &[
                 "session_write_pending",
-                "session_compaction_completed",
                 "session_write_committed",
+                "session_compaction_completed",
                 "prompt_completed",
             ],
         );
@@ -5159,6 +5159,42 @@ runtime = "lua"
             std::fs::read_to_string(temp.path().join("sess_compact/events.jsonl")).unwrap();
         assert!(event_log.contains("session.compaction.started"));
         assert!(event_log.contains("session.compaction.completed"));
+        assert!(event_log.contains("operation.terminal.recorded"));
+        let outbox =
+            std::fs::read_to_string(temp.path().join("sess_compact/outbox.jsonl")).unwrap();
+        assert!(outbox.contains("operation_terminal"));
+        assert!(outbox.contains("summary from compact"));
+
+        session.shutdown().await.unwrap();
+        drop(session);
+        let reopened = CodingAgentSession::open(
+            CodingAgentSessionOptions::new()
+                .with_session_id("sess_compact")
+                .with_session_log_root(temp.path()),
+        )
+        .await
+        .unwrap();
+        let connection = reopened
+            .connect(public_projection::CodingAgentClientId::new(
+                "compact-replay",
+            ))
+            .unwrap();
+        let public_projection::CodingAgentReconnect::Replayed { events, .. } =
+            connection.reconnect(0).unwrap()
+        else {
+            panic!("compact terminal outbox must be retained for restart redelivery")
+        };
+        assert!(events.iter().any(|event| {
+            matches!(
+                event.event(),
+                CodingAgentProductEventKind::Session(
+                    CodingAgentSessionProductEvent::CompactionCompleted { .. }
+                )
+            ) && event.terminal_operation().is_some_and(|terminal| {
+                terminal.kind
+                    == crate::events::CodingAgentProductEventTerminalOperationKind::Compact
+            })
+        }));
     }
 
     #[tokio::test]

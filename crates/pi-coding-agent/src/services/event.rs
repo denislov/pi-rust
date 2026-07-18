@@ -1,5 +1,6 @@
 use futures::future::{BoxFuture, FutureExt};
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 
 use pi_agent_core::api::agent::AgentEvent;
@@ -19,11 +20,14 @@ use crate::events::prompt::PromptEvent;
 use crate::events::prompt_stream::PromptStreamEvent;
 use crate::events::recovery::{RecoveryEvent, RecoveryPendingEvent};
 use crate::events::runtime::RuntimeEvent;
-use crate::events::session::{SessionCompactionEvent, SessionLifecycleEvent, SessionWriteEvent};
+#[cfg(test)]
+use crate::events::session::SessionCompactionEvent;
+use crate::events::session::{SessionLifecycleEvent, SessionWriteEvent};
 use crate::events::team::TeamEvent;
 use crate::events::tool::ToolEvent;
 use crate::events::workflow::{PluginLoadEvent, SelfHealingEditEvent};
 use crate::events::{CodingAgentProductEventKind, ProductEvent, ProductEventSequence};
+#[cfg(test)]
 use crate::operations::compaction::flow::ManualCompactionOutcome;
 use crate::operations::plugin_load::flow::PluginLoadOutcome;
 use crate::operations::prompt::context::{DelegationRequest, PromptTurnOutcome};
@@ -43,6 +47,7 @@ const EVENT_RETAINED_CAPACITY: usize = 128;
 pub(crate) struct EventService {
     product_sender: broadcast::Sender<ProductEvent>,
     snapshot_coordinator: Arc<SnapshotCoordinator>,
+    deferred_terminal_drafts: Arc<Mutex<HashMap<String, ProductEventDraft>>>,
     #[cfg(test)]
     channel_capacity: usize,
     retained_capacity: usize,
@@ -207,6 +212,7 @@ impl EventService {
         Self {
             product_sender,
             snapshot_coordinator,
+            deferred_terminal_drafts: Arc::new(Mutex::new(HashMap::new())),
             #[cfg(test)]
             channel_capacity,
             retained_capacity,
@@ -379,6 +385,7 @@ impl EventService {
         self.publish(draft, ProductEventEmissionContext::default(), |_, _| None)
     }
 
+    #[cfg(test)]
     fn publish_session_compaction_event(&self, event: SessionCompactionEvent) -> ProductEvent {
         let evidence = event.root_terminal_evidence();
         self.publish(
@@ -616,6 +623,27 @@ impl EventService {
         })
     }
 
+    pub(crate) fn defer_terminal_draft(
+        &self,
+        operation_id: impl Into<String>,
+        draft: ProductEventDraft,
+    ) {
+        self.deferred_terminal_drafts
+            .lock()
+            .unwrap()
+            .insert(operation_id.into(), draft);
+    }
+
+    pub(crate) fn take_deferred_terminal_draft(
+        &self,
+        operation_id: &str,
+    ) -> Option<ProductEventDraft> {
+        self.deferred_terminal_drafts
+            .lock()
+            .unwrap()
+            .remove(operation_id)
+    }
+
     fn publish_durable_terminal_draft(&self, draft: ProductEventDraft) -> ProductEvent {
         let evidence = match &draft.event {
             CodingAgentProductEventKind::Workflow(
@@ -627,6 +655,9 @@ impl EventService {
             CodingAgentProductEventKind::Workflow(
                 crate::events::CodingAgentWorkflowProductEvent::PromptAborted { .. },
             ) => Some(crate::runtime::outcome::OperationRootTerminalEvidence::PromptAborted),
+            CodingAgentProductEventKind::Session(
+                crate::events::CodingAgentSessionProductEvent::CompactionCompleted { .. },
+            ) => Some(crate::runtime::outcome::OperationRootTerminalEvidence::CompactionCompleted),
             _ => None,
         };
         self.publish(
@@ -636,10 +667,8 @@ impl EventService {
                 terminal_status.and_then(|status| {
                     let kind = operation_kind.or_else(|| {
                         evidence.map(|evidence| match evidence {
-                            crate::runtime::outcome::OperationRootTerminalEvidence::PromptCompleted
-                            | crate::runtime::outcome::OperationRootTerminalEvidence::PromptFailed
-                            | crate::runtime::outcome::OperationRootTerminalEvidence::PromptAborted => {
-                                crate::runtime::control::OperationKind::Prompt
+                            crate::runtime::outcome::OperationRootTerminalEvidence::CompactionCompleted => {
+                                crate::runtime::control::OperationKind::Compact
                             }
                             _ => crate::runtime::control::OperationKind::Prompt,
                         })
@@ -654,6 +683,10 @@ impl EventService {
                 })
             },
         )
+    }
+
+    pub(crate) fn emit_committed_terminal_draft(&self, draft: ProductEventDraft) -> ProductEvent {
+        self.publish_durable_terminal_draft(draft)
     }
 
     pub(crate) fn emit_diagnostic(
@@ -682,6 +715,7 @@ impl EventService {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn emit_session_compaction_completed(
         &self,
         operation_id: impl Into<String>,

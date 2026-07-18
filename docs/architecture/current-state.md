@@ -110,8 +110,9 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   client projection, print/JSON, RPC, and interactive adapters exist.
 - A durable ProductEvent outbox now shares the bounded writer commit point with
   its source SessionEvents. Session-write, startup-recovery, and the first
-  Prompt `OperationTerminal` records are implemented; Compact and remaining
-  supervisor-owned operation-terminal records remain open under `RIF-002`.
+  Prompt `OperationTerminal` records and Compact success records are
+  implemented; Compact failure and remaining supervisor-owned
+  operation-terminal records remain open under `RIF-002`.
 - The retained broadcast window is live delivery/replay state, not durable
   evidence. `RIF-009-001` must define an outbox record and semantic identity
   before a writer batch can claim session/outbox atomicity. The record contract
@@ -119,13 +120,14 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   typed writer batch, outbox-first append ordering under the session append lock,
   source event correlation, and session-write outbox persistence for prompt
   success/failure/abort and non-leaf commit/failure paths. Operation-terminal
-  Compact and remaining operation-terminal publication remains open under
-  `RIF-002`; recovery publication now persists
+  Compact failure and remaining operation-terminal publication remains open
+  under `RIF-002`; recovery publication now persists
   `Recovery` outbox records atomically with `OperationRecovered` facts, while
   broader restart reconciliation remains open under `RIF-009-004`.
   Prompt terminal publication now occurs only after the terminal fact/outbox
-  commit succeeds; Compact and remaining operation-terminal families remain
-  open. `RIF-009-004` now owns the next
+  commit succeeds. Compact success now uses the same ordering and restart
+  redelivery contract; Compact failure and remaining operation-terminal
+  families remain open. `RIF-009-004` now owns the next
   restart/reconnect/redelivery consistency slice. The completed cursor work:
   outbox schema v2 stores `committed_through_session_sequence`, while only the
   repository may turn a validated candidate into a cursor-bearing durable

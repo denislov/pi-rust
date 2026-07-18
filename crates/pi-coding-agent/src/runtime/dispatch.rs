@@ -68,7 +68,7 @@ impl CodingAgentSession {
             .event_hub
             .service
             .emit_recovery_pending(&decision, &commit_result);
-        self.persist_prompt_terminal_outbox(&decision, &result, &commit_result)?;
+        self.persist_operation_terminal_outbox(&decision, &result, &commit_result)?;
         if let Some(guard) = submission.as_mut() {
             guard.finish(&decision, &commit_result)?;
         }
@@ -288,7 +288,7 @@ impl CodingAgentSession {
             .event_hub
             .service
             .emit_recovery_pending(&decision, &commit_result);
-        self.persist_prompt_terminal_outbox(&decision, &result, &commit_result)?;
+        self.persist_operation_terminal_outbox(&decision, &result, &commit_result)?;
         if let Some(guard) = submission.as_mut() {
             guard.finish(&decision, &commit_result)?;
         }
@@ -634,14 +634,14 @@ impl CodingAgentSession {
             .event_hub
             .service
             .emit_recovery_pending(&decision, &commit_result);
-        self.persist_prompt_terminal_outbox(&decision, &result, &commit_result)?;
+        self.persist_operation_terminal_outbox(&decision, &result, &commit_result)?;
         if let Some(guard) = submission.as_mut() {
             guard.finish(&decision, &commit_result)?;
         }
         result
     }
 
-    fn persist_prompt_terminal_outbox(
+    fn persist_operation_terminal_outbox(
         &self,
         decision: &super::finalization::FinalizationDecision,
         result: &Result<OperationOutcome, CodingSessionError>,
@@ -650,32 +650,51 @@ impl CodingAgentSession {
         if !matches!(
             decision.operation_kind,
             crate::runtime::control::OperationKind::Prompt
+                | crate::runtime::control::OperationKind::Compact
         ) || !matches!(
             commit_result,
             super::finalization::FinalizationCommitResult::Committed
         ) {
             return Ok(());
         }
-        let Some(outcome) = result.as_ref().ok().and_then(|outcome| match outcome {
-            OperationOutcome::Prompt(outcome) | OperationOutcome::ManualCompaction(outcome) => {
-                Some(outcome)
-            }
+        let (draft, prompt_outcome) = match result.as_ref().ok().and_then(|outcome| match outcome {
+            OperationOutcome::Prompt(outcome) => Some((
+                crate::services::event::EventService::prompt_terminal_draft(outcome),
+                Some(outcome),
+            )),
+            OperationOutcome::ManualCompaction(outcome) => Some((
+                self.runtime_host
+                    .event_hub
+                    .service
+                    .take_deferred_terminal_draft(&decision.operation_id),
+                Some(outcome),
+            )),
             _ => None,
-        }) else {
-            return Ok(());
+        }) {
+            Some((Some(draft), prompt_outcome)) => (draft, prompt_outcome),
+            _ => return Ok(()),
         };
-        let Some(draft) = crate::services::event::EventService::prompt_terminal_draft(outcome)
-        else {
-            return Ok(());
-        };
+        let live_draft = draft.clone();
         self.runtime_host
             .session_coordinator
             .persist_terminal_decision(decision, draft)
             .map(|_| {
-                self.runtime_host
-                    .event_hub
-                    .service
-                    .emit_prompt_terminal(outcome)
+                if matches!(
+                    decision.operation_kind,
+                    crate::runtime::control::OperationKind::Compact
+                ) {
+                    self.runtime_host
+                        .event_hub
+                        .service
+                        .emit_committed_terminal_draft(live_draft);
+                }
+                if let Some(outcome) = prompt_outcome {
+                    self.runtime_host
+                        .event_hub
+                        .service
+                        .emit_prompt_terminal(outcome);
+                }
             })
+            .map(|_| ())
     }
 }

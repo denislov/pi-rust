@@ -20,6 +20,7 @@ pub(crate) struct SessionCompactionEvent {
 }
 
 impl SessionCompactionEvent {
+    #[cfg(test)]
     pub(crate) fn root_terminal_evidence(
         &self,
     ) -> crate::runtime::outcome::OperationRootTerminalEvidence {

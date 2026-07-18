@@ -63,9 +63,18 @@ pub(crate) async fn run(
             apply_finalized_session_write(&mut outcome, &finalized);
 
             event_service.emit_session_write_pending(&finalized);
-            event_service.emit_session_compaction_completed(operation_id, turn_id, &compaction);
+            event_service.defer_terminal_draft(
+                operation_id.clone(),
+                crate::events::session::SessionCompactionEvent {
+                    operation_id: operation_id.clone(),
+                    turn_id,
+                    summary: compaction.summary.clone(),
+                    first_kept_message_id: compaction.first_kept_message_id.clone(),
+                    tokens_before: compaction.tokens_before,
+                }
+                .into_product_draft(),
+            );
             event_service.emit_session_write_committed(&finalized);
-            event_service.emit_prompt_outcome(&outcome);
             Ok(outcome)
         }
         Err(error) => {
