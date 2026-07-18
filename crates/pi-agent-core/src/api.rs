@@ -1,11 +1,11 @@
 /// Provider-neutral agent runtime configuration, messages, events, and
 /// lifecycle. Product policy and provider construction do not belong here.
 pub mod agent {
-    pub use crate::agent::Agent;
     pub use crate::agent::types::{
         AgentConfig, AgentEvent, AgentMessage, AgentResources, AgentStream, CompactionConfig,
         CompactionSettings, ProviderRequestSnapshot, ProviderStreamer, QueueMode, ThinkingLevel,
     };
+    pub use crate::agent::{Agent, AgentAdmissionError};
     pub use crate::hooks::{
         AfterToolCallContext, AfterToolCallHook, AfterToolCallResult, AgentHooks,
         AgentLoopTurnUpdate, BeforeProviderRequestContext, BeforeProviderRequestResult,
