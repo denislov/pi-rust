@@ -439,6 +439,13 @@ impl SessionCoordinator {
         }
     }
 
+    pub(crate) fn shutdown_writer(&self) -> Result<(), CodingSessionError> {
+        if let SessionPersistence::Persistent(session_service) = &self.persistence {
+            session_service.shutdown_transaction_writer()?;
+        }
+        Ok(())
+    }
+
     fn install_forked_session(
         &mut self,
         session_service: crate::session::service::SessionService,

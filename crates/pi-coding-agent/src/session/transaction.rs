@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::sync::mpsc::{SyncSender, TrySendError, sync_channel};
+use std::sync::{Arc, Mutex};
 
 const SESSION_TRANSACTION_WRITER_CAPACITY: usize = 32;
 
@@ -36,7 +37,13 @@ enum TransactionState {
 
 #[derive(Debug, Clone)]
 pub(crate) struct SessionTransactionWriter {
-    sender: SyncSender<SessionTransactionWriterEnvelope>,
+    inner: Arc<SessionTransactionWriterInner>,
+}
+
+#[derive(Debug)]
+struct SessionTransactionWriterInner {
+    sender: Mutex<Option<SyncSender<SessionTransactionWriterEnvelope>>>,
+    worker: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
 #[derive(Debug)]
@@ -66,19 +73,36 @@ impl SessionTransactionWriter {
     pub(crate) fn new(store: SessionLogStore, handle: SessionHandle) -> Self {
         let (sender, receiver) =
             sync_channel::<SessionTransactionWriterEnvelope>(SESSION_TRANSACTION_WRITER_CAPACITY);
-        std::thread::spawn(move || {
+        let worker = std::thread::spawn(move || {
             while let Ok(envelope) = receiver.recv() {
                 let result = execute_writer_command(&store, &handle, envelope.command);
                 let _ = envelope.reply.send(result);
             }
         });
-        Self { sender }
+        Self {
+            inner: Arc::new(SessionTransactionWriterInner {
+                sender: Mutex::new(Some(sender)),
+                worker: Mutex::new(Some(worker)),
+            }),
+        }
     }
 
     fn execute(&self, command: SessionTransactionWriterCommand) -> Result<(), CodingSessionError> {
         let (reply, response) = sync_channel(1);
         let envelope = SessionTransactionWriterEnvelope { command, reply };
-        match self.sender.try_send(envelope) {
+        let sender = self
+            .inner
+            .sender
+            .lock()
+            .map_err(|_| CodingSessionError::Session {
+                message: "session transaction writer sender lock is poisoned".into(),
+            })?
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| CodingSessionError::Session {
+                message: "session transaction writer is closed".into(),
+            })?;
+        match sender.try_send(envelope) {
             Ok(()) => {}
             Err(TrySendError::Full(_)) => {
                 return Err(CodingSessionError::Session {
@@ -94,6 +118,63 @@ impl SessionTransactionWriter {
         response.recv().map_err(|_| CodingSessionError::Session {
             message: "session transaction writer closed before replying".into(),
         })?
+    }
+
+    pub(crate) fn shutdown(&self) -> Result<(), CodingSessionError> {
+        match self.inner.sender.lock() {
+            Ok(mut sender) => {
+                sender.take();
+            }
+            Err(poisoned) => {
+                poisoned.into_inner().take();
+            }
+        }
+        let worker = match self.inner.worker.lock() {
+            Ok(mut worker) => worker.take(),
+            Err(poisoned) => poisoned.into_inner().take(),
+        };
+        if let Some(worker) = worker {
+            worker.join().map_err(|_| CodingSessionError::Session {
+                message: "session transaction writer panicked during shutdown".into(),
+            })?;
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn sender_for_tests(&self) -> SyncSender<SessionTransactionWriterEnvelope> {
+        self.inner
+            .sender
+            .lock()
+            .unwrap()
+            .as_ref()
+            .cloned()
+            .expect("test writer is open")
+    }
+
+    #[cfg(test)]
+    fn close_for_tests(&self) {
+        self.inner.sender.lock().unwrap().take();
+    }
+}
+
+impl Drop for SessionTransactionWriterInner {
+    fn drop(&mut self) {
+        match self.sender.get_mut() {
+            Ok(sender) => {
+                sender.take();
+            }
+            Err(poisoned) => {
+                poisoned.into_inner().take();
+            }
+        }
+        let worker = match self.worker.get_mut() {
+            Ok(worker) => worker.take(),
+            Err(poisoned) => poisoned.into_inner().take(),
+        };
+        if let Some(worker) = worker {
+            let _ = worker.join();
+        }
     }
 }
 
@@ -777,7 +858,7 @@ mod tests {
         let (release_sender, release_receiver) = sync_channel(1);
         let (block_reply, _block_response) = sync_channel(1);
         writer
-            .sender
+            .sender_for_tests()
             .try_send(SessionTransactionWriterEnvelope {
                 command: SessionTransactionWriterCommand::Block {
                     entered: entered_sender,
@@ -791,7 +872,7 @@ mod tests {
         for _ in 0..SESSION_TRANSACTION_WRITER_CAPACITY {
             let (reply, _response) = sync_channel(1);
             writer
-                .sender
+                .sender_for_tests()
                 .try_send(SessionTransactionWriterEnvelope {
                     command: SessionTransactionWriterCommand::Checkpoint { events: Vec::new() },
                     reply,
@@ -804,6 +885,32 @@ mod tests {
             .unwrap_err();
         assert!(error.to_string().contains("writer queue is full"));
         release_sender.send(()).unwrap();
+    }
+
+    #[test]
+    fn bounded_writer_closes_and_joins_when_last_client_drops() {
+        let (_temp, store, handle) = setup();
+        let writer = SessionTransactionWriter::new(store, handle);
+        let weak_inner = Arc::downgrade(&writer.inner);
+        let clone = writer.clone();
+
+        drop(writer);
+        assert!(weak_inner.upgrade().is_some());
+        drop(clone);
+        assert!(weak_inner.upgrade().is_none());
+    }
+
+    #[test]
+    fn bounded_writer_rejects_commands_after_close() {
+        let (_temp, store, handle) = setup();
+        let writer = SessionTransactionWriter::new(store, handle);
+        writer.close_for_tests();
+
+        let error = writer
+            .execute(SessionTransactionWriterCommand::Checkpoint { events: Vec::new() })
+            .unwrap_err();
+
+        assert!(error.to_string().contains("writer is closed"));
     }
 
     fn event_kinds(events: &[SessionEventEnvelope]) -> Vec<&'static str> {

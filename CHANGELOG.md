@@ -45,7 +45,9 @@
 - Removed raw SessionLogStore/SessionHandle authority from TurnTransaction;
   workflow-local staging now reaches persistence through typed checkpoint and
   finalize writer commands over a shared bounded transaction actor, preserving
-  checkpoint and PartialCommit semantics while rejecting queue saturation.
+  checkpoint and PartialCommit semantics while rejecting queue saturation and
+  closed writers; last-client drop and drained RuntimeHost shutdown close and
+  join the actor before shutdown publication.
 
 ### Release Status
 

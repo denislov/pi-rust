@@ -1000,6 +1000,10 @@ impl SessionService {
         self.transaction_writer.clone()
     }
 
+    pub(crate) fn shutdown_transaction_writer(&self) -> Result<(), CodingSessionError> {
+        self.transaction_writer.shutdown()
+    }
+
     #[allow(dead_code)]
     pub(crate) fn recovery_summary(&self) -> Result<SessionRecoverySummary, CodingSessionError> {
         Ok(self.replay()?.recovery_summary())
@@ -1884,6 +1888,29 @@ mod tests {
     use crate::session::event::PersistedContentBlock;
     use crate::session::replay::OperationReplayStatus;
     use crate::session::repository::StoreFailurePoint;
+
+    #[test]
+    fn transaction_writer_shutdown_is_idempotent_and_rejects_new_checkpoints() {
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_writer_shutdown")
+            .with_session_log_root(temp.path());
+        let service = SessionService::create(&options).unwrap();
+
+        service.shutdown_transaction_writer().unwrap();
+        service.shutdown_transaction_writer().unwrap();
+        let mut transaction = service.begin_prompt_transaction_with_snapshot(
+            &OperationCapabilitySnapshot::permissive("op_after_shutdown"),
+        );
+        transaction
+            .record_user_input(vec![PersistedContentBlock::Text {
+                text: "must not persist".into(),
+            }])
+            .unwrap();
+
+        let error = transaction.checkpoint().unwrap_err();
+        assert!(error.to_string().contains("writer is closed"));
+    }
 
     #[test]
     fn replay_hydration_keeps_assistant_content_kinds_structured() {

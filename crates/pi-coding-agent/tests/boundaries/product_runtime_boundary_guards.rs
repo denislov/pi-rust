@@ -2425,6 +2425,8 @@ fn turn_transaction_stages_through_typed_writer_commands_without_repository_hand
         "sync_channel::<SessionTransactionWriterEnvelope>",
         ".try_send(envelope)",
         "session transaction writer queue is full",
+        "impl Drop for SessionTransactionWriterInner",
+        "worker.join()",
     ] {
         assert!(
             transaction.contains(transport),
@@ -2436,6 +2438,21 @@ fn turn_transaction_stages_through_typed_writer_commands_without_repository_hand
     assert!(
         service.contains("transaction_writer: SessionTransactionWriter"),
         "one SessionService owner must share one transaction writer transport"
+    );
+    let connection = fs::read_to_string(scan.crate_root.join("src/runtime/facade/connection.rs"))
+        .expect("read runtime shutdown source");
+    let drain = connection
+        .find(".wait_for_active_operation_to_drain()")
+        .expect("runtime shutdown drains operations");
+    let close = connection
+        .find(".session_coordinator.shutdown_writer()?")
+        .expect("runtime shutdown closes session writer");
+    let publish = connection
+        .find(".emit_runtime_shutdown()")
+        .expect("runtime shutdown publishes after writer close");
+    assert!(
+        drain < close && close < publish,
+        "shutdown must drain operations, close/join the writer, then publish shutdown"
     );
 
     let mut workflow_repository_leaks = Vec::new();
