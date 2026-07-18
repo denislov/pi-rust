@@ -27,6 +27,7 @@ use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
 use pi_ai::api::conversation::{AssistantMessage, StopReason, Usage};
 use pi_ai::api::stream::AssistantMessageEvent;
+use tokio_util::sync::CancellationToken;
 
 use super::context::{AgentTurnContext, PendingToolCall, RuntimeCompactionState};
 
@@ -213,7 +214,11 @@ pub fn drain_queued_input(ctx: &mut AgentTurnContext) {
 
 pub async fn prepare_provider_request(ctx: &mut AgentTurnContext) -> Result<Action, String> {
     let transformed_messages = if let Some(hook) = ctx.config.hooks.transform_context.clone() {
-        match hook(ctx.messages.clone()).await {
+        let cancellation_token = ctx.cancel_token.clone();
+        match tokio::select! {
+            _ = cancellation_token.clone().cancelled_owned() => return aborted(ctx),
+            result = hook(ctx.messages.clone()) => result,
+        } {
             Ok(messages) => Some(messages),
             Err(error) => {
                 ctx.emit(AgentEvent::AgentError {
@@ -230,7 +235,11 @@ pub async fn prepare_provider_request(ctx: &mut AgentTurnContext) -> Result<Acti
         let messages = transformed_messages
             .clone()
             .unwrap_or_else(|| ctx.messages.clone());
-        match hook(messages, ctx.resources.clone()).await {
+        let cancellation_token = ctx.cancel_token.clone();
+        match tokio::select! {
+            _ = cancellation_token.clone().cancelled_owned() => return aborted(ctx),
+            result = hook(messages, ctx.resources.clone()) => result,
+        } {
             Ok(llm_messages) => Some(llm_messages),
             Err(error) => {
                 ctx.emit(AgentEvent::AgentError {
@@ -311,7 +320,11 @@ pub async fn apply_before_provider_request_hook(
     };
 
     if let Some(hook) = ctx.config.hooks.before_provider_request.clone() {
-        match hook(BeforeProviderRequestContext::from(request.clone())).await {
+        let cancellation_token = ctx.cancel_token.clone();
+        match tokio::select! {
+            _ = cancellation_token.clone().cancelled_owned() => return aborted(ctx),
+            result = hook(BeforeProviderRequestContext::from(request.clone())) => result,
+        } {
             Ok(Some(update)) => {
                 if let Some(updated_context) = update.context {
                     request.context = updated_context;
@@ -414,7 +427,11 @@ pub async fn stream_provider(ctx: &mut AgentTurnContext) -> Result<Action, Strin
     let mut assistant_message = None;
     let mut stream_error = None;
 
-    while let Some(event) = llm_stream.next().await {
+    let cancellation_token = ctx.cancel_token.clone();
+    while let Some(event) = tokio::select! {
+        _ = cancellation_token.clone().cancelled_owned() => return aborted(ctx),
+        event = llm_stream.next().fuse() => event,
+    } {
         let is_terminal = matches!(
             event,
             AssistantMessageEvent::Done { .. } | AssistantMessageEvent::Error { .. }
@@ -678,7 +695,7 @@ async fn collect_parallel_tool_executions(
                             turn,
                             call.id.clone(),
                             call.name.clone(),
-                            cancel_token,
+                            cancel_token.clone(),
                         );
                         let result =
                             execute_tool(tool, execution_context, call.arguments.clone()).await;
@@ -688,6 +705,7 @@ async fn collect_parallel_tool_executions(
                             messages,
                             &call,
                             result,
+                            cancel_token.clone(),
                         )
                         .await
                     }
@@ -736,12 +754,16 @@ async fn before_tool_result(
         messages: ctx.messages.clone(),
     };
 
-    match hook(hook_context).await {
-        Ok(Some(result)) if result.block => Some(AgentToolResult::error(
-            result.reason.unwrap_or_else(|| "blocked".into()),
-        )),
-        Err(error) => Some(AgentToolResult::error(error)),
-        _ => None,
+    let cancellation_token = ctx.cancel_token.clone();
+    tokio::select! {
+        _ = cancellation_token.clone().cancelled_owned() => Some(AgentToolResult::error("aborted")),
+        result = hook(hook_context) => match result {
+            Ok(Some(result)) if result.block => Some(AgentToolResult::error(
+                result.reason.unwrap_or_else(|| "blocked".into()),
+            )),
+            Err(error) => Some(AgentToolResult::error(error)),
+            _ => None,
+        },
     }
 }
 
@@ -756,6 +778,7 @@ async fn after_tool_result(
         ctx.messages.clone(),
         call,
         result,
+        ctx.cancel_token.clone(),
     )
     .await
 }
@@ -766,6 +789,7 @@ async fn apply_after_tool_hook(
     messages: Vec<AgentMessage>,
     call: &PendingToolCall,
     mut result: AgentToolResult,
+    cancellation: CancellationToken,
 ) -> AgentToolResult {
     let Some(hook) = hook else {
         return result;
@@ -782,7 +806,10 @@ async fn apply_after_tool_hook(
         messages,
     };
 
-    match hook(hook_context).await {
+    match tokio::select! {
+        _ = cancellation.clone().cancelled_owned() => return AgentToolResult::error("aborted"),
+        result = hook(hook_context) => result,
+    } {
         Ok(Some(after)) => {
             if let Some(content) = after.content {
                 result.content = content;
@@ -838,11 +865,20 @@ async fn execute_tool_with_updates(
     })
     .fuse();
     let mut update_open = true;
+    let cancellation_token = ctx.cancel_token.clone();
     let result = loop {
         if !update_open {
-            break execute_future.await;
+            break tokio::select! {
+                _ = cancellation_token.clone().cancelled_owned() => {
+                    AgentToolResult::error("aborted")
+                }
+                result = execute_future => result,
+            };
         }
-        futures::select! {
+        tokio::select! {
+            _ = cancellation_token.clone().cancelled_owned() => {
+                break AgentToolResult::error("aborted");
+            }
             maybe_update = update_rx.next().fuse() => {
                 if let Some(update) = maybe_update {
                     ctx.emit(AgentEvent::ToolCallUpdate {
@@ -875,17 +911,31 @@ async fn execute_tool(
     arguments: serde_json::Value,
 ) -> AgentToolResult {
     let tool_name = execution_context.tool_name().to_owned();
+    let cancellation = execution_context.cancel_token().clone();
     match tool {
-        Some(tool) => match (tool.execute)(execution_context, arguments, None).await {
-            Ok(output) => AgentToolResult::from_output(output),
-            Err(error) => AgentToolResult::error(error),
-        },
+        Some(tool) => {
+            match tokio::select! {
+                _ = cancellation.clone().cancelled_owned() => Err("aborted".to_owned()),
+                result = (tool.execute)(execution_context, arguments, None) => result,
+            } {
+                Ok(output) => AgentToolResult::from_output(output),
+                Err(error) => AgentToolResult::error(error),
+            }
+        }
         None => AgentToolResult::error(format!("unknown tool: {}", tool_name)),
     }
 }
 
 fn default_action() -> Result<Action, String> {
     action(ACTION_DEFAULT)
+}
+
+fn aborted(ctx: &mut AgentTurnContext) -> Result<Action, String> {
+    ctx.should_finish = true;
+    ctx.emit(AgentEvent::AgentError {
+        error: "aborted".into(),
+    });
+    action(ACTION_ABORTED)
 }
 
 fn action(value: &str) -> Result<Action, String> {

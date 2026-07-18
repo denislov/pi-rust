@@ -11,7 +11,7 @@ use pi_agent_core::api::flow::{Action, Flow};
 use pi_agent_core::api::resources::{PromptTemplate, Skill};
 use pi_agent_core::api::testing::{
     AgentTurnContext, ApplyBeforeProviderRequestHookNode, DecideAfterAssistantNode,
-    ExecuteToolsNode, MaybeCompactRuntimeContextNode, MaybePrepareNextTurnNode,
+    ExecuteToolsNode, MaybeCompactRuntimeContextNode, MaybePrepareNextTurnNode, PendingToolCall,
     PrepareProviderRequestNode, ProviderStreamNode, StartTurnNode,
 };
 use pi_agent_core::api::tool::{AgentTool, AgentToolOutput, ToolExecutionMode};
@@ -1157,6 +1157,48 @@ async fn execute_tools_node_runs_parallel_tools_and_appends_results_in_assistant
             ("fast", "fast_result".to_string())
         ]
     );
+}
+
+#[tokio::test]
+async fn execute_tools_node_host_cancels_an_active_tool_wait() {
+    let api = "agent-turn-flow-active-tool-cancellation";
+    let mut config = common::agent_config(common::faux_model(api));
+    let _provider_guard =
+        ProviderGuard::register(api, Arc::new(common::TestProvider::new(Vec::new())));
+    _provider_guard.install(&mut config);
+    config.tool_execution = ToolExecutionMode::Sequential;
+    let agent = Agent::new(config);
+    let (probe, mut started, mut finished) = tool_probe();
+    agent.add_tool(probed_delayed_tool("slow", 10_000, "late", probe));
+
+    let mut context = AgentTurnContext::from_agent(&agent);
+    context.pending_tool_calls.push(PendingToolCall {
+        index: 0,
+        id: "call_cancelled".into(),
+        name: "slow".into(),
+        arguments: serde_json::json!({}),
+    });
+    let cancellation = context.cancel_token.clone();
+    let mut flow = Flow::new("execute_tools").unwrap();
+    flow.add_node("execute_tools", ExecuteToolsNode).unwrap();
+
+    let flow_task = tokio::spawn(async move { (flow.run(&mut context).await, context) });
+    assert_eq!(recv_tool_signal(&mut started).await, "slow");
+    cancellation.cancel();
+
+    let (outcome, context) = tokio::time::timeout(Duration::from_secs(1), flow_task)
+        .await
+        .expect("active tool cancellation should not wait for the tool")
+        .unwrap();
+    assert!(outcome.is_ok());
+    assert_eq!(context.tool_results.len(), 1);
+    assert!(context.tool_results[0].is_error);
+    assert!(context.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::ToolCallEnd { result, .. }
+            if result.is_error && text_content(&result.content) == "aborted"
+    )));
+    assert!(finished.try_recv().is_err());
 }
 
 #[tokio::test]

@@ -1,5 +1,15 @@
 # Changes
 
+## 0.4.1 - Unreleased
+
+### Agent And Workflow Convergence
+
+- Started the 0.4.1 workflow convergence plan and completed `AWC-001` active
+  cancellation semantics. Provider streams, provider/context hooks, sequential
+  and parallel tools, and tool hooks now have host-enforced cancellation waits.
+- Added an active-tool cancellation regression proving a cancelled tool wait
+  returns promptly even when the tool emits no progress updates.
+
 ## 0.4.0 - 2026-07-19
 
 Workspace packages are versioned `0.4.0`; API/protocol snapshots and the offline
