@@ -155,6 +155,7 @@ impl UiContextProjection {
             None => {
                 let is_root_evidence = operation_kind.is_some()
                     || event.terminal_operation().is_some()
+                    || is_root_start_event(event.event())
                     || event.root_operation_id() == Some(operation_id);
                 if !is_root_evidence {
                     return;
@@ -446,6 +447,18 @@ fn terminal_operation_kind(event: &CodingAgentProductEvent) -> Option<&'static s
         CodingAgentProductEventTerminalOperationKind::PluginLoad => "plugin_load",
         CodingAgentProductEventTerminalOperationKind::Export => "export",
     })
+}
+
+fn is_root_start_event(event: &CodingAgentProductEventKind) -> bool {
+    matches!(
+        event,
+        CodingAgentProductEventKind::Agent(CodingAgentAgentProductEvent::InvocationStarted { .. })
+            | CodingAgentProductEventKind::Team(CodingAgentTeamProductEvent::Started { .. })
+            | CodingAgentProductEventKind::Workflow(
+                CodingAgentWorkflowProductEvent::PromptStarted { .. }
+                    | CodingAgentWorkflowProductEvent::SelfHealingEditStarted { .. }
+            )
+    )
 }
 
 fn inferred_event_operation_kind(event: &CodingAgentProductEventKind) -> &'static str {
