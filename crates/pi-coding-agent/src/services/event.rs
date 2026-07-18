@@ -1540,6 +1540,9 @@ impl EventService {
                 recovery_id: recovery_id.into(),
                 reason: reason.into(),
                 session_id: session_id.into(),
+                record_version: crate::events::recovery::RECOVERY_RECORD_VERSION,
+                descriptor_revision: crate::runtime::outcome::OPERATION_DESCRIPTOR_REVISION,
+                capability_generation,
             }
             .into_product_draft(),
             ProductEventEmissionContext {
@@ -1568,6 +1571,9 @@ impl EventService {
                     recovery_id: recovery_id.clone(),
                     reason: "session commit outcome requires recovery inspection".into(),
                     session_id,
+                    record_version: crate::events::recovery::RECOVERY_RECORD_VERSION,
+                    descriptor_revision: decision.descriptor.revision,
+                    capability_generation: Some(decision.capability_generation.get()),
                 }
                 .into_product_draft(),
             ),

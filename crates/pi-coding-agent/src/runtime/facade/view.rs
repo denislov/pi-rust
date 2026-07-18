@@ -83,6 +83,9 @@ impl CodingAgentSession {
                 operation_id: pending.operation_id,
                 recovery_id: pending.recovery_id,
                 operation_kind: pending.operation_kind,
+                record_version: pending.record_version,
+                descriptor_revision: pending.descriptor_revision,
+                capability_generation: pending.capability_generation,
             })
             .collect())
     }

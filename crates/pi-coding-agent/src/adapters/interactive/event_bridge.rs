@@ -520,6 +520,7 @@ impl CodingEventBridge {
                     operation_id,
                     recovery_id,
                     reason,
+                    ..
                 },
             ) => vec![UiEvent::SystemNotice {
                 text: format!(

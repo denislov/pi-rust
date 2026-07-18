@@ -188,6 +188,8 @@ pub(crate) struct OperationDescriptor {
     pub(crate) child_policy: OperationChildPolicy,
 }
 
+pub(crate) const OPERATION_DESCRIPTOR_REVISION: u16 = 1;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum OperationLineage {
     Root,
@@ -799,7 +801,7 @@ impl OperationContract {
             _ => OperationChildPolicy::Forbidden,
         };
         OperationDescriptor {
-            revision: 1,
+            revision: OPERATION_DESCRIPTOR_REVISION,
             submitted_kind,
             dispatch_mode,
             outcome_family,

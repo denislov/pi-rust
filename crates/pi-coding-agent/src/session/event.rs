@@ -197,7 +197,16 @@ pub(crate) enum SessionEventData {
         semantic_event_id: String,
     },
     #[serde(rename = "operation.recovery_pending")]
-    OperationRecoveryPending { reason: String, recovery_id: String },
+    OperationRecoveryPending {
+        reason: String,
+        recovery_id: String,
+        #[serde(default = "default_recovery_record_version")]
+        record_version: u64,
+        #[serde(default = "default_operation_descriptor_revision")]
+        descriptor_revision: u16,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        capability_generation: Option<u64>,
+    },
     #[serde(rename = "operation.recovered")]
     OperationRecovered { reason: String, recovery_id: String },
     #[serde(rename = "turn.started")]
@@ -277,6 +286,14 @@ pub(crate) enum SessionEventData {
     MetadataUpdated { key: String, value: Value },
     #[serde(rename = "active_leaf.changed")]
     ActiveLeafChanged { leaf_id: String },
+}
+
+fn default_recovery_record_version() -> u64 {
+    crate::events::recovery::RECOVERY_RECORD_VERSION
+}
+
+fn default_operation_descriptor_revision() -> u16 {
+    crate::runtime::outcome::OPERATION_DESCRIPTOR_REVISION
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -642,6 +659,9 @@ mod tests {
                 SessionEventData::OperationRecoveryPending {
                     reason: "awaiting operator resolution".into(),
                     recovery_id: "recovery_pending:sess/op".into(),
+                    record_version: 1,
+                    descriptor_revision: 1,
+                    capability_generation: Some(7),
                 },
                 "operation.recovery_pending",
             ),
@@ -758,6 +778,9 @@ mod tests {
             SessionEventData::OperationRecoveryPending {
                 reason: "awaiting operator resolution".into(),
                 recovery_id: "recovery_pending:sess_recover/op_in_doubt".into(),
+                record_version: 1,
+                descriptor_revision: 1,
+                capability_generation: Some(7),
             },
         )
         .with_operation_id("op_in_doubt");
@@ -770,6 +793,22 @@ mod tests {
             serde_json::to_value(&envelope).unwrap()["kind"],
             "operation.recovery_pending"
         );
+
+        let mut legacy = serde_json::to_value(&envelope).unwrap();
+        let data = legacy["data"].as_object_mut().unwrap();
+        data.remove("record_version");
+        data.remove("descriptor_revision");
+        data.remove("capability_generation");
+        let decoded_legacy: SessionEventEnvelope = serde_json::from_value(legacy).unwrap();
+        assert!(matches!(
+            decoded_legacy.data,
+            SessionEventData::OperationRecoveryPending {
+                record_version: 1,
+                descriptor_revision: 1,
+                capability_generation: None,
+                ..
+            }
+        ));
     }
 
     #[test]

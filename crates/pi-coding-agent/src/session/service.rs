@@ -46,6 +46,8 @@ use crate::session::transaction::{
     SessionCommitReceipt, SessionTransactionWriter, TurnTransaction,
 };
 
+const RECOVERY_RECORD_VERSION: u64 = crate::events::recovery::RECOVERY_RECORD_VERSION;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct StartupRecoveryMarker {
     pub(crate) operation_id: String,
@@ -54,6 +56,8 @@ pub(crate) struct StartupRecoveryMarker {
     pub(crate) session_id: String,
     pub(crate) operation_kind: Option<crate::session::event::OperationKind>,
     pub(crate) capability_generation: Option<u64>,
+    pub(crate) record_version: u64,
+    pub(crate) descriptor_revision: u16,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,6 +65,9 @@ pub(crate) struct RecoveryPendingInspection {
     pub(crate) operation_id: String,
     pub(crate) recovery_id: String,
     pub(crate) operation_kind: Option<String>,
+    pub(crate) record_version: u64,
+    pub(crate) descriptor_revision: u16,
+    pub(crate) capability_generation: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -1175,28 +1182,68 @@ impl SessionService {
                 pending_operation_ids.insert(operation_id.clone());
             }
         }
-        let operation_kinds = self
-            .store
-            .read_events(&self.handle)?
+        let durable_events = self.store.read_events(&self.handle)?;
+        let operation_facts = durable_events
+            .iter()
+            .filter_map(|event| match &event.data {
+                SessionEventData::OperationStarted {
+                    operation,
+                    runtime_generation,
+                } => event.operation_id.clone().map(|id| {
+                    (
+                        id,
+                        (operation.clone(), runtime_generation.capability_generation),
+                    )
+                }),
+                _ => None,
+            })
+            .collect::<std::collections::HashMap<_, _>>();
+        let pending_facts = durable_events
             .into_iter()
             .filter_map(|event| match event.data {
-                SessionEventData::OperationStarted { operation, .. } => {
-                    event.operation_id.map(|id| (id, operation))
-                }
+                SessionEventData::OperationRecoveryPending {
+                    recovery_id,
+                    record_version,
+                    descriptor_revision,
+                    capability_generation,
+                    ..
+                } => event.operation_id.map(|id| {
+                    (
+                        id,
+                        (
+                            recovery_id,
+                            record_version,
+                            descriptor_revision,
+                            capability_generation,
+                        ),
+                    )
+                }),
                 _ => None,
             })
             .collect::<std::collections::HashMap<_, _>>();
         pending_operation_ids
             .into_iter()
             .map(|operation_id| {
-                let recovery_id = self.recovery_id_for_uncertain_operation(&operation_id)?;
-                let operation_kind = operation_kinds
+                let operation_kind = operation_facts
                     .get(&operation_id)
-                    .map(persisted_operation_kind_name);
+                    .map(|(kind, _)| persisted_operation_kind_name(kind));
+                let operation_capability_generation = operation_facts
+                    .get(&operation_id)
+                    .and_then(|(_, generation)| *generation);
+                let (recovery_id, record_version, descriptor_revision, capability_generation) =
+                    pending_facts.get(&operation_id).cloned().unwrap_or((
+                        self.recovery_id_for_uncertain_operation(&operation_id)?,
+                        RECOVERY_RECORD_VERSION,
+                        crate::runtime::outcome::OPERATION_DESCRIPTOR_REVISION,
+                        operation_capability_generation,
+                    ));
                 Ok(RecoveryPendingInspection {
                     operation_id,
                     recovery_id,
                     operation_kind,
+                    record_version,
+                    descriptor_revision,
+                    capability_generation,
                 })
             })
             .collect()
@@ -1261,6 +1308,8 @@ impl SessionService {
                     session_id: session_id.clone(),
                     operation_kind,
                     capability_generation,
+                    record_version: RECOVERY_RECORD_VERSION,
+                    descriptor_revision: crate::runtime::outcome::OPERATION_DESCRIPTOR_REVISION,
                 }
             })
             .collect::<Vec<_>>();
@@ -1274,6 +1323,9 @@ impl SessionService {
                     SessionEventData::OperationRecoveryPending {
                         reason: marker.reason.clone(),
                         recovery_id: marker.recovery_id.clone(),
+                        record_version: marker.record_version,
+                        descriptor_revision: marker.descriptor_revision,
+                        capability_generation: marker.capability_generation,
                     },
                 )
                 .with_operation_id(marker.operation_id.clone())
@@ -1297,6 +1349,9 @@ impl SessionService {
                         recovery_id: marker.recovery_id.clone(),
                         reason: marker.reason.clone(),
                         session_id: marker.session_id.clone(),
+                        record_version: marker.record_version,
+                        descriptor_revision: marker.descriptor_revision,
+                        capability_generation: marker.capability_generation,
                     }
                     .into_product_draft(),
                 )

@@ -102,7 +102,10 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   controls are not yet exposed. Startup scan atomically persists a non-terminal
   `operation.recovery_pending` fact plus `Recovery` outbox record, keeps the
   replayed operation `InDoubt`, and reuses the same session/operation-derived
-  recovery ID and outbox record across repeated opens.
+  recovery ID and outbox record across repeated opens. Recovery evidence v1
+  carries record version, admitted descriptor revision, and capability
+  generation through durable facts/outbox, public inspection/events, and the
+  JSON/RPC protocol; legacy pending facts deserialize as v1.
 - Commit uncertainty is represented by `PartialCommit`, and durable
   `RecoveryPending` now survives caller exit/restart. Bounded retry, explicit
   resolve/audit, and subsequent-work policy remain incomplete.

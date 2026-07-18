@@ -5,6 +5,8 @@ use super::{
     CodingAgentProductEventDurability, CodingAgentProductEventKind, CodingAgentWorkflowProductEvent,
 };
 
+pub(crate) const RECOVERY_RECORD_VERSION: u64 = 1;
+
 #[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RecoveryEvent {
@@ -20,6 +22,9 @@ pub(crate) struct RecoveryPendingEvent {
     pub(crate) recovery_id: String,
     pub(crate) reason: String,
     pub(crate) session_id: String,
+    pub(crate) record_version: u64,
+    pub(crate) descriptor_revision: u16,
+    pub(crate) capability_generation: Option<u64>,
 }
 
 impl RecoveryPendingEvent {
@@ -30,6 +35,9 @@ impl RecoveryPendingEvent {
                     operation_id: self.operation_id.clone(),
                     recovery_id: self.recovery_id.clone(),
                     reason: self.reason,
+                    record_version: self.record_version,
+                    descriptor_revision: self.descriptor_revision,
+                    capability_generation: self.capability_generation,
                 },
             ),
             operation_id: Some(self.operation_id.clone()),
@@ -64,5 +72,38 @@ impl RecoveryEvent {
                 recovery_id: self.recovery_id,
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_product_recovery_pending_defaults_to_v1_evidence() {
+        let event = CodingAgentWorkflowProductEvent::OperationRecoveryPending {
+            operation_id: "op_pending".into(),
+            recovery_id: "recovery_pending:session/op_pending".into(),
+            reason: "awaiting recovery".into(),
+            record_version: RECOVERY_RECORD_VERSION,
+            descriptor_revision: crate::runtime::outcome::OPERATION_DESCRIPTOR_REVISION,
+            capability_generation: Some(7),
+        };
+        let mut legacy = serde_json::to_value(event).unwrap();
+        let object = legacy.as_object_mut().unwrap();
+        object.remove("record_version");
+        object.remove("descriptor_revision");
+        object.remove("capability_generation");
+
+        let decoded: CodingAgentWorkflowProductEvent = serde_json::from_value(legacy).unwrap();
+        assert!(matches!(
+            decoded,
+            CodingAgentWorkflowProductEvent::OperationRecoveryPending {
+                record_version: RECOVERY_RECORD_VERSION,
+                descriptor_revision: crate::runtime::outcome::OPERATION_DESCRIPTOR_REVISION,
+                capability_generation: None,
+                ..
+            }
+        ));
     }
 }

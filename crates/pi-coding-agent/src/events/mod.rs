@@ -554,6 +554,12 @@ pub enum CodingAgentWorkflowProductEvent {
         operation_id: String,
         recovery_id: String,
         reason: String,
+        #[serde(default = "default_recovery_record_version")]
+        record_version: u64,
+        #[serde(default = "default_operation_descriptor_revision")]
+        descriptor_revision: u16,
+        #[serde(default)]
+        capability_generation: Option<u64>,
     },
     OperationRecovered {
         operation_id: String,
@@ -571,6 +577,14 @@ pub enum CodingAgentWorkflowProductEvent {
         operation_id: String,
         reason: String,
     },
+}
+
+fn default_recovery_record_version() -> u64 {
+    recovery::RECOVERY_RECORD_VERSION
+}
+
+fn default_operation_descriptor_revision() -> u16 {
+    crate::runtime::outcome::OPERATION_DESCRIPTOR_REVISION
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]

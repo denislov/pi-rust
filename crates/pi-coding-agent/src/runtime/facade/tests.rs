@@ -258,6 +258,9 @@ mod cases {
                 operation_id: "op_in_doubt".into(),
                 recovery_id: "recovery_pending:sess_startup_recovery_projection/op_in_doubt".into(),
                 operation_kind: Some("prompt".into()),
+                record_version: 1,
+                descriptor_revision: 1,
+                capability_generation: Some(9),
             }]
         );
         let mut receiver = session.subscribe_product_events();

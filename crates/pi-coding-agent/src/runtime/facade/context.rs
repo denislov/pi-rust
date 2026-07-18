@@ -113,6 +113,9 @@ pub struct CodingAgentRecoveryPending {
     pub operation_id: String,
     pub recovery_id: String,
     pub operation_kind: Option<String>,
+    pub record_version: u64,
+    pub descriptor_revision: u16,
+    pub capability_generation: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

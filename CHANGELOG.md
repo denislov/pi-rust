@@ -117,7 +117,10 @@
   fact and `Recovery` outbox record in the same writer batch. Recovery IDs are
   stable per session/operation, replay remains `InDoubt`, and repeated opens
   redeliver the same evidence without duplicating facts or records instead of
-  speculatively marking incomplete work recovered.
+  speculatively marking incomplete work recovered. Recovery evidence v1 carries
+  record version, descriptor revision, and capability generation through the
+  durable fact/outbox, public Rust API/events, and JSON/RPC protocol, with
+  defaults for pending facts written before these fields were introduced.
 - Began `RIF-002`: `OperationSupervisor` now owns typed immutable
   `FinalizationDecision` creation for every dispatch path. Decisions freeze the
   admitted identity, lineage, descriptor, capability generation, terminal

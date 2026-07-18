@@ -299,11 +299,17 @@ impl CodingProtocolEventAdapter {
                     operation_id,
                     recovery_id,
                     reason,
+                    record_version,
+                    descriptor_revision,
+                    capability_generation,
                 },
             ) => vec![ProtocolEvent::OperationRecoveryPending {
                 operation_id: operation_id.clone(),
                 recovery_id: recovery_id.clone(),
                 reason: reason.clone(),
+                record_version: *record_version,
+                descriptor_revision: *descriptor_revision,
+                capability_generation: *capability_generation,
             }],
             CodingAgentProductEventKind::Workflow(
                 CodingAgentWorkflowProductEvent::OperationRecovered {
@@ -1144,6 +1150,9 @@ mod tests {
                 recovery_id: "recovery_pending:session/op".into(),
                 reason: "session commit outcome requires recovery inspection".into(),
                 session_id: "session_pending".into(),
+                record_version: 1,
+                descriptor_revision: 1,
+                capability_generation: Some(7),
             }
             .into_product_draft(),
             None,
@@ -1157,12 +1166,22 @@ mod tests {
                 operation_id,
                 recovery_id,
                 reason,
+                record_version,
+                descriptor_revision,
+                capability_generation,
             } if operation_id == "op_pending"
                 && recovery_id == "recovery_pending:session/op"
                 && reason.contains("recovery inspection")
+                && *record_version == 1
+                && *descriptor_revision == 1
+                && *capability_generation == Some(7)
         ));
         assert!(product_event.terminal_status().is_none());
         assert!(product_event.terminal_operation().is_none());
+        let protocol_json = serde_json::to_value(&events[0]).unwrap();
+        assert_eq!(protocol_json["recordVersion"], 1);
+        assert_eq!(protocol_json["descriptorRevision"], 1);
+        assert_eq!(protocol_json["capabilityGeneration"], 7);
     }
 
     #[test]
