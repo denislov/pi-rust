@@ -19,10 +19,10 @@ failure/security consequences, compatibility, and verification.
 | ADR | Decision | Status | Owner/deadline | Required evidence | Blocking tasks |
 | --- | --- | --- | --- | --- | --- |
 | [ADR-001](ADR-001-runtime-owner-and-finalization.md) | runtime owner graph and typed finalization handoff | Accepted 2026-07-18 | `0.4.0` | owner-edge, identity, writer, outbox, shutdown matrices | `RIF-001`, `RIF-002`, `RIF-007`–`RIF-009` |
-| ADR-002 | instance grants and operation leases | Proposed | `0.4.0`, implement `0.4.2` | revoke/stale-generation disposable Host API prototype | `EKR-003` |
-| ADR-003 | isolated per-invocation Wasm Store/Instance | Proposed | `0.4.0`, implement `0.4.2` | offline async cancel/fuel/epoch/memory prototype | `EKR-004` |
-| ADR-004 | extension state/fact scopes and transaction boundaries | Proposed | `0.4.0`, complete `0.4.3` | replay-without-code and cross-store failure model | `ESS-001`–`ESS-003`, `ESS-006` |
-| ADR-005 | Workbench retained snapshot/patch/state protocol | Proposed | `0.4.0`, freeze `0.4.4` | two thin semantic views plus gap/resync prototype | `WAP-001`, `WAP-002` |
+| [ADR-002](ADR-002-extension-grants-and-leases.md) | instance grants and operation leases | Accepted 2026-07-18 | `0.4.0`, implement `0.4.2` | offline revoke/stale-generation prototype passed | `EKR-003` |
+| [ADR-003](ADR-003-isolated-wasm-invocation.md) | isolated per-invocation Wasm Store/Instance | Proposed | `0.4.0`, implement `0.4.2` | real-engine async cancel/fuel/epoch/memory prototype still required | `EKR-004` |
+| [ADR-004](ADR-004-extension-state-and-facts.md) | extension state/fact scopes and transaction boundaries | Accepted 2026-07-18 | `0.4.0`, complete `0.4.3` | offline state/outbox/activation prototype passed | `ESS-001`–`ESS-003`, `ESS-006` |
+| [ADR-005](ADR-005-workbench-protocol.md) | Workbench retained snapshot/patch/state protocol | Accepted 2026-07-18 | `0.4.0`, freeze `0.4.4` | two-view revision/gap/resync prototype passed | `WAP-001`, `WAP-002` |
 | ADR-006 | Application Profile composition | Scheduled | `0.4.4` before `WAP-002` | base/overlay/conflict/degraded matrix | `WAP-001`, `WAP-004` |
 | ADR-007 | package quarantine and coordinated update | Scheduled | accept `0.4.2`, complete `0.4.3` | phase-crash/fencing/recovery prototype | `EKR-001`, `ESS-001`, `ESS-006` |
 | ADR-008 | Manifest/WIT/Host API/schema versioning | Scheduled | accept `0.4.2`, complete `0.4.3` | generated hash and compatibility fixture | `EKR-001`, `ESS-001` |

@@ -9,8 +9,10 @@
 - Split the monolithic architecture document into normative principles, runtime,
   extension-platform, dependency, and testing contracts, plus versioned current
   state, ADRs, and migration evidence.
-- Accepted the runtime-owner/finalization and `RecoveryPending` management
-  decisions; future extension decisions remain blocked on their named prototypes.
+- Accepted runtime-owner/finalization, `RecoveryPending`, extension grant/lease,
+  state/fact, and Workbench protocol decisions with an offline disposable
+  contract prototype. Isolated Wasm invocation remains Proposed pending real
+  engine cancellation/epoch/fuel/limit evidence.
 
 ### Runtime Integrity
 

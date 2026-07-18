@@ -58,6 +58,10 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   Completed/Failed/Aborted root terminal evidence, recorded by commit `57e6a17`.
 - Workbench semantic views, extension state/facts, package update coordination,
   and background extension services do not exist.
+- `tools/architecture-prototypes/runtime-contracts.mjs` is decision evidence for
+  capability generation, state/fact boundaries, per-invocation memory isolation,
+  and Workbench revision/resync. It is not a production runtime; real Wasm engine
+  interruption/limit evidence remains open under `ADR-003`.
 
 ## Evidence Maintenance
 
