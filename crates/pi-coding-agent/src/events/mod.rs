@@ -567,6 +567,12 @@ pub enum CodingAgentWorkflowProductEvent {
         descriptor_revision: u16,
         #[serde(default)]
         capability_generation: Option<u64>,
+        #[serde(default)]
+        attempt_count: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        last_attempt_at: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        next_attempt_at: Option<String>,
     },
     OperationRecoveryResolved {
         operation_id: String,

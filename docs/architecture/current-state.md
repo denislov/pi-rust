@@ -111,9 +111,11 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   and `OperationTerminal` outbox atomically, publishes only after commit, and
   redelivers the original family terminal after restart.
 - Commit uncertainty is represented by `PartialCommit`, and durable
-  `RecoveryPending` now survives caller exit/restart. Bounded retry,
-  authenticated RPC control/audit identity, and subsequent-work policy remain
-  incomplete.
+  `RecoveryPending` now survives caller exit/restart. Trusted-host
+  `retry_recovery()` performs a durable, non-terminal facts/outbox inspection
+  attempt with a three-attempt cap and restart-visible timestamps; it never
+  reruns an external side effect. Automatic backoff scheduling, authenticated
+  RPC control/audit identity, and subsequent-work policy remain incomplete.
 
 ## Events, Sessions, And Clients
 

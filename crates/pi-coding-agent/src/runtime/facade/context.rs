@@ -116,6 +116,9 @@ pub struct CodingAgentRecoveryPending {
     pub record_version: u64,
     pub descriptor_revision: u16,
     pub capability_generation: Option<u64>,
+    pub attempt_count: u32,
+    pub last_attempt_at: Option<String>,
+    pub next_attempt_at: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -152,6 +155,36 @@ pub struct CodingAgentRecoveryResolutionResult {
     pub operation_id: String,
     pub recovery_id: String,
     pub resolution: super::CodingAgentRecoveryResolution,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodingAgentRecoveryRetryRequest {
+    pub operation_id: String,
+    pub recovery_id: String,
+    pub expected_record_version: u64,
+    pub expected_descriptor_revision: u16,
+    pub expected_capability_generation: Option<u64>,
+}
+
+impl CodingAgentRecoveryRetryRequest {
+    pub fn from_pending(pending: &CodingAgentRecoveryPending) -> Self {
+        Self {
+            operation_id: pending.operation_id.clone(),
+            recovery_id: pending.recovery_id.clone(),
+            expected_record_version: pending.record_version,
+            expected_descriptor_revision: pending.descriptor_revision,
+            expected_capability_generation: pending.capability_generation,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodingAgentRecoveryRetryResult {
+    pub operation_id: String,
+    pub recovery_id: String,
+    pub attempt_count: u32,
+    pub last_attempt_at: String,
+    pub next_attempt_at: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

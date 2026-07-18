@@ -128,6 +128,10 @@
   atomically commits the audit fact, terminal fact, terminal marker, and
   `OperationTerminal` outbox; EventHub publishes only after commit and restart
   redelivery preserves the original operation family and terminal status.
+- Added bounded trusted-host `retry_recovery()` inspection attempts. Each retry
+  appends a pending snapshot and Recovery outbox record with durable attempt
+  count and timestamps, caps attempts at three, and never reruns an external
+  side effect; automatic backoff scheduling remains pending.
 - Began `RIF-002`: `OperationSupervisor` now owns typed immutable
   `FinalizationDecision` creation for every dispatch path. Decisions freeze the
   admitted identity, lineage, descriptor, capability generation, terminal

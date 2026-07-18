@@ -419,6 +419,12 @@ pub enum ProtocolEvent {
         descriptor_revision: u16,
         #[serde(rename = "capabilityGeneration")]
         capability_generation: Option<u64>,
+        #[serde(rename = "attemptCount")]
+        attempt_count: u32,
+        #[serde(rename = "lastAttemptAt")]
+        last_attempt_at: Option<String>,
+        #[serde(rename = "nextAttemptAt")]
+        next_attempt_at: Option<String>,
     },
     #[serde(rename = "operation_recovery_resolved")]
     OperationRecoveryResolved {

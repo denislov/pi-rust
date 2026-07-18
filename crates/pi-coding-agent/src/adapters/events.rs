@@ -302,6 +302,9 @@ impl CodingProtocolEventAdapter {
                     record_version,
                     descriptor_revision,
                     capability_generation,
+                    attempt_count,
+                    last_attempt_at,
+                    next_attempt_at,
                 },
             ) => vec![ProtocolEvent::OperationRecoveryPending {
                 operation_id: operation_id.clone(),
@@ -310,6 +313,9 @@ impl CodingProtocolEventAdapter {
                 record_version: *record_version,
                 descriptor_revision: *descriptor_revision,
                 capability_generation: *capability_generation,
+                attempt_count: *attempt_count,
+                last_attempt_at: last_attempt_at.clone(),
+                next_attempt_at: next_attempt_at.clone(),
             }],
             CodingAgentProductEventKind::Workflow(
                 CodingAgentWorkflowProductEvent::OperationRecoveryResolved {
@@ -1176,6 +1182,9 @@ mod tests {
                 record_version: 1,
                 descriptor_revision: 1,
                 capability_generation: Some(7),
+                attempt_count: 0,
+                last_attempt_at: None,
+                next_attempt_at: None,
             }
             .into_product_draft(),
             None,
@@ -1192,6 +1201,7 @@ mod tests {
                 record_version,
                 descriptor_revision,
                 capability_generation,
+                ..
             } if operation_id == "op_pending"
                 && recovery_id == "recovery_pending:session/op"
                 && reason.contains("recovery inspection")

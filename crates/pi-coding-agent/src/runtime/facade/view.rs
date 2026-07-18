@@ -86,6 +86,9 @@ impl CodingAgentSession {
                 record_version: pending.record_version,
                 descriptor_revision: pending.descriptor_revision,
                 capability_generation: pending.capability_generation,
+                attempt_count: pending.attempt_count,
+                last_attempt_at: pending.last_attempt_at,
+                next_attempt_at: pending.next_attempt_at,
             })
             .collect())
     }

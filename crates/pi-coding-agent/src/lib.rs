@@ -42,7 +42,9 @@ pub mod api {
     pub mod runtime {
         pub use crate::runtime::facade::{
             CodingAgentCapabilityControl, CodingAgentCapabilityRevocationOutcome,
-            CodingAgentOperationTask, CodingAgentRuntimeShutdownHandle, CodingAgentSession,
+            CodingAgentOperationTask, CodingAgentRecoveryResolutionRequest,
+            CodingAgentRecoveryResolutionResult, CodingAgentRecoveryRetryRequest,
+            CodingAgentRecoveryRetryResult, CodingAgentRuntimeShutdownHandle, CodingAgentSession,
             CodingAgentSessionOptions, CodingAgentShutdownOutcome, CodingSessionError,
         };
     }
@@ -76,10 +78,10 @@ pub mod api {
             CodingAgentProductEventReplacement, CodingAgentProductEventTerminalOperation,
             CodingAgentProductEventTerminalOperationKind, CodingAgentProductEventTerminalStatus,
             CodingAgentProductEventUsage, CodingAgentProfileProductEvent,
-            CodingAgentRuntimeProductEvent, CodingAgentSessionProductEvent,
-            CodingAgentSessionWriteFailureStatus, CodingAgentSubmittedEventDurability,
-            CodingAgentTeamProductEvent, CodingAgentToolProductEvent,
-            CodingAgentWorkflowProductEvent,
+            CodingAgentRecoveryResolution, CodingAgentRuntimeProductEvent,
+            CodingAgentSessionProductEvent, CodingAgentSessionWriteFailureStatus,
+            CodingAgentSubmittedEventDurability, CodingAgentTeamProductEvent,
+            CodingAgentToolProductEvent, CodingAgentWorkflowProductEvent,
         };
     }
 
@@ -95,11 +97,13 @@ pub mod api {
             CodingAgentLifecycleRejection, CodingAgentMutationRejection,
             CodingAgentOperationControl, CodingAgentOperationSnapshot, CodingAgentOperationStatus,
             CodingAgentOutcomeAcknowledgementId, CodingAgentPromptControl, CodingAgentReconnect,
-            CodingAgentReconnectDelivery, CodingAgentReconnectReceiver, CodingAgentRecoveryReason,
-            CodingAgentSnapshot, CodingAgentSnapshotCursor, CodingAgentSubmissionLease,
-            CodingAgentSubmittedOperation, CodingAgentSubmittedOperationStatus,
-            CodingAgentSubmittedTerminalAnchor, CodingAgentTerminalUncertainty,
-            CodingAgentTurnUsageSnapshot, CodingAgentUsageSnapshot,
+            CodingAgentReconnectDelivery, CodingAgentReconnectReceiver, CodingAgentRecoveryPending,
+            CodingAgentRecoveryReason, CodingAgentRecoveryResolutionRequest,
+            CodingAgentRecoveryResolutionResult, CodingAgentRecoveryRetryRequest,
+            CodingAgentRecoveryRetryResult, CodingAgentSnapshot, CodingAgentSnapshotCursor,
+            CodingAgentSubmissionLease, CodingAgentSubmittedOperation,
+            CodingAgentSubmittedOperationStatus, CodingAgentSubmittedTerminalAnchor,
+            CodingAgentTerminalUncertainty, CodingAgentTurnUsageSnapshot, CodingAgentUsageSnapshot,
         };
     }
 
@@ -107,9 +111,10 @@ pub mod api {
     pub mod view {
         pub use crate::runtime::facade::{
             AgentProfile, CapabilityStatus, CodingAgentCapabilities, CodingAgentPluginDiagnostic,
-            CodingAgentSessionExport, CodingAgentSessionExportItem, CodingAgentSessionSummary,
-            CodingAgentSessionView, CodingDiagnostic, CodingDiagnosticSeverity, ProfileDiagnostic,
-            ProfileId, ProfileKind, ProfileSource, TeamProfile, TeamStrategy, TeamSupervisor,
+            CodingAgentRecoveryPending, CodingAgentSessionExport, CodingAgentSessionExportItem,
+            CodingAgentSessionSummary, CodingAgentSessionView, CodingDiagnostic,
+            CodingDiagnosticSeverity, ProfileDiagnostic, ProfileId, ProfileKind, ProfileSource,
+            TeamProfile, TeamStrategy, TeamSupervisor,
         };
     }
 

@@ -261,6 +261,9 @@ mod cases {
                 record_version: 1,
                 descriptor_revision: 1,
                 capability_generation: Some(9),
+                attempt_count: 0,
+                last_attempt_at: None,
+                next_attempt_at: None,
             }]
         );
         let mut receiver = session.subscribe_product_events();
@@ -435,6 +438,99 @@ mod cases {
         assert!(serialized.contains("operation.terminal.recorded"));
         assert!(serialized.contains("token=<redacted>"));
         assert!(!serialized.contains("super-secret-value"));
+    }
+
+    #[tokio::test]
+    async fn recovery_retry_is_bounded_durable_and_non_terminal() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = crate::session::repository::SessionLogStore::new(temp.path());
+        let handle = store
+            .create_session(crate::session::repository::CreateSessionOptions::new(
+                "sess_recovery_retry",
+                "2026-07-19T00:00:00Z",
+            ))
+            .unwrap();
+        store
+            .append_events(
+                &handle,
+                &[SessionEventEnvelope::new(
+                    "sess_recovery_retry",
+                    "evt_started",
+                    "2026-07-19T00:00:01Z",
+                    SessionEventData::OperationStarted {
+                        operation: crate::session::event::OperationKind::Prompt,
+                        runtime_generation: crate::session::event::PersistedRuntimeGenerationRef {
+                            capability_generation: Some(12),
+                            ..Default::default()
+                        },
+                    },
+                )
+                .with_operation_id("op_recovery_retry")],
+            )
+            .unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_recovery_retry")
+            .with_session_log_root(temp.path());
+        let mut session = CodingAgentSession::open(options.clone()).await.unwrap();
+        let mut pending = session.recovery_pending().unwrap().pop().unwrap();
+        assert_eq!(pending.attempt_count, 0);
+        for expected_attempt in 1..=3 {
+            let result = session
+                .retry_recovery(
+                    crate::runtime::facade::CodingAgentRecoveryRetryRequest::from_pending(&pending),
+                )
+                .unwrap();
+            assert_eq!(result.attempt_count, expected_attempt);
+            assert!(result.next_attempt_at.is_none());
+            pending = session.recovery_pending().unwrap().pop().unwrap();
+            assert_eq!(pending.attempt_count, expected_attempt);
+            assert!(pending.last_attempt_at.is_some());
+            assert!(pending.next_attempt_at.is_none());
+        }
+        let before = store.read_events(&handle).unwrap().len();
+        let error = session
+            .retry_recovery(
+                crate::runtime::facade::CodingAgentRecoveryRetryRequest::from_pending(&pending),
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("retry limit reached"));
+        assert_eq!(store.read_events(&handle).unwrap().len(), before);
+        assert_eq!(
+            session
+                .runtime_host
+                .event_hub
+                .service
+                .product_events_after(crate::events::ProductEventSequence::default())
+                .unwrap()
+                .iter()
+                .filter(|event| event.terminal_status().is_some())
+                .count(),
+            0
+        );
+        drop(session);
+
+        let reopened = CodingAgentSession::open(options).await.unwrap();
+        let reopened_pending = reopened.recovery_pending().unwrap();
+        assert_eq!(reopened_pending.len(), 1);
+        assert_eq!(reopened_pending[0].attempt_count, 3);
+        assert!(reopened_pending[0].last_attempt_at.is_some());
+        assert!(reopened_pending[0].next_attempt_at.is_none());
+        let events = store
+            .read_events(&store.open_session_id("sess_recovery_retry").unwrap())
+            .unwrap();
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(
+                    event.data,
+                    SessionEventData::OperationRecoveryPending {
+                        attempt_count: 3,
+                        ..
+                    }
+                ))
+                .count(),
+            1
+        );
     }
 
     #[tokio::test]

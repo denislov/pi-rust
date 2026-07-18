@@ -25,6 +25,9 @@ pub(crate) struct RecoveryPendingEvent {
     pub(crate) record_version: u64,
     pub(crate) descriptor_revision: u16,
     pub(crate) capability_generation: Option<u64>,
+    pub(crate) attempt_count: u32,
+    pub(crate) last_attempt_at: Option<String>,
+    pub(crate) next_attempt_at: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,6 +53,9 @@ impl RecoveryPendingEvent {
                     record_version: self.record_version,
                     descriptor_revision: self.descriptor_revision,
                     capability_generation: self.capability_generation,
+                    attempt_count: self.attempt_count,
+                    last_attempt_at: self.last_attempt_at,
+                    next_attempt_at: self.next_attempt_at,
                 },
             ),
             operation_id: Some(self.operation_id.clone()),
@@ -132,6 +138,9 @@ mod tests {
             record_version: RECOVERY_RECORD_VERSION,
             descriptor_revision: crate::runtime::outcome::OPERATION_DESCRIPTOR_REVISION,
             capability_generation: Some(7),
+            attempt_count: 0,
+            last_attempt_at: None,
+            next_attempt_at: None,
         };
         let mut legacy = serde_json::to_value(event).unwrap();
         let object = legacy.as_object_mut().unwrap();

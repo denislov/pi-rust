@@ -47,6 +47,7 @@ use crate::session::transaction::{
 };
 
 const RECOVERY_RECORD_VERSION: u64 = crate::events::recovery::RECOVERY_RECORD_VERSION;
+const MAX_RECOVERY_RETRY_ATTEMPTS: u32 = 3;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct StartupRecoveryMarker {
@@ -68,6 +69,9 @@ pub(crate) struct RecoveryPendingInspection {
     pub(crate) record_version: u64,
     pub(crate) descriptor_revision: u16,
     pub(crate) capability_generation: Option<u64>,
+    pub(crate) attempt_count: u32,
+    pub(crate) last_attempt_at: Option<String>,
+    pub(crate) next_attempt_at: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -77,6 +81,18 @@ pub(crate) struct RecoveryResolutionCommit {
     pub(crate) resolution: crate::events::CodingAgentRecoveryResolution,
     pub(crate) operation_kind: crate::session::event::OperationKind,
     pub(crate) draft: ProductEventDraft,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct RecoveryRetryCommit {
+    pub(crate) operation_id: String,
+    pub(crate) recovery_id: String,
+    pub(crate) operation_kind: crate::session::event::OperationKind,
+    pub(crate) capability_generation: Option<u64>,
+    pub(crate) draft: ProductEventDraft,
+    pub(crate) attempt_count: u32,
+    pub(crate) last_attempt_at: String,
+    pub(crate) next_attempt_at: Option<String>,
 }
 
 #[derive(Debug)]
@@ -1217,6 +1233,9 @@ impl SessionService {
                     record_version,
                     descriptor_revision,
                     capability_generation,
+                    attempt_count,
+                    last_attempt_at,
+                    next_attempt_at,
                     ..
                 } => event.operation_id.map(|id| {
                     (
@@ -1226,6 +1245,9 @@ impl SessionService {
                             record_version,
                             descriptor_revision,
                             capability_generation,
+                            attempt_count,
+                            last_attempt_at,
+                            next_attempt_at,
                         ),
                     )
                 }),
@@ -1241,13 +1263,23 @@ impl SessionService {
                 let operation_capability_generation = operation_facts
                     .get(&operation_id)
                     .and_then(|(_, generation)| *generation);
-                let (recovery_id, record_version, descriptor_revision, capability_generation) =
-                    pending_facts.get(&operation_id).cloned().unwrap_or((
-                        self.recovery_id_for_uncertain_operation(&operation_id)?,
-                        RECOVERY_RECORD_VERSION,
-                        crate::runtime::outcome::OPERATION_DESCRIPTOR_REVISION,
-                        operation_capability_generation,
-                    ));
+                let (
+                    recovery_id,
+                    record_version,
+                    descriptor_revision,
+                    capability_generation,
+                    attempt_count,
+                    last_attempt_at,
+                    next_attempt_at,
+                ) = pending_facts.get(&operation_id).cloned().unwrap_or((
+                    self.recovery_id_for_uncertain_operation(&operation_id)?,
+                    RECOVERY_RECORD_VERSION,
+                    crate::runtime::outcome::OPERATION_DESCRIPTOR_REVISION,
+                    operation_capability_generation,
+                    0,
+                    None,
+                    None,
+                ));
                 Ok(RecoveryPendingInspection {
                     operation_id,
                     recovery_id,
@@ -1255,6 +1287,9 @@ impl SessionService {
                     record_version,
                     descriptor_revision,
                     capability_generation,
+                    attempt_count,
+                    last_attempt_at,
+                    next_attempt_at,
                 })
             })
             .collect()
@@ -1435,6 +1470,135 @@ impl SessionService {
         })
     }
 
+    pub(crate) fn retry_recovery(
+        &self,
+        request: &crate::runtime::facade::CodingAgentRecoveryRetryRequest,
+    ) -> Result<RecoveryRetryCommit, CodingSessionError> {
+        let pending = self
+            .inspect_recovery_pending()?
+            .into_iter()
+            .find(|pending| pending.recovery_id == request.recovery_id)
+            .ok_or_else(|| CodingSessionError::Input {
+                message: format!(
+                    "unknown or already resolved recovery: {}",
+                    request.recovery_id
+                ),
+            })?;
+        if pending.operation_id != request.operation_id {
+            return Err(CodingSessionError::Input {
+                message: "recovery operation identity mismatch".into(),
+            });
+        }
+        if pending.record_version != request.expected_record_version {
+            return Err(CodingSessionError::Input {
+                message: "recovery record version is stale".into(),
+            });
+        }
+        if pending.descriptor_revision != request.expected_descriptor_revision {
+            return Err(CodingSessionError::Input {
+                message: "recovery descriptor revision is stale".into(),
+            });
+        }
+        if pending.capability_generation != request.expected_capability_generation {
+            return Err(CodingSessionError::Input {
+                message: "recovery capability generation is stale".into(),
+            });
+        }
+        if pending.attempt_count >= MAX_RECOVERY_RETRY_ATTEMPTS {
+            return Err(CodingSessionError::Input {
+                message: format!("recovery retry limit reached: {MAX_RECOVERY_RETRY_ATTEMPTS}"),
+            });
+        }
+        let operation_kind = self
+            .store
+            .read_events(&self.handle)?
+            .into_iter()
+            .find_map(|event| match event.data {
+                SessionEventData::OperationStarted { operation, .. }
+                    if event.operation_id.as_deref() == Some(request.operation_id.as_str()) =>
+                {
+                    Some(operation)
+                }
+                _ => None,
+            })
+            .ok_or_else(|| CodingSessionError::Session {
+                message: "recovery retry requires the original operation kind".into(),
+            })?;
+        if matches!(
+            operation_kind,
+            crate::session::event::OperationKind::Other { .. }
+                | crate::session::event::OperationKind::SessionTreeLabel
+        ) {
+            return Err(CodingSessionError::UnsupportedCapability {
+                capability: "recovery retry requires a durable root operation family".into(),
+            });
+        }
+        let session_id = self.session_id().to_owned();
+        let last_attempt_at = SystemClock.now_rfc3339();
+        let attempt_count = pending.attempt_count + 1;
+        let reason = "recovery retry inspected durable facts and outbox; operation remains pending";
+        let mut ids = SystemIdGenerator;
+        let event = SessionEventEnvelope::new(
+            session_id.clone(),
+            ids.next_event_id(),
+            last_attempt_at.clone(),
+            SessionEventData::OperationRecoveryPending {
+                reason: reason.into(),
+                recovery_id: pending.recovery_id.clone(),
+                record_version: pending.record_version,
+                descriptor_revision: pending.descriptor_revision,
+                capability_generation: pending.capability_generation,
+                attempt_count,
+                last_attempt_at: Some(last_attempt_at.clone()),
+                next_attempt_at: None,
+            },
+        )
+        .with_operation_id(request.operation_id.clone());
+        let draft = crate::events::recovery::RecoveryPendingEvent {
+            operation_id: request.operation_id.clone(),
+            recovery_id: pending.recovery_id.clone(),
+            reason: reason.into(),
+            session_id: session_id.clone(),
+            record_version: pending.record_version,
+            descriptor_revision: pending.descriptor_revision,
+            capability_generation: pending.capability_generation,
+            attempt_count,
+            last_attempt_at: Some(last_attempt_at.clone()),
+            next_attempt_at: None,
+        }
+        .into_product_draft();
+        let outbox = DurableOutboxRecordCandidate::new(
+            format!(
+                "{}/{}/recovery_pending/retry/{}",
+                session_id, request.operation_id, attempt_count
+            ),
+            session_id,
+            Some(request.operation_id.clone()),
+            vec![event.event_id.clone()],
+            DurableOutboxRecordKind::Recovery,
+            draft.clone(),
+        )
+        .map_err(|message| CodingSessionError::Session {
+            message: message.into(),
+        })?;
+        self.commit_writer_mutation_with_outbox(
+            vec![event],
+            vec![outbox],
+            ManifestPatch::new().updated_at(last_attempt_at.clone()),
+            Some(request.operation_id.clone()),
+        )?;
+        Ok(RecoveryRetryCommit {
+            operation_id: request.operation_id.clone(),
+            recovery_id: pending.recovery_id,
+            operation_kind,
+            capability_generation: pending.capability_generation,
+            draft,
+            attempt_count,
+            last_attempt_at,
+            next_attempt_at: None,
+        })
+    }
+
     fn apply_startup_recovery(&mut self) -> Result<(), CodingSessionError> {
         let replay = self.replay()?;
         let in_doubt_operations = replay.recovery_summary().in_doubt_operations;
@@ -1512,6 +1676,9 @@ impl SessionService {
                         record_version: marker.record_version,
                         descriptor_revision: marker.descriptor_revision,
                         capability_generation: marker.capability_generation,
+                        attempt_count: 0,
+                        last_attempt_at: None,
+                        next_attempt_at: None,
                     },
                 )
                 .with_operation_id(marker.operation_id.clone())
@@ -1538,6 +1705,9 @@ impl SessionService {
                         record_version: marker.record_version,
                         descriptor_revision: marker.descriptor_revision,
                         capability_generation: marker.capability_generation,
+                        attempt_count: 0,
+                        last_attempt_at: None,
+                        next_attempt_at: None,
                     }
                     .into_product_draft(),
                 )

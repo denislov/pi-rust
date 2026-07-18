@@ -628,8 +628,32 @@ impl EventService {
                         .as_deref()
                         .and_then(crate::runtime::control::OperationKind::from_str),
                 ),
+            crate::events::outbox::DurableOutboxRecordKind::Recovery => {
+                self.publish_durable_recovery_pending_draft(record.draft.clone())
+            }
             _ => self.publish_without_root_terminal(record.draft.clone()),
         })
+    }
+
+    fn publish_durable_recovery_pending_draft(&self, draft: ProductEventDraft) -> ProductEvent {
+        let capability_generation = match &draft.event {
+            CodingAgentProductEventKind::Workflow(
+                crate::events::CodingAgentWorkflowProductEvent::OperationRecoveryPending {
+                    capability_generation,
+                    ..
+                },
+            ) => *capability_generation,
+            _ => None,
+        };
+        self.publish(
+            draft,
+            ProductEventEmissionContext {
+                capability_generation: capability_generation
+                    .map(crate::runtime::capability::CapabilityGeneration::new),
+                ..ProductEventEmissionContext::default()
+            },
+            |_, _| None,
+        )
     }
 
     pub(crate) fn defer_terminal_draft(
@@ -1567,6 +1591,9 @@ impl EventService {
                 record_version: crate::events::recovery::RECOVERY_RECORD_VERSION,
                 descriptor_revision: crate::runtime::outcome::OPERATION_DESCRIPTOR_REVISION,
                 capability_generation,
+                attempt_count: 0,
+                last_attempt_at: None,
+                next_attempt_at: None,
             }
             .into_product_draft(),
             ProductEventEmissionContext {
@@ -1598,9 +1625,30 @@ impl EventService {
                     record_version: crate::events::recovery::RECOVERY_RECORD_VERSION,
                     descriptor_revision: decision.descriptor.revision,
                     capability_generation: Some(decision.capability_generation.get()),
+                    attempt_count: 0,
+                    last_attempt_at: None,
+                    next_attempt_at: None,
                 }
                 .into_product_draft(),
             ),
+        )
+    }
+
+    pub(crate) fn emit_committed_recovery_pending_draft(
+        &self,
+        draft: ProductEventDraft,
+        operation_kind: Option<crate::runtime::control::OperationKind>,
+        capability_generation: Option<u64>,
+    ) -> ProductEvent {
+        self.publish(
+            draft,
+            ProductEventEmissionContext {
+                operation_kind,
+                capability_generation: capability_generation
+                    .map(crate::runtime::capability::CapabilityGeneration::new),
+                ..ProductEventEmissionContext::default()
+            },
+            |_, _| None,
         )
     }
 

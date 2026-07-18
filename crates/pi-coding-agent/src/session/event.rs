@@ -206,6 +206,12 @@ pub(crate) enum SessionEventData {
         descriptor_revision: u16,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         capability_generation: Option<u64>,
+        #[serde(default)]
+        attempt_count: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        last_attempt_at: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        next_attempt_at: Option<String>,
     },
     #[serde(rename = "operation.recovery_resolved")]
     OperationRecoveryResolved {
@@ -679,6 +685,9 @@ mod tests {
                     record_version: 1,
                     descriptor_revision: 1,
                     capability_generation: Some(7),
+                    attempt_count: 0,
+                    last_attempt_at: None,
+                    next_attempt_at: None,
                 },
                 "operation.recovery_pending",
             ),
@@ -798,6 +807,9 @@ mod tests {
                 record_version: 1,
                 descriptor_revision: 1,
                 capability_generation: Some(7),
+                attempt_count: 0,
+                last_attempt_at: None,
+                next_attempt_at: None,
             },
         )
         .with_operation_id("op_in_doubt");

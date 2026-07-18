@@ -314,6 +314,7 @@ fn stable_api_signature_closure_is_importable() {
     let _diagnostics = CodingAgentSession::profile_diagnostics;
     let _pending = CodingAgentSession::pending_delegation_confirmations;
     let _resolve_recovery = CodingAgentSession::resolve_recovery;
+    let _retry_recovery = CodingAgentSession::retry_recovery;
     let _canonical_dispatch = CodingAgentSession::run;
 }
 
