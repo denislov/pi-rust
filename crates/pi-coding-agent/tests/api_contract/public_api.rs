@@ -1432,7 +1432,7 @@ fn snapshot_writers_1_startup_drain_releases_marker_lock_before_projection() {
     .unwrap();
     let take = owner.find("std::mem::take(&mut *markers)").unwrap();
     let project = owner.find("mark_recovery_projected()").unwrap();
-    let emit = owner.find("emit_operation_recovered").unwrap();
+    let emit = owner.find("emit_startup_recovery_pending").unwrap();
     assert!(take < project && project < emit);
 }
 

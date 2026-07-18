@@ -18,7 +18,9 @@ use crate::events::outbox::DurableOutboxRecord;
 use crate::events::profile::ProfileEvent;
 use crate::events::prompt::PromptEvent;
 use crate::events::prompt_stream::PromptStreamEvent;
-use crate::events::recovery::{RecoveryEvent, RecoveryPendingEvent};
+#[cfg(test)]
+use crate::events::recovery::RecoveryEvent;
+use crate::events::recovery::RecoveryPendingEvent;
 use crate::events::runtime::RuntimeEvent;
 #[cfg(test)]
 use crate::events::session::SessionCompactionEvent;
@@ -420,6 +422,7 @@ impl EventService {
         )
     }
 
+    #[cfg(test)]
     fn publish_recovery_event(
         &self,
         event: RecoveryEvent,
@@ -1494,6 +1497,7 @@ impl EventService {
         });
     }
 
+    #[cfg(test)]
     pub(crate) fn emit_operation_recovered(
         &self,
         operation_id: impl Into<String>,
@@ -1517,6 +1521,34 @@ impl EventService {
                 operation_kind,
                 root_operation_id: Some(operation_id),
             },
+        )
+    }
+
+    pub(crate) fn emit_startup_recovery_pending(
+        &self,
+        operation_id: impl Into<String>,
+        recovery_id: impl Into<String>,
+        reason: impl Into<String>,
+        session_id: impl Into<String>,
+        operation_kind: Option<crate::runtime::control::OperationKind>,
+        capability_generation: Option<u64>,
+    ) -> ProductEvent {
+        let operation_id = operation_id.into();
+        self.publish(
+            RecoveryPendingEvent {
+                operation_id: operation_id.clone(),
+                recovery_id: recovery_id.into(),
+                reason: reason.into(),
+                session_id: session_id.into(),
+            }
+            .into_product_draft(),
+            ProductEventEmissionContext {
+                capability_generation: capability_generation
+                    .map(crate::runtime::capability::CapabilityGeneration::new),
+                operation_kind,
+                root_operation_id: Some(operation_id),
+            },
+            |_, _| None,
         )
     }
 

@@ -88,14 +88,14 @@ impl CodingAgentSession {
             self.runtime_host
                 .event_hub
                 .service
-                .emit_operation_recovered(
+                .emit_startup_recovery_pending(
                     marker.operation_id,
                     marker.recovery_id,
                     marker.reason,
                     marker.session_id,
                     marker
                         .operation_kind
-                        .and_then(recovered_runtime_operation_kind),
+                        .and_then(persisted_runtime_operation_kind),
                     marker.capability_generation,
                 );
         }
@@ -207,7 +207,7 @@ impl CodingAgentSession {
     }
 }
 
-fn recovered_runtime_operation_kind(
+fn persisted_runtime_operation_kind(
     kind: crate::session::event::OperationKind,
 ) -> Option<crate::runtime::control::OperationKind> {
     use crate::runtime::control::OperationKind as RuntimeKind;

@@ -6,6 +6,7 @@ pub(crate) trait IdGenerator {
     fn next_root_operation_id(&mut self) -> String;
     fn next_child_operation_id(&mut self) -> String;
     fn next_session_copy_id(&mut self) -> String;
+    #[cfg(test)]
     fn next_recovery_id(&mut self) -> String;
     fn next_turn_id(&mut self) -> String;
     fn next_message_id(&mut self) -> String;
@@ -41,6 +42,7 @@ impl IdGenerator for SystemIdGenerator {
         prefixed_id("copy")
     }
 
+    #[cfg(test)]
     fn next_recovery_id(&mut self) -> String {
         prefixed_id("recovery")
     }
@@ -122,6 +124,7 @@ impl IdGenerator for DeterministicIdGenerator {
         next_deterministic_id("copy", &mut self.session_copy)
     }
 
+    #[cfg(test)]
     fn next_recovery_id(&mut self) -> String {
         next_deterministic_id("recovery", &mut self.recovery)
     }

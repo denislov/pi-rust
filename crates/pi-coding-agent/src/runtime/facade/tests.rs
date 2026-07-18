@@ -252,6 +252,14 @@ mod cases {
         )
         .await
         .unwrap();
+        assert_eq!(
+            session.recovery_pending().unwrap(),
+            vec![crate::runtime::facade::CodingAgentRecoveryPending {
+                operation_id: "op_in_doubt".into(),
+                recovery_id: "recovery_pending:sess_startup_recovery_projection/op_in_doubt".into(),
+                operation_kind: Some("prompt".into()),
+            }]
+        );
         let mut receiver = session.subscribe_product_events();
 
         let event = receiver
@@ -261,23 +269,24 @@ mod cases {
         assert!(matches!(
             event.event(),
             CodingAgentProductEventKind::Workflow(
-                CodingAgentWorkflowProductEvent::OperationRecovered { operation_id, .. }
+                CodingAgentWorkflowProductEvent::OperationRecoveryPending { operation_id, .. }
             ) if operation_id == "op_in_doubt"
         ));
         assert_eq!(event.capability_generation(), Some(9));
         assert_eq!(event.root_operation_id(), Some("op_in_doubt"));
         assert_eq!(event.session_id(), Some("sess_startup_recovery_projection"));
-        assert_eq!(
-            event.terminal_operation().unwrap().kind,
-            crate::events::CodingAgentProductEventTerminalOperationKind::Prompt
-        );
+        assert_eq!(event.terminal_operation(), None);
+        assert_eq!(event.terminal_status(), None);
         let recovery_id = match event.event() {
             CodingAgentProductEventKind::Workflow(
-                CodingAgentWorkflowProductEvent::OperationRecovered { recovery_id, .. },
+                CodingAgentWorkflowProductEvent::OperationRecoveryPending { recovery_id, .. },
             ) => recovery_id.clone(),
             _ => unreachable!("recovery event checked above"),
         };
-        assert!(recovery_id.starts_with("recovery_"));
+        assert_eq!(
+            recovery_id,
+            "recovery_pending:sess_startup_recovery_projection/op_in_doubt"
+        );
         assert_eq!(
             event.durability(),
             &crate::events::CodingAgentProductEventDurability::DerivedFromSession {

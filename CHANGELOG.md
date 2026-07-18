@@ -113,9 +113,11 @@
 - Added a full restart failure case: manifest failure after outbox/fact append,
   writer shutdown, reopen, replay cursor validation, and startup outbox evidence
   for redelivery.
-- Startup `OperationRecovered` facts now commit a durable `Recovery` outbox
-  record in the same writer batch; a second open reads that record back for
-  redelivery, and idempotence tests tie it to the exact recovery fact event.
+- Startup scan now commits a durable non-terminal `OperationRecoveryPending`
+  fact and `Recovery` outbox record in the same writer batch. Recovery IDs are
+  stable per session/operation, replay remains `InDoubt`, and repeated opens
+  redeliver the same evidence without duplicating facts or records instead of
+  speculatively marking incomplete work recovered.
 - Began `RIF-002`: `OperationSupervisor` now owns typed immutable
   `FinalizationDecision` creation for every dispatch path. Decisions freeze the
   admitted identity, lineage, descriptor, capability generation, terminal

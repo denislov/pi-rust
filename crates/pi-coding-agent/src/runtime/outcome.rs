@@ -489,6 +489,7 @@ pub(crate) fn terminal_operation_kind(
     }
 }
 
+#[cfg(test)]
 pub(crate) fn recovered_product_terminal_operation(
     kind: OperationKind,
 ) -> Option<CodingAgentProductEventTerminalOperation> {

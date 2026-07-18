@@ -196,6 +196,8 @@ pub(crate) enum SessionEventData {
         status: String,
         semantic_event_id: String,
     },
+    #[serde(rename = "operation.recovery_pending")]
+    OperationRecoveryPending { reason: String, recovery_id: String },
     #[serde(rename = "operation.recovered")]
     OperationRecovered { reason: String, recovery_id: String },
     #[serde(rename = "turn.started")]
@@ -637,6 +639,13 @@ mod tests {
                 "operation.terminal.recorded",
             ),
             (
+                SessionEventData::OperationRecoveryPending {
+                    reason: "awaiting operator resolution".into(),
+                    recovery_id: "recovery_pending:sess/op".into(),
+                },
+                "operation.recovery_pending",
+            ),
+            (
                 SessionEventData::OperationRecovered {
                     reason: "manual recovery".into(),
                     recovery_id: "recovery_1".into(),
@@ -738,6 +747,29 @@ mod tests {
             assert_eq!(value["kind"], expected_kind);
             assert!(value.get("data").is_some());
         }
+    }
+
+    #[test]
+    fn operation_recovery_pending_event_round_trips() {
+        let envelope = SessionEventEnvelope::new(
+            "sess_recover",
+            "evt_1",
+            "2026-07-08T00:00:00Z",
+            SessionEventData::OperationRecoveryPending {
+                reason: "awaiting operator resolution".into(),
+                recovery_id: "recovery_pending:sess_recover/op_in_doubt".into(),
+            },
+        )
+        .with_operation_id("op_in_doubt");
+
+        let json = serde_json::to_string(&envelope).unwrap();
+        let decoded: SessionEventEnvelope = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(decoded, envelope);
+        assert_eq!(
+            serde_json::to_value(&envelope).unwrap()["kind"],
+            "operation.recovery_pending"
+        );
     }
 
     #[test]

@@ -336,6 +336,7 @@ impl ReplayBuilder {
                 self.operation_statuses
                     .insert(operation_id.to_owned(), OperationReplayStatus::Recovered);
             }
+            SessionEventData::OperationRecoveryPending { .. } => {}
             SessionEventData::OperationTerminalRecorded { status, .. } => {
                 let status = match status.as_str() {
                     "completed" => OperationReplayStatus::Committed,
@@ -518,6 +519,7 @@ impl ReplayBuilder {
                     ),
                 });
             }
+            SessionEventData::OperationRecoveryPending { .. } => {}
             SessionEventData::OperationRecovered { reason, .. } => {
                 self.warn(format!(
                     "operation {} recovered: {reason}",

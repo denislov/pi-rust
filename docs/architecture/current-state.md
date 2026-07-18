@@ -99,9 +99,13 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   operator resolution, and final operation-terminal outbox commit remain open.
   The public session facade now exposes a read-only `recovery_pending()` list
   with stable recovery IDs and persisted operation-kind hints; retry/resolve
-  controls are not yet exposed.
-- Commit uncertainty is represented by `PartialCommit`, but supervisor-owned
-  durable `RecoveryPending` lifetime across caller exit/restart is not complete.
+  controls are not yet exposed. Startup scan atomically persists a non-terminal
+  `operation.recovery_pending` fact plus `Recovery` outbox record, keeps the
+  replayed operation `InDoubt`, and reuses the same session/operation-derived
+  recovery ID and outbox record across repeated opens.
+- Commit uncertainty is represented by `PartialCommit`, and durable
+  `RecoveryPending` now survives caller exit/restart. Bounded retry, explicit
+  resolve/audit, and subsequent-work policy remain incomplete.
 
 ## Events, Sessions, And Clients
 
@@ -151,7 +155,8 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   current cursor. A manifest-failure -> writer shutdown -> reopen integration
   test proves durable outbox evidence survives the restart boundary. Startup
   recovery idempotence coverage also verifies the recovery record is read back
-  on the next open and references the exact recovery fact event.
+  on subsequent opens, references the exact pending fact event, and never marks
+  the operation terminal merely because the process restarted.
 - The current transaction may append facts and then fail a manifest refresh,
   producing partial-commit uncertainty that startup recovery can inspect.
 

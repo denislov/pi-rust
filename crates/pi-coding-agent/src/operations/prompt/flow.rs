@@ -832,6 +832,7 @@ mod tests {
                 SessionEventData::OperationAborted { .. } => "operation.aborted",
                 SessionEventData::OperationFailed { .. } => "operation.failed",
                 SessionEventData::OperationTerminalRecorded { .. } => "operation.terminal.recorded",
+                SessionEventData::OperationRecoveryPending { .. } => "operation.recovery_pending",
                 SessionEventData::OperationRecovered { .. } => "operation.recovered",
                 SessionEventData::TurnStarted {} => "turn.started",
                 SessionEventData::TurnInputRecorded { .. } => "turn.input.recorded",

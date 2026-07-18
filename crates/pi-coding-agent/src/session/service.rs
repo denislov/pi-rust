@@ -12,7 +12,6 @@ use crate::events::emission::ProductEventDraft;
 use crate::events::outbox::{
     DurableOutboxIntent, DurableOutboxRecord, DurableOutboxRecordCandidate, DurableOutboxRecordKind,
 };
-use crate::events::recovery::RecoveryEvent;
 use crate::events::session::SessionWriteEvent;
 use crate::operations::export::flow::{ExportContext, ExportOptions};
 use crate::operations::prompt::context::{
@@ -1003,15 +1002,29 @@ impl SessionService {
         &self,
         operation_id: &str,
     ) -> Result<String, CodingSessionError> {
-        if let Some(record) = self
-            .store
-            .read_outbox(&self.handle)?
-            .into_iter()
-            .find(|record| {
-                record.operation_id.as_deref() == Some(operation_id)
-                    && record.kind == DurableOutboxRecordKind::SessionWrite
-            })
-        {
+        let outbox = self.store.read_outbox(&self.handle)?;
+        if let Some(recovery_id) = outbox.iter().find_map(|record| {
+            if record.operation_id.as_deref() != Some(operation_id)
+                || record.kind != DurableOutboxRecordKind::Recovery
+            {
+                return None;
+            }
+            match &record.draft.event {
+                crate::events::CodingAgentProductEventKind::Workflow(
+                    crate::events::CodingAgentWorkflowProductEvent::OperationRecoveryPending {
+                        recovery_id,
+                        ..
+                    },
+                ) => Some(recovery_id.clone()),
+                _ => None,
+            }
+        }) {
+            return Ok(recovery_id);
+        }
+        if let Some(record) = outbox.into_iter().find(|record| {
+            record.operation_id.as_deref() == Some(operation_id)
+                && record.kind == DurableOutboxRecordKind::SessionWrite
+        }) {
             return Ok(format!("recovery_pending:{}", record.record_id));
         }
         let has_durable_fact = self
@@ -1200,31 +1213,42 @@ impl SessionService {
         let session_id = self.session_id().to_owned();
         let mut ids = SystemIdGenerator;
         let clock = SystemClock;
-        let recovered_at = clock.now_rfc3339();
-        let reason = "startup recovery marked incomplete operation in-doubt".to_owned();
+        let observed_at = clock.now_rfc3339();
+        let reason =
+            "startup recovery retained incomplete operation as recovery-pending".to_owned();
         let authorization_reason =
             "startup recovery interrupted unresolved tool authorization".to_owned();
-        let operation_facts = self
-            .store
-            .read_events(&self.handle)?
-            .into_iter()
-            .filter_map(|event| match event.data {
+        let durable_events = self.store.read_events(&self.handle)?;
+        let operation_facts = durable_events
+            .iter()
+            .filter_map(|event| match &event.data {
                 SessionEventData::OperationStarted {
                     operation,
                     runtime_generation,
-                } => event.operation_id.map(|operation_id| {
+                } => event.operation_id.clone().map(|operation_id| {
                     (
                         operation_id,
-                        (operation, runtime_generation.capability_generation),
+                        (operation.clone(), runtime_generation.capability_generation),
                     )
                 }),
                 _ => None,
             })
             .collect::<std::collections::HashMap<_, _>>();
+        let existing_pending = durable_events
+            .iter()
+            .filter_map(|event| match &event.data {
+                SessionEventData::OperationRecoveryPending { recovery_id, .. } => event
+                    .operation_id
+                    .clone()
+                    .map(|operation_id| (operation_id, recovery_id.clone())),
+                _ => None,
+            })
+            .collect::<std::collections::HashMap<_, _>>();
         let markers = in_doubt_operations
             .into_iter()
+            .filter(|operation_id| !existing_pending.contains_key(operation_id))
             .map(|operation_id| {
-                let recovery_id = ids.next_recovery_id();
+                let recovery_id = format!("recovery_pending:{session_id}/{operation_id}");
                 let (operation_kind, capability_generation) = operation_facts
                     .get(&operation_id)
                     .cloned()
@@ -1246,8 +1270,8 @@ impl SessionService {
                 SessionEventEnvelope::new(
                     session_id.clone(),
                     ids.next_event_id(),
-                    recovered_at.clone(),
-                    SessionEventData::OperationRecovered {
+                    observed_at.clone(),
+                    SessionEventData::OperationRecoveryPending {
                         reason: marker.reason.clone(),
                         recovery_id: marker.recovery_id.clone(),
                     },
@@ -1261,14 +1285,14 @@ impl SessionService {
             .map(|(marker, event)| {
                 DurableOutboxRecordCandidate::new(
                     format!(
-                        "{}/{}/recovery/{}",
-                        marker.session_id, marker.operation_id, marker.recovery_id
+                        "{}/{}/recovery_pending",
+                        marker.session_id, marker.operation_id
                     ),
                     marker.session_id.clone(),
                     Some(marker.operation_id.clone()),
                     vec![event.event_id.clone()],
                     DurableOutboxRecordKind::Recovery,
-                    RecoveryEvent {
+                    crate::events::recovery::RecoveryPendingEvent {
                         operation_id: marker.operation_id.clone(),
                         recovery_id: marker.recovery_id.clone(),
                         reason: marker.reason.clone(),
@@ -1286,7 +1310,7 @@ impl SessionService {
             SessionEventEnvelope::new(
                 session_id.clone(),
                 ids.next_event_id(),
-                recovered_at.clone(),
+                observed_at.clone(),
                 SessionEventData::ToolAuthorizationResolved {
                     authorization_id: request.authorization_id,
                     resolution: PersistedToolAuthorizationResolution::Interrupted {
@@ -1298,10 +1322,14 @@ impl SessionService {
             .with_turn_id(request.turn_id)
         }));
 
+        if events.is_empty() {
+            return Ok(());
+        }
+
         self.commit_writer_mutation_with_outbox(
             events,
             recovery_outbox,
-            ManifestPatch::new().updated_at(recovered_at),
+            ManifestPatch::new().updated_at(observed_at),
             None,
         )?;
         self.startup_recovery_markers.extend(markers);
@@ -2474,7 +2502,7 @@ mod tests {
     }
 
     #[test]
-    fn open_marks_in_doubt_operations_recovered() {
+    fn open_retains_in_doubt_operations_as_recovery_pending() {
         let temp = tempfile::tempdir().unwrap();
         let store = SessionLogStore::new(temp.path());
         let handle = store
@@ -2503,7 +2531,11 @@ mod tests {
         let replay = service.replay().unwrap();
         assert_eq!(
             replay.operation_status("op_in_doubt"),
-            Some(OperationReplayStatus::Recovered)
+            Some(OperationReplayStatus::InDoubt)
+        );
+        assert_eq!(
+            replay.recovery_summary().in_doubt_operations,
+            vec!["op_in_doubt".to_owned()]
         );
     }
 
@@ -2548,24 +2580,48 @@ mod tests {
         let events = SessionLogStore::new(temp.path())
             .read_events(&reopened)
             .unwrap();
-        let recovered_count = events
+        let pending_count = events
             .iter()
             .filter(|event| {
                 event.operation_id.as_deref() == Some("op_recover_once")
-                    && matches!(event.data, SessionEventData::OperationRecovered { .. })
+                    && matches!(
+                        event.data,
+                        SessionEventData::OperationRecoveryPending { .. }
+                    )
             })
             .count();
 
-        assert_eq!(recovered_count, 1);
+        assert_eq!(pending_count, 1);
         let recovery_event_id = events
             .iter()
             .find(|event| {
                 event.operation_id.as_deref() == Some("op_recover_once")
-                    && matches!(event.data, SessionEventData::OperationRecovered { .. })
+                    && matches!(
+                        event.data,
+                        SessionEventData::OperationRecoveryPending { .. }
+                    )
             })
             .map(|event| event.event_id.clone())
             .unwrap();
         assert_eq!(startup_records[0].source_event_ids, vec![recovery_event_id]);
+        assert!(matches!(
+            &startup_records[0].draft.event,
+            crate::events::CodingAgentProductEventKind::Workflow(
+                crate::events::CodingAgentWorkflowProductEvent::OperationRecoveryPending {
+                    operation_id,
+                    recovery_id,
+                    ..
+                }
+            ) if operation_id == "op_recover_once"
+                && recovery_id == "recovery_pending:sess_recover_once/op_recover_once"
+        ));
+
+        let mut third = SessionService::open(&options).unwrap();
+        assert_eq!(third.take_startup_outbox_records(), startup_records);
+        assert_eq!(
+            third.recovery_summary().unwrap().in_doubt_operations,
+            vec!["op_recover_once".to_owned()]
+        );
     }
 
     #[test]

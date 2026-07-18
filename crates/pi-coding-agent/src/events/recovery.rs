@@ -1,9 +1,11 @@
+#[cfg(test)]
+use super::CodingAgentProductEventTerminalStatus;
 use super::emission::ProductEventDraft;
 use super::{
-    CodingAgentProductEventDurability, CodingAgentProductEventKind,
-    CodingAgentProductEventTerminalStatus, CodingAgentWorkflowProductEvent,
+    CodingAgentProductEventDurability, CodingAgentProductEventKind, CodingAgentWorkflowProductEvent,
 };
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RecoveryEvent {
     pub(crate) operation_id: String,
@@ -42,6 +44,7 @@ impl RecoveryPendingEvent {
     }
 }
 
+#[cfg(test)]
 impl RecoveryEvent {
     pub(crate) fn into_product_draft(self) -> ProductEventDraft {
         ProductEventDraft {
