@@ -87,6 +87,12 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   Control admission classes exist; the scheduler has no general work queue.
 - PluginCommand, AgentInvocation, and AgentTeam have runtime-owned submitted task
   paths. Other operations still rely on the session facade as execution owner.
+- `OperationSupervisor` now freezes immutable typed finalization decisions from
+  the admitted execution and typed outcome across all four dispatch paths.
+  Submission projection validates that decision instead of independently
+  classifying a naked terminal status. Typed Prompt/Compact/BranchSummary
+  failures are now classified as Failed rather than Completed. Coordinator
+  commit-result and durable RecoveryPending integration remain open.
 - Commit uncertainty is represented by `PartialCommit`, but supervisor-owned
   durable `RecoveryPending` lifetime across caller exit/restart is not complete.
 

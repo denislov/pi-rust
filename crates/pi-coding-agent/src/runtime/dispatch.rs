@@ -4,7 +4,7 @@ use super::facade::{CodingAgentSession, CodingSessionError, PromptControlCleanup
 use super::intent::IntentRouter;
 use super::operation::{Operation, OperationDispatchMode, OperationOutcome};
 use super::scheduler::OperationScheduler;
-use super::submission::{SubmissionCommitGuard, submitted_terminal_status};
+use super::submission::SubmissionCommitGuard;
 use crate::operations::compaction::flow::ManualCompactionOptions;
 use crate::runtime::capability::SessionWriteCapability;
 use crate::session::id::{Clock, SystemClock};
@@ -26,6 +26,7 @@ impl CodingAgentSession {
         if let Some(guard) = submission.as_mut() {
             guard.commit_execution(operation_permit.execution())?;
         }
+        let execution = operation_permit.execution().clone();
 
         let result = match operation {
             Operation::Export(options) => crate::operations::export::run(
@@ -55,7 +56,12 @@ impl CodingAgentSession {
             }
         };
         if let Some(guard) = submission.as_mut() {
-            guard.finish(submitted_terminal_status(&result))?;
+            let decision = self
+                .runtime_host
+                .operation_supervisor
+                .finalizer
+                .freeze(&execution, &result);
+            guard.finish(&decision)?;
         }
         result
     }
@@ -75,6 +81,7 @@ impl CodingAgentSession {
         if let Some(guard) = submission.as_mut() {
             guard.commit_execution(operation_permit.execution())?;
         }
+        let execution = operation_permit.execution().clone();
 
         let result = (|| match operation {
             Operation::RejectDelegationConfirmation {
@@ -260,7 +267,12 @@ impl CodingAgentSession {
             | Operation::AgentTeam(_) => Err(IntentRouter::unsupported_dispatch(&admission)),
         })();
         if let Some(guard) = submission.as_mut() {
-            guard.finish(submitted_terminal_status(&result))?;
+            let decision = self
+                .runtime_host
+                .operation_supervisor
+                .finalizer
+                .freeze(&execution, &result);
+            guard.finish(&decision)?;
         }
         result
     }
@@ -592,7 +604,12 @@ impl CodingAgentSession {
             }
             .await;
         if let Some(guard) = submission.as_mut() {
-            guard.finish(submitted_terminal_status(&result))?;
+            let decision = self
+                .runtime_host
+                .operation_supervisor
+                .finalizer
+                .freeze(&execution, &result);
+            guard.finish(&decision)?;
         }
         result
     }

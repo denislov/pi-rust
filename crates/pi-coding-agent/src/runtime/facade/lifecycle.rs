@@ -168,6 +168,7 @@ impl CodingAgentSession {
                     capabilities: CapabilitySnapshotService::with_snapshot_coordinator(
                         snapshot_coordinator.clone(),
                     ),
+                    finalizer: Default::default(),
                 },
                 session_coordinator: crate::runtime::session_coordinator::SessionCoordinator {
                     persistence: SessionPersistence::Persistent(session_service),
@@ -231,6 +232,7 @@ impl CodingAgentSession {
                     capabilities: CapabilitySnapshotService::with_snapshot_coordinator(
                         snapshot_coordinator.clone(),
                     ),
+                    finalizer: Default::default(),
                 },
                 session_coordinator: crate::runtime::session_coordinator::SessionCoordinator {
                     persistence: SessionPersistence::NonPersistent(state),

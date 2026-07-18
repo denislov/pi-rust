@@ -6,7 +6,6 @@ use super::facade::{CodingAgentSession, CodingSessionError};
 use super::operation::{Operation, OperationClass, OperationDispatchMode, OperationOutcome};
 use super::outcome::{CodingAgentOperation, CodingAgentOperationOutcome};
 use super::scheduler::OperationScheduler;
-use super::submission::submitted_terminal_status;
 use crate::services::flow::FlowService;
 
 #[derive(Debug)]
@@ -126,6 +125,7 @@ impl CodingAgentSession {
         let plugin_service = self.runtime_host.plugin_service.clone();
         let event_service = self.runtime_host.event_hub.service.clone();
         let operation_control = self.runtime_host.operation_supervisor.control.clone();
+        let operation_finalizer = self.runtime_host.operation_supervisor.finalizer;
 
         let task = runtime.spawn(async move {
             let result = match operation {
@@ -182,7 +182,8 @@ impl CodingAgentSession {
                 _ => unreachable!("runtime-owned operation class checked before spawn"),
             };
             if let Some(guard) = submission.as_mut() {
-                guard.finish(submitted_terminal_status(&result))?;
+                let decision = operation_finalizer.freeze(&execution, &result);
+                guard.finish(&decision)?;
             }
             drop(operation_permit);
             result.map(CodingAgentOperationOutcome::from_internal)

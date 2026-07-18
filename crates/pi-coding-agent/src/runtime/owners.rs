@@ -3,6 +3,7 @@ use std::sync::Arc;
 use super::capability::CapabilitySnapshotService;
 use super::client::service::ClientService;
 use super::control::OperationControl;
+use super::finalization::OperationFinalizer;
 use super::session_coordinator::SessionCoordinator;
 use super::snapshot::SnapshotCoordinator;
 use super::submission::PendingSubmissionLease;
@@ -39,6 +40,7 @@ pub(super) struct RuntimeHost {
 pub(super) struct OperationSupervisor {
     pub(super) control: OperationControl,
     pub(super) capabilities: CapabilitySnapshotService,
+    pub(super) finalizer: OperationFinalizer,
 }
 
 /// Bounded product-event sequencing and fan-out owner.

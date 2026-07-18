@@ -6,6 +6,7 @@ pub(crate) mod dispatch;
 pub(crate) mod error;
 pub(crate) mod execution;
 pub(crate) mod facade;
+pub(crate) mod finalization;
 pub(crate) mod intent;
 pub(crate) mod operation;
 pub(crate) mod outcome;

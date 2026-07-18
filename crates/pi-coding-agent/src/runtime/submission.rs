@@ -1,12 +1,12 @@
 use super::client::projection as public_projection;
 use super::client::service::ClientService;
-use super::facade::{CodingAgentSession, CodingSessionError, PromptTurnOutcome};
-use super::operation::{OperationDispatchMode, OperationExecution, OperationOutcome};
+use super::facade::{CodingAgentSession, CodingSessionError};
+use super::finalization::FinalizationDecision;
+use super::operation::{OperationDispatchMode, OperationExecution};
 use super::outcome as public_operation;
 use super::outcome::{CodingAgentOperation, CodingAgentOperationOutcome};
 use super::snapshot as snapshot_coordinator;
 use super::snapshot::SnapshotCoordinator;
-use crate::events as event;
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,9 +113,32 @@ impl SubmissionCommitGuard {
 
     pub(super) fn finish(
         &mut self,
-        status: event::ProductEventTerminalStatus,
+        decision: &FinalizationDecision,
     ) -> Result<(), CodingSessionError> {
         if let Some(execution) = &self.execution {
+            if decision.operation_id != execution.operation_id
+                || decision.root_operation_id
+                    != execution
+                        .root_operation_id
+                        .as_deref()
+                        .unwrap_or(&execution.operation_id)
+                || decision.descriptor != execution.descriptor
+                || decision.parent_operation_id != execution.parent_operation_id
+                || decision.session_identity != execution.session_identity
+                || decision.operation_kind != execution.kind
+                || decision.capability_generation != execution.capability_generation
+                || decision.terminal_policy != execution.descriptor.terminal_policy
+                || decision.semantic_event_id
+                    != format!(
+                        "{}/{}/operation_terminal",
+                        execution.session_identity.as_deref().unwrap_or("runtime"),
+                        execution.operation_id
+                    )
+            {
+                return Err(CodingSessionError::Session {
+                    message: "finalization decision does not match admitted operation".into(),
+                });
+            }
             match execution.descriptor.terminal_policy {
                 public_operation::OperationTerminalPolicy::ProductEvent => {
                     self.coordinator
@@ -123,7 +146,7 @@ impl SubmissionCommitGuard {
                             &self.handle,
                             &execution.operation_id,
                             execution.descriptor,
-                            status,
+                            decision.terminal_status,
                         )
                         .map_err(|error| CodingSessionError::Session {
                             message: error.to_string(),
@@ -144,7 +167,7 @@ impl SubmissionCommitGuard {
                             execution.kind,
                             execution.descriptor,
                             anchor,
-                            status,
+                            decision.terminal_status,
                         )
                         .map_err(|error| CodingSessionError::Session {
                             message: error.to_string(),
@@ -171,21 +194,6 @@ impl Drop for SubmissionCommitGuard {
         } else if let Ok(mut lifecycle) = self.lifecycle.lock() {
             *lifecycle = SubmissionLeaseLifecycle::Abandoned;
         }
-    }
-}
-
-pub(super) fn submitted_terminal_status(
-    result: &Result<OperationOutcome, CodingSessionError>,
-) -> event::ProductEventTerminalStatus {
-    match result {
-        Ok(
-            OperationOutcome::Prompt(PromptTurnOutcome::Aborted { .. })
-            | OperationOutcome::ManualCompaction(PromptTurnOutcome::Aborted { .. })
-            | OperationOutcome::BranchSummary(PromptTurnOutcome::Aborted { .. }),
-        )
-        | Err(CodingSessionError::Cancelled) => event::ProductEventTerminalStatus::Aborted,
-        Ok(_) => event::ProductEventTerminalStatus::Completed,
-        Err(_) => event::ProductEventTerminalStatus::Failed,
     }
 }
 

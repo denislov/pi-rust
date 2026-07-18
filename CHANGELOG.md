@@ -116,6 +116,13 @@
 - Startup `OperationRecovered` facts now commit a durable `Recovery` outbox
   record in the same writer batch; a second open reads that record back for
   redelivery, and idempotence tests tie it to the exact recovery fact event.
+- Began `RIF-002`: `OperationSupervisor` now owns typed immutable
+  `FinalizationDecision` creation for every dispatch path. Decisions freeze the
+  admitted identity, lineage, descriptor, capability generation, terminal
+  policy/class, semantic event ID, and safe payload; submission projection
+  validates the decision instead of classifying a detached status. Typed
+  Prompt/Compact/BranchSummary failure outcomes now correctly resolve Failed
+  rather than Completed.
 
 ### Release Status
 

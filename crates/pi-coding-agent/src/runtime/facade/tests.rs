@@ -31,9 +31,12 @@ mod cases {
         PluginMetadata, PluginRegistry, PluginSource, ToolProvider, ToolRegistrationHost,
     };
     use crate::runtime::control::PromptControlCommand;
-    use crate::runtime::operation::{Operation, OperationOutcome};
+    use crate::runtime::finalization::OperationFinalizer;
+    use crate::runtime::operation::{
+        Operation, OperationExecution, OperationOrigin, OperationOutcome,
+    };
     use crate::runtime::outcome as public_operation;
-    use crate::runtime::submission::{SubmissionCommitGuard, submitted_terminal_status};
+    use crate::runtime::submission::SubmissionCommitGuard;
     use crate::session::event::{PersistedContentBlock, SessionEventData, SessionEventEnvelope};
     use crate::session::id::{Clock, SystemClock};
     use crate::session::replay::{MessageStatus, TranscriptItem};
@@ -1101,8 +1104,67 @@ runtime = "lua"
     fn submitted_cancelled_error_finishes_aborted_exactly_once() {
         let result = Err(CodingSessionError::Cancelled);
         assert_eq!(
-            submitted_terminal_status(&result),
+            OperationFinalizer::terminal_status(&result),
             public_event::ProductEventTerminalStatus::Aborted
+        );
+    }
+
+    #[test]
+    fn supervisor_finalization_decision_freezes_admitted_identity_and_payload() {
+        let descriptor =
+            CodingAgentOperation::Prompt(prompt_options("finalization-decision", "freeze"))
+                .descriptor();
+        let execution = OperationExecution::root(
+            OperationKind::Prompt,
+            descriptor,
+            OperationOrigin::ClientRoot,
+            Some("2026-07-19T00:00:00Z".into()),
+            Some("session-finalization".into()),
+            crate::runtime::capability::OperationCapabilitySnapshot::permissive("op-finalization"),
+        );
+        let decision = OperationFinalizer.freeze(&execution, &Err(CodingSessionError::Cancelled));
+
+        assert_eq!(decision.operation_id, "op-finalization");
+        assert_eq!(decision.root_operation_id, "op-finalization");
+        assert_eq!(
+            decision.session_identity.as_deref(),
+            Some("session-finalization")
+        );
+        assert_eq!(decision.descriptor, descriptor);
+        assert_eq!(
+            decision.capability_generation,
+            execution.capability_generation
+        );
+        assert_eq!(
+            decision.semantic_event_id,
+            "session-finalization/op-finalization/operation_terminal"
+        );
+        assert_eq!(
+            decision.terminal_status,
+            public_event::ProductEventTerminalStatus::Aborted
+        );
+        assert_eq!(
+            decision.payload,
+            crate::runtime::finalization::FinalizationPayload::Aborted {
+                reason: "cancelled".into()
+            }
+        );
+    }
+
+    #[test]
+    fn submitted_typed_prompt_failure_finishes_failed_not_completed() {
+        let result = Ok(OperationOutcome::Prompt(PromptTurnOutcome::Failed {
+            operation_id: "op-typed-failure".into(),
+            turn_id: Some("turn-typed-failure".into()),
+            error: CodingSessionError::Provider {
+                message: "provider rejected request".into(),
+            },
+            diagnostics: Vec::new(),
+        }));
+
+        assert_eq!(
+            OperationFinalizer::terminal_status(&result),
+            public_event::ProductEventTerminalStatus::Failed
         );
     }
 
@@ -1120,7 +1182,7 @@ runtime = "lua"
             },
         ));
         assert_eq!(
-            submitted_terminal_status(&result),
+            OperationFinalizer::terminal_status(&result),
             public_event::ProductEventTerminalStatus::Completed
         );
     }
@@ -1131,7 +1193,7 @@ runtime = "lua"
             message: "invalid compact options".into(),
         });
         assert_eq!(
-            submitted_terminal_status(&result),
+            OperationFinalizer::terminal_status(&result),
             public_event::ProductEventTerminalStatus::Failed
         );
     }
@@ -1142,7 +1204,7 @@ runtime = "lua"
             capability: "persistent session required".into(),
         });
         assert_eq!(
-            submitted_terminal_status(&result),
+            OperationFinalizer::terminal_status(&result),
             public_event::ProductEventTerminalStatus::Failed
         );
     }
@@ -1153,7 +1215,7 @@ runtime = "lua"
             message: "sync mutable persistence failure".into(),
         });
         assert_eq!(
-            submitted_terminal_status(&result),
+            OperationFinalizer::terminal_status(&result),
             public_event::ProductEventTerminalStatus::Failed
         );
     }

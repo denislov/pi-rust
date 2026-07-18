@@ -2251,8 +2251,22 @@ fn durable_operation_paths_consume_admitted_identity_without_regeneration() {
         "submission finalization must retain the admitted execution"
     );
     assert!(
+        submission.contains("decision: &FinalizationDecision"),
+        "submission finalization must consume the supervisor's immutable decision"
+    );
+    assert!(
         !submission.contains("pub(super) operation_id: Option<String>"),
         "submission finalization must not reconstruct identity from a detached string"
+    );
+    assert_eq!(
+        dispatch.matches(".freeze(&execution, &result)").count()
+            + execution.matches(".freeze(&execution, &result)").count(),
+        4,
+        "every dispatcher must freeze finalization through OperationSupervisor"
+    );
+    assert!(
+        !submission.contains("fn submitted_terminal_status("),
+        "submission projection must not retain a second terminal classifier"
     );
 
     let mut allocator_violations = Vec::new();
@@ -2324,6 +2338,10 @@ fn runtime_host_owner_graph_and_first_writer_command_are_explicit() {
     ] {
         assert!(owners.contains(owner), "missing runtime owner: {owner}");
     }
+    assert!(
+        owners.contains("finalizer: OperationFinalizer"),
+        "OperationSupervisor must own terminal decision freezing"
+    );
     let session_coordinator =
         fs::read_to_string(scan.crate_root.join("src/runtime/session_coordinator.rs"))
             .expect("read session coordinator source");
