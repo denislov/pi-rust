@@ -17,6 +17,9 @@
   returns typed `AgentAdmissionError` values without panicking, empty ToolUse
   terminals fail deterministically, runtime/queue/turn message IDs avoid
   collisions, and Unicode resource limits count characters rather than bytes.
+- Closed the 0.4.1 message-identity debt across replay/hydration as well:
+  duplicate `Agent::add_message` IDs are normalized and replay hydration now
+  has an explicit uniqueness assertion.
 
 ## 0.4.0 - 2026-07-19
 

@@ -91,8 +91,12 @@ impl Agent {
         Ok(())
     }
 
-    pub fn add_message(&self, msg: AgentMessage) {
-        self.state.write().unwrap().messages.push(msg);
+    pub fn add_message(&self, mut msg: AgentMessage) {
+        let mut state = self.state.write().unwrap();
+        let preferred = msg.message_id().to_owned();
+        let message_id = next_message_id_from_preferred(&state, preferred);
+        msg.set_message_id(message_id);
+        state.messages.push(msg);
     }
 
     pub fn messages(&self) -> Vec<AgentMessage> {
@@ -350,6 +354,32 @@ fn next_message_id(state: &AgentState, prefix: &str) -> String {
     let mut index = 0u64;
     loop {
         let candidate = format!("{prefix}_{index}");
+        if !state
+            .messages
+            .iter()
+            .chain(state.steering_queue.iter())
+            .chain(state.follow_up_queue.iter())
+            .any(|message| message.message_id() == candidate)
+        {
+            return candidate;
+        }
+        index += 1;
+    }
+}
+
+fn next_message_id_from_preferred(state: &AgentState, preferred: String) -> String {
+    if !state
+        .messages
+        .iter()
+        .chain(state.steering_queue.iter())
+        .chain(state.follow_up_queue.iter())
+        .any(|message| message.message_id() == preferred)
+    {
+        return preferred;
+    }
+    let mut index = 1u64;
+    loop {
+        let candidate = format!("{preferred}_{index}");
         let used = state
             .messages
             .iter()

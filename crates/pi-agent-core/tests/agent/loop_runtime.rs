@@ -724,6 +724,30 @@ fn queued_message_ids_remain_unique_across_existing_messages_and_queues() {
     assert_eq!(ids, vec!["steer_1", "steer_2"]);
 }
 
+#[test]
+fn adding_a_duplicate_message_id_is_normalized() {
+    let api_key = "test-duplicate-message-normalization";
+    let _provider_guard = ProviderGuard::register(api_key, Arc::new(TestProvider::new(vec![])));
+    let agent = Agent::new(test_config(api_key, Some(&_provider_guard)));
+    agent.add_message(AgentMessage::UserText {
+        message_id: "replay_user_0".into(),
+        text: "first".into(),
+    });
+    agent.add_message(AgentMessage::UserText {
+        message_id: "replay_user_0".into(),
+        text: "second".into(),
+    });
+    let messages = agent.messages();
+    let ids: Vec<_> = messages
+        .iter()
+        .map(|message| match message {
+            AgentMessage::UserText { message_id, .. } => message_id.as_str(),
+            _ => "unexpected",
+        })
+        .collect();
+    assert_eq!(ids, vec!["replay_user_0", "replay_user_0_1"]);
+}
+
 #[tokio::test]
 async fn provider_error_event_preserves_error_message() {
     let api_key = "test-api-provider-error";

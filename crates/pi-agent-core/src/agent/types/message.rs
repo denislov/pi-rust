@@ -68,4 +68,17 @@ impl AgentMessage {
             | Self::BranchSummary { message_id, .. } => message_id,
         }
     }
+
+    pub(crate) fn set_message_id(&mut self, message_id: String) {
+        match self {
+            Self::UserText { message_id: id, .. }
+            | Self::Assistant { message_id: id, .. }
+            | Self::ToolResult { message_id: id, .. }
+            | Self::SystemPrompt { message_id: id, .. }
+            | Self::CompactionSummary { message_id: id, .. }
+            | Self::BashExecution { message_id: id, .. }
+            | Self::Custom { message_id: id, .. }
+            | Self::BranchSummary { message_id: id, .. } => *id = message_id,
+        }
+    }
 }

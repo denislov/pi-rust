@@ -496,6 +496,7 @@ fn flush_replay_hydration_group(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
     use std::sync::Arc;
 
     use pi_agent_core::api::agent::AgentResources;
@@ -845,6 +846,20 @@ mod tests {
 
         let messages = agent.messages();
         assert_eq!(messages.len(), 4);
+        let message_ids: HashSet<_> = messages
+            .iter()
+            .map(|message| match message {
+                AgentMessage::UserText { message_id, .. }
+                | AgentMessage::Assistant { message_id, .. }
+                | AgentMessage::ToolResult { message_id, .. }
+                | AgentMessage::CompactionSummary { message_id, .. }
+                | AgentMessage::BranchSummary { message_id, .. }
+                | AgentMessage::SystemPrompt { message_id, .. }
+                | AgentMessage::BashExecution { message_id, .. }
+                | AgentMessage::Custom { message_id, .. } => message_id.as_str(),
+            })
+            .collect();
+        assert_eq!(message_ids.len(), messages.len());
         assert!(matches!(
             &messages[0],
             AgentMessage::CompactionSummary {
