@@ -436,6 +436,8 @@ mod cases {
         assert!(serialized.contains("operation.recovery_resolved"));
         assert!(serialized.contains("operation.failed"));
         assert!(serialized.contains("operation.terminal.recorded"));
+        assert!(serialized.contains("authorization_subject"));
+        assert!(serialized.contains("trusted_host"));
         assert!(serialized.contains("token=<redacted>"));
         assert!(!serialized.contains("super-secret-value"));
     }

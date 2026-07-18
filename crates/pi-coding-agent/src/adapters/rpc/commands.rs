@@ -20,13 +20,14 @@ use crate::protocol::version::{
     PRODUCT_EVENT_PROTOCOL_VERSION, RPC_PROTOCOL_VERSION, UI_SNAPSHOT_PROTOCOL_VERSION,
 };
 use crate::runtime::facade::{
-    AgentProfile, CodingAgentControlId, CodingAgentRecoveryRetryRequest, CodingAgentSession,
-    CodingAgentShutdownOutcome, CodingSessionError, DelegationConfirmationMode, DelegationPolicy,
-    OperationKind, PendingDelegationConfirmation, ProductEventSequence, ProfileDiagnostic,
-    ProfileId, ProfileKind, ProfileSource, PromptTurnMode, PromptTurnOptions,
-    SelfHealingEditCheckOutput, SelfHealingEditModelRepairOptions, SelfHealingEditOutcome,
-    SelfHealingEditRepairAttempt, SelfHealingEditReplacement, SelfHealingEditRequest,
-    SupervisionPolicy, TeamProfile, TeamStrategy, TeamSupervisor,
+    AgentProfile, CodingAgentControlId, CodingAgentRecoveryResolutionRequest,
+    CodingAgentRecoveryRetryRequest, CodingAgentSession, CodingAgentShutdownOutcome,
+    CodingSessionError, DelegationConfirmationMode, DelegationPolicy, OperationKind,
+    PendingDelegationConfirmation, ProductEventSequence, ProfileDiagnostic, ProfileId, ProfileKind,
+    ProfileSource, PromptTurnMode, PromptTurnOptions, SelfHealingEditCheckOutput,
+    SelfHealingEditModelRepairOptions, SelfHealingEditOutcome, SelfHealingEditRepairAttempt,
+    SelfHealingEditReplacement, SelfHealingEditRequest, SupervisionPolicy, TeamProfile,
+    TeamStrategy, TeamSupervisor,
 };
 use pi_agent_core::api::resources::AgentResources;
 use tokio::io::AsyncWrite;
@@ -701,6 +702,59 @@ impl RpcState {
                     .retry_recovery(request)?;
                 self.remember_idempotency_key(key, "recovery_retry", OperationKind::Prompt);
                 write_rpc_response(writer, RpcResponse::success(id, "recovery_retry", Some(serde_json::json!({"operationId": result.operation_id, "recoveryId": result.recovery_id, "attemptCount": result.attempt_count, "lastAttemptAt": result.last_attempt_at, "nextAttemptAt": result.next_attempt_at})))) .await
+            }
+            RpcCommand::RecoveryResolve {
+                id,
+                authorization_token,
+                operation_id,
+                recovery_id,
+                record_version,
+                descriptor_revision,
+                capability_generation,
+                resolution,
+                reason,
+                idempotency_key,
+            } => {
+                self.authorize_recovery(&authorization_token)?;
+                let key = self.parse_idempotency_key(idempotency_key)?;
+                if let Some(response) =
+                    self.idempotent_retry_response(key.as_ref(), "recovery_resolve")?
+                {
+                    write_rpc_response(
+                        writer,
+                        RpcResponse::success(id, "recovery_resolve", Some(response)),
+                    )
+                    .await?;
+                    return Ok(());
+                }
+                let request = CodingAgentRecoveryResolutionRequest {
+                    operation_id,
+                    recovery_id,
+                    expected_record_version: record_version,
+                    expected_descriptor_revision: descriptor_revision,
+                    expected_capability_generation: capability_generation,
+                    resolution,
+                    reason,
+                };
+                let result = self
+                    .coding_session
+                    .as_mut()
+                    .ok_or_else(|| CliError::SessionFailure("no active session".into()))?
+                    .resolve_recovery_with_authority(request, "rpc_token")?;
+                self.remember_idempotency_key(key, "recovery_resolve", OperationKind::Prompt);
+                write_rpc_response(
+                    writer,
+                    RpcResponse::success(
+                        id,
+                        "recovery_resolve",
+                        Some(serde_json::json!({
+                            "operationId": result.operation_id,
+                            "recoveryId": result.recovery_id,
+                            "resolution": result.resolution,
+                        })),
+                    ),
+                )
+                .await
             }
         }
     }
@@ -2092,6 +2146,34 @@ mod tests {
                 reason,
                 ..
             } if authorization_id == "auth-2" && reason.as_deref() == Some("not approved")
+        ));
+    }
+
+    #[test]
+    fn rpc_recovery_controls_require_typed_evidence_and_authority() {
+        let command: RpcCommand = serde_json::from_value(json!({
+            "type": "recovery_resolve",
+            "authorizationToken": "rpc-secret",
+            "operationId": "op-1",
+            "recoveryId": "recovery_pending:sess/op-1",
+            "recordVersion": 1,
+            "descriptorRevision": 2,
+            "capabilityGeneration": 7,
+            "resolution": "failed",
+            "reason": "operator decision",
+            "idempotencyKey": "recovery-key"
+        }))
+        .unwrap();
+        assert!(matches!(
+            command,
+            RpcCommand::RecoveryResolve {
+                authorization_token,
+                record_version: 1,
+                descriptor_revision: 2,
+                capability_generation: Some(7),
+                resolution: crate::events::CodingAgentRecoveryResolution::Failed,
+                ..
+            } if authorization_token == "rpc-secret"
         ));
     }
 

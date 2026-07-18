@@ -1298,9 +1298,10 @@ impl SessionService {
             .collect()
     }
 
-    pub(crate) fn resolve_recovery(
+    pub(crate) fn resolve_recovery_as(
         &self,
         request: &crate::runtime::facade::CodingAgentRecoveryResolutionRequest,
+        authorization_subject: &str,
     ) -> Result<RecoveryResolutionCommit, CodingSessionError> {
         let pending = self
             .inspect_recovery_pending()?
@@ -1394,6 +1395,7 @@ impl SessionService {
                 capability_generation: pending.capability_generation,
                 resolution: persisted_resolution,
                 reason: reason.clone(),
+                authorization_subject: authorization_subject.to_owned(),
             },
         )
         .with_operation_id(request.operation_id.clone());

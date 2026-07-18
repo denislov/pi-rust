@@ -23,6 +23,9 @@
 - Added authenticated RPC `recovery_inspect` and `recovery_retry` commands;
   both require `PI_RUST_RPC_AUTH_TOKEN`, and retry honors the existing
   idempotency ledger while preserving durable evidence checks.
+- Added authenticated RPC `recovery_resolve`; its durable recovery audit fact
+  records `rpc_token` as the authorization subject while trusted-host Rust
+  resolution records `trusted_host`.
 
 - Converged PluginLoad on the admitted operation identity and typed
   Completed/Failed/Aborted ProductEvent terminal evidence, with completion after

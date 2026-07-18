@@ -10,6 +10,14 @@ impl CodingAgentSession {
         &mut self,
         request: CodingAgentRecoveryResolutionRequest,
     ) -> Result<CodingAgentRecoveryResolutionResult, CodingSessionError> {
+        self.resolve_recovery_with_authority(request, "trusted_host")
+    }
+
+    pub(crate) fn resolve_recovery_with_authority(
+        &mut self,
+        request: CodingAgentRecoveryResolutionRequest,
+        authorization_subject: &str,
+    ) -> Result<CodingAgentRecoveryResolutionResult, CodingSessionError> {
         self.runtime_host
             .client_projection
             .coordinator
@@ -21,7 +29,7 @@ impl CodingAgentSession {
                 capability: "recovery resolution requires a persistent session".into(),
             });
         };
-        let commit = service.resolve_recovery(&request)?;
+        let commit = service.resolve_recovery_as(&request, authorization_subject)?;
         let operation_kind =
             super::connection::persisted_runtime_operation_kind(commit.operation_kind.clone())
                 .ok_or_else(|| CodingSessionError::UnsupportedCapability {

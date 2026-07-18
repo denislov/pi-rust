@@ -117,8 +117,8 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   reruns an external side effect. Scheduled retries use deterministic `+1s`,
   `+2s`, and `+4s` timestamps; session startup executes one elapsed retry
   inspection atomically and preserves non-terminal ownership. Authenticated RPC
-  control/audit identity now covers authenticated inspect/retry RPC commands;
-  RPC resolve and full audit identity remain incomplete. New `SessionWriteRoot` admission is
+  control/audit identity now covers authenticated inspect/retry/resolve RPC
+  commands; resolve persists `rpc_token` as the audit authority. New `SessionWriteRoot` admission is
   fail-closed for unresolved recovery in the affected persistent session;
   Query/ReadOnly paths and explicit recovery controls remain available.
 

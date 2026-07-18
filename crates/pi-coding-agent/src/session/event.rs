@@ -222,6 +222,8 @@ pub(crate) enum SessionEventData {
         capability_generation: Option<u64>,
         resolution: PersistedRecoveryResolution,
         reason: String,
+        #[serde(default = "default_recovery_authority")]
+        authorization_subject: String,
     },
     #[serde(rename = "operation.recovered")]
     OperationRecovered { reason: String, recovery_id: String },
@@ -302,6 +304,10 @@ pub(crate) enum SessionEventData {
     MetadataUpdated { key: String, value: Value },
     #[serde(rename = "active_leaf.changed")]
     ActiveLeafChanged { leaf_id: String },
+}
+
+fn default_recovery_authority() -> String {
+    "trusted_host".into()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

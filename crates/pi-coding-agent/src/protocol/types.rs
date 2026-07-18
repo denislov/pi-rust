@@ -830,6 +830,26 @@ pub enum RpcCommand {
         #[serde(rename = "idempotencyKey")]
         idempotency_key: Option<String>,
     },
+    #[serde(rename = "recovery_resolve")]
+    RecoveryResolve {
+        id: Option<String>,
+        #[serde(rename = "authorizationToken")]
+        authorization_token: String,
+        #[serde(rename = "operationId")]
+        operation_id: String,
+        #[serde(rename = "recoveryId")]
+        recovery_id: String,
+        #[serde(rename = "recordVersion")]
+        record_version: u64,
+        #[serde(rename = "descriptorRevision")]
+        descriptor_revision: u16,
+        #[serde(rename = "capabilityGeneration")]
+        capability_generation: Option<u64>,
+        resolution: crate::events::CodingAgentRecoveryResolution,
+        reason: String,
+        #[serde(rename = "idempotencyKey")]
+        idempotency_key: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
