@@ -1,6 +1,6 @@
 # Changes
 
-## 0.3.1 - Unreleased
+## 0.3.1 - 2026-07-18
 
 ### Added
 
@@ -40,6 +40,8 @@
   `docs/0.3.1-pi-ai-remediation-plan.md` are closed.
 - All workspace packages use version `0.3.1`; formatting, strict Clippy, full
   workspace tests, and the `0.3.1` public API freeze pass.
+- The offline tmux TUI smoke suite was rerun successfully on 2026-07-18; no live
+  provider credentials were used.
 
 ## 0.3.0 - 2026-07-17
 
