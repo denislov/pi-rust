@@ -67,6 +67,10 @@
   view, tree, summary, active-leaf, and default-profile reads now observe
   successful mutations made by another open owner without relying on a stale
   local manifest handle.
+- Removed SessionService handle replacement after writes. Repository handles are
+  now read/path authority only; mutable manifest owner state remains in the
+  writer, and deterministic tests cover independent-session concurrency while a
+  different writer is blocked.
 
 ### Release Status
 

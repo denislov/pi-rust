@@ -2481,6 +2481,11 @@ fn turn_transaction_stages_through_typed_writer_commands_without_repository_hand
             && !production_service.contains(".store.update_manifest"),
         "SessionService must route live, bootstrap, and copy-target durable mutations through the writer"
     );
+    assert!(
+        !production_service.contains("self.handle =")
+            && !production_service.contains("target.handle ="),
+        "repository handles remain read authority; mutable owner state must stay in the writer"
+    );
     for mutation in [
         "set_tree_label",
         "set_default_agent_profile_id",

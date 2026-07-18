@@ -53,6 +53,9 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   manifest snapshot feeds session view, tree, summary, active-leaf, and
   default-profile reads across independent opens. Client projection refresh and
   the remaining writer-pressure/recovery gates remain active `RIF-008` work.
+  `SessionService` no longer replaces its repository handle after writes, so
+  that handle is read/path authority only; deterministic coverage also proves
+  one session writer can progress while another session writer is blocked.
 - `IntentRouter`, `OperationScheduler`, `OperationControl`, typed operation
   metadata, root/child lineage, capability snapshots, and generation-scoped
   cancellation exist.

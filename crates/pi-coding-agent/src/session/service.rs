@@ -314,7 +314,6 @@ impl SessionService {
             ManifestPatch::new().updated_at(updated_at.clone()),
             Some(operation_id.to_owned()),
         )?;
-        self.refresh_read_handle(Some(operation_id))?;
         Ok(SessionTreeLabelUpdate {
             entry_id,
             label,
@@ -361,11 +360,6 @@ impl SessionService {
         &self.handle.manifest().session_id
     }
 
-    #[cfg(test)]
-    pub(crate) fn active_leaf_id(&self) -> Option<&str> {
-        self.handle.manifest().active_leaf_id.as_deref()
-    }
-
     pub(crate) fn current_active_leaf_id(&self) -> Option<String> {
         self.transaction_writer.manifest_snapshot().active_leaf_id
     }
@@ -387,7 +381,6 @@ impl SessionService {
                 .default_agent_profile_id(profile_id),
             None,
         )?;
-        self.refresh_read_handle(None)?;
         Ok(())
     }
 
@@ -512,7 +505,6 @@ impl SessionService {
                 .active_leaf_id(Some(target_leaf_id)),
             Some(operation_id.to_owned()),
         )?;
-        self.refresh_read_handle(Some(operation_id))?;
         Ok(())
     }
 
@@ -656,12 +648,6 @@ impl SessionService {
             operation_id.clone(),
         )];
         transaction.commit(new_leaf_id.clone())?;
-        self.handle = self.store.open_session_id(&session_id).map_err(|error| {
-            CodingSessionError::PartialCommit {
-                operation_id: operation_id.clone(),
-                message: error.to_string(),
-            }
-        })?;
         events.push(EventService::session_write_committed_event(
             operation_id,
             session_id.clone(),
@@ -805,7 +791,6 @@ impl SessionService {
             ManifestPatch::new().updated_at(SystemClock.now_rfc3339()),
             Some(operation_id.clone()),
         )?;
-        self.refresh_read_handle(Some(&operation_id))?;
         events.push(EventService::session_write_committed_event(
             operation_id,
             session_id.clone(),
@@ -844,7 +829,6 @@ impl SessionService {
             ManifestPatch::new().updated_at(SystemClock.now_rfc3339()),
             Some(operation_id.clone()),
         )?;
-        self.refresh_read_handle(Some(&operation_id))?;
         events.push(EventService::session_write_committed_event(
             operation_id,
             session_id.clone(),
@@ -1072,7 +1056,6 @@ impl SessionService {
             ManifestPatch::new().updated_at(recovered_at),
             None,
         )?;
-        self.refresh_read_handle(None)?;
         self.startup_recovery_markers.extend(markers);
         Ok(())
     }
@@ -1141,7 +1124,8 @@ impl SessionService {
         kind: SessionCopyKind,
         admitted_operation_id: Option<&str>,
     ) -> Result<Self, CodingSessionError> {
-        let target_leaf_id = resolve_copy_target_leaf(self.handle.manifest(), target_leaf_id)?;
+        let writer_manifest = self.transaction_writer.manifest_snapshot();
+        let target_leaf_id = resolve_copy_target_leaf(&writer_manifest, target_leaf_id)?;
         let source_events = self.store.read_events(&self.handle)?;
         let cutoff = committed_leaf_cutoff(&source_events, &target_leaf_id).ok_or_else(|| {
             CodingSessionError::Session {
@@ -1156,7 +1140,7 @@ impl SessionService {
             .unwrap_or_else(|| ids.next_session_copy_id());
         let replay = self.replay()?;
         let target_session_id = ids.next_session_id();
-        let mut target = Self::create_with_id(
+        let target = Self::create_with_id(
             self.store.clone(),
             target_session_id,
             &mut ids,
@@ -1205,7 +1189,6 @@ impl SessionService {
                     .active_leaf_id(Some(target_leaf_id)),
                 None,
             )?;
-            target.refresh_read_handle(None)?;
             Ok(())
         })();
         if let Err(error) = copy_result {
@@ -1326,24 +1309,6 @@ impl SessionService {
             ManifestPatch::new().updated_at(updated_at),
             operation_id.clone(),
         )?;
-        self.refresh_read_handle(operation_id.as_deref())?;
-        Ok(())
-    }
-
-    fn refresh_read_handle(
-        &mut self,
-        partial_commit_operation_id: Option<&str>,
-    ) -> Result<(), CodingSessionError> {
-        let session_id = self.session_id().to_owned();
-        self.handle = self.store.open_session_id(&session_id).map_err(|error| {
-            match partial_commit_operation_id {
-                Some(operation_id) => CodingSessionError::PartialCommit {
-                    operation_id: operation_id.to_owned(),
-                    message: error.to_string(),
-                },
-                None => error,
-            }
-        })?;
         Ok(())
     }
 
@@ -3092,7 +3057,10 @@ mod tests {
             .switch_active_leaf(&root_leaf, "op_switch_leaf")
             .unwrap();
 
-        assert_eq!(service.active_leaf_id(), Some(root_leaf.as_str()));
+        assert_eq!(
+            service.current_active_leaf_id().as_deref(),
+            Some(root_leaf.as_str())
+        );
         assert_eq!(
             service.replay().unwrap().active_leaf_id.as_deref(),
             Some(root_leaf.as_str())
@@ -3167,7 +3135,10 @@ mod tests {
             error.to_string(),
             "session error: leaf id not found in session: leaf_missing"
         );
-        assert_eq!(service.active_leaf_id(), Some(known_leaf.as_str()));
+        assert_eq!(
+            service.current_active_leaf_id().as_deref(),
+            Some(known_leaf.as_str())
+        );
         assert_eq!(
             service.store.read_events(&service.handle).unwrap(),
             before_events

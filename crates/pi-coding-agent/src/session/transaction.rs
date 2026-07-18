@@ -1089,6 +1089,33 @@ mod tests {
     }
 
     #[test]
+    fn independent_session_writers_progress_while_one_writer_is_blocked() {
+        let (_temp_one, store_one, handle_one) = setup();
+        let (_temp_two, store_two, handle_two) = setup();
+        let writer_one = SessionTransactionWriter::new(store_one, handle_one);
+        let writer_two = SessionTransactionWriter::new(store_two, handle_two);
+        let (entered_sender, entered_receiver) = sync_channel(1);
+        let (release_sender, release_receiver) = sync_channel(1);
+        let (reply, _response) = sync_channel(1);
+
+        writer_one
+            .sender_for_tests()
+            .try_send(SessionTransactionWriterEnvelope {
+                command: SessionTransactionWriterCommand::Block {
+                    entered: entered_sender,
+                    release: release_receiver,
+                },
+                reply,
+            })
+            .unwrap();
+        entered_receiver.recv().unwrap();
+
+        writer_two.append_checkpoint_events(Vec::new()).unwrap();
+
+        release_sender.send(()).unwrap();
+    }
+
+    #[test]
     fn bounded_writer_closes_and_joins_when_last_client_drops() {
         let (_temp, store, handle) = setup();
         let writer = SessionTransactionWriter::new(store, handle);
