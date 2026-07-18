@@ -29,6 +29,7 @@ pub(super) struct RpcIdempotencyRecord {
 }
 
 pub(super) struct RpcState {
+    pub(super) recovery_auth_token: Option<String>,
     pub(super) options: CliRunOptions,
     pub(super) model: Model,
     pub(super) api_key: Option<String>,
@@ -111,6 +112,9 @@ impl RpcState {
         );
         let (background_completion_tx, background_completion_rx) = mpsc::unbounded_channel();
         Ok(Self {
+            recovery_auth_token: std::env::var("PI_RUST_RPC_AUTH_TOKEN")
+                .ok()
+                .filter(|v| !v.is_empty()),
             options,
             model,
             api_key,
@@ -148,6 +152,15 @@ impl RpcState {
             idempotency_records: HashMap::new(),
             idempotency_order: VecDeque::new(),
         })
+    }
+
+    pub(super) fn authorize_recovery(&self, token: &str) -> Result<(), CliError> {
+        match self.recovery_auth_token.as_deref() {
+            Some(expected) if expected == token => Ok(()),
+            _ => Err(CliError::SessionFailure(
+                "recovery RPC requires a valid authorization token".into(),
+            )),
+        }
     }
 
     pub(super) fn is_streaming(&self) -> bool {

@@ -50,6 +50,13 @@ pub enum CodingSessionError {
         operation_id: String,
         message: String,
     },
+    #[error(
+        "session write blocked by unresolved recovery {recovery_id} for operation {operation_id}"
+    )]
+    RecoveryPending {
+        operation_id: String,
+        recovery_id: String,
+    },
     #[error("self-healing edit failed: {message}")]
     SelfHealingEditFailed {
         message: String,
@@ -103,6 +110,7 @@ impl CodingSessionError {
             Self::Session { .. } => "session",
             Self::EventStreamGap { .. } => "event_stream_gap",
             Self::PartialCommit { .. } => "partial_commit",
+            Self::RecoveryPending { .. } => "recovery_pending",
             Self::SelfHealingEditFailed { .. } => "self_healing_edit_failed",
             Self::Provider { .. } => "provider",
             Self::Tool { .. } => "tool",
@@ -141,6 +149,9 @@ impl From<CodingSessionError> for CliError {
                 operation_id,
                 message,
             },
+            pending @ CodingSessionError::RecoveryPending { .. } => {
+                CliError::SessionFailure(pending.to_string())
+            }
             gap @ CodingSessionError::EventStreamGap { .. } => {
                 CliError::SessionFailure(gap.to_string())
             }

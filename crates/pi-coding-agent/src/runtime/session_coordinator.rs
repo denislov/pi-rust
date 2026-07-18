@@ -9,6 +9,7 @@ use crate::operations::delegation::{
 };
 use crate::operations::prompt::context::DelegationRequest;
 use crate::profiles::ProfileId;
+use crate::runtime::operation::OperationClass;
 use crate::services::session::{ReplayDerivedOwnerState, replay_derived_owner_state};
 #[cfg(test)]
 use crate::session::id::{Clock, SystemClock};
@@ -23,6 +24,29 @@ pub(crate) struct SessionCoordinator {
 }
 
 impl SessionCoordinator {
+    /// Fail closed before admitting a new session write when durable recovery
+    /// evidence is still unresolved. Recovery controls themselves bypass this
+    /// guard and must provide their expected evidence explicitly.
+    pub(crate) fn ensure_write_admission(
+        &self,
+        class: OperationClass,
+    ) -> Result<(), CodingSessionError> {
+        if class != OperationClass::SessionWriteRoot {
+            return Ok(());
+        }
+        let SessionPersistence::Persistent(service) = &self.persistence else {
+            return Ok(());
+        };
+        let pending = service.inspect_recovery_pending()?;
+        if let Some(first) = pending.into_iter().next() {
+            return Err(CodingSessionError::RecoveryPending {
+                operation_id: first.operation_id,
+                recovery_id: first.recovery_id,
+            });
+        }
+        Ok(())
+    }
+
     pub(crate) fn persist_terminal_decision(
         &self,
         decision: &FinalizationDecision,

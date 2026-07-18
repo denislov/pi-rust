@@ -1,3 +1,4 @@
+use serde::Serialize;
 use std::path::{Path, PathBuf};
 
 use pi_agent_core::api::transcript::SessionTreeNode;
@@ -108,16 +109,24 @@ pub struct CodingAgentSessionView {
     pub default_agent_profile_id: ProfileId,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CodingAgentRecoveryPending {
+    #[serde(rename = "operationId")]
     pub operation_id: String,
+    #[serde(rename = "recoveryId")]
     pub recovery_id: String,
     pub operation_kind: Option<String>,
+    #[serde(rename = "recordVersion")]
     pub record_version: u64,
+    #[serde(rename = "descriptorRevision")]
     pub descriptor_revision: u16,
+    #[serde(rename = "capabilityGeneration")]
     pub capability_generation: Option<u64>,
+    #[serde(rename = "attemptCount")]
     pub attempt_count: u32,
+    #[serde(rename = "lastAttemptAt")]
     pub last_attempt_at: Option<String>,
+    #[serde(rename = "nextAttemptAt")]
     pub next_attempt_at: Option<String>,
 }
 

@@ -804,6 +804,32 @@ pub enum RpcCommand {
     SetSessionName { id: Option<String>, name: String },
     #[serde(rename = "get_messages")]
     GetMessages { id: Option<String> },
+    #[serde(rename = "recovery_inspect")]
+    RecoveryInspect {
+        id: Option<String>,
+        #[serde(rename = "authorizationToken")]
+        authorization_token: String,
+    },
+    #[serde(rename = "recovery_retry")]
+    RecoveryRetry {
+        id: Option<String>,
+        #[serde(rename = "authorizationToken")]
+        authorization_token: String,
+        #[serde(rename = "operationId")]
+        operation_id: String,
+        #[serde(rename = "recoveryId")]
+        recovery_id: String,
+        #[serde(rename = "recordVersion")]
+        record_version: u64,
+        #[serde(rename = "descriptorRevision")]
+        descriptor_revision: u16,
+        #[serde(rename = "capabilityGeneration")]
+        capability_generation: Option<u64>,
+        #[serde(rename = "scheduleWithBackoff", default)]
+        schedule_with_backoff: bool,
+        #[serde(rename = "idempotencyKey")]
+        idempotency_key: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]

@@ -353,6 +353,7 @@ fn coding_session_error_message(error: CodingSessionError) -> String {
             operation_id,
             message,
         } => format!("partial commit uncertainty for operation {operation_id}: {message}"),
+        pending @ CodingSessionError::RecoveryPending { .. } => pending.to_string(),
         gap @ CodingSessionError::EventStreamGap { .. } => gap.to_string(),
         lag @ CodingSessionError::EventStreamLag { .. } => lag.to_string(),
         version @ CodingSessionError::UnsupportedProtocolVersion { .. } => version.to_string(),

@@ -20,13 +20,13 @@ use crate::protocol::version::{
     PRODUCT_EVENT_PROTOCOL_VERSION, RPC_PROTOCOL_VERSION, UI_SNAPSHOT_PROTOCOL_VERSION,
 };
 use crate::runtime::facade::{
-    AgentProfile, CodingAgentControlId, CodingAgentSession, CodingAgentShutdownOutcome,
-    CodingSessionError, DelegationConfirmationMode, DelegationPolicy, OperationKind,
-    PendingDelegationConfirmation, ProductEventSequence, ProfileDiagnostic, ProfileId, ProfileKind,
-    ProfileSource, PromptTurnMode, PromptTurnOptions, SelfHealingEditCheckOutput,
-    SelfHealingEditModelRepairOptions, SelfHealingEditOutcome, SelfHealingEditRepairAttempt,
-    SelfHealingEditReplacement, SelfHealingEditRequest, SupervisionPolicy, TeamProfile,
-    TeamStrategy, TeamSupervisor,
+    AgentProfile, CodingAgentControlId, CodingAgentRecoveryRetryRequest, CodingAgentSession,
+    CodingAgentShutdownOutcome, CodingSessionError, DelegationConfirmationMode, DelegationPolicy,
+    OperationKind, PendingDelegationConfirmation, ProductEventSequence, ProfileDiagnostic,
+    ProfileId, ProfileKind, ProfileSource, PromptTurnMode, PromptTurnOptions,
+    SelfHealingEditCheckOutput, SelfHealingEditModelRepairOptions, SelfHealingEditOutcome,
+    SelfHealingEditRepairAttempt, SelfHealingEditReplacement, SelfHealingEditRequest,
+    SupervisionPolicy, TeamProfile, TeamStrategy, TeamSupervisor,
 };
 use pi_agent_core::api::resources::AgentResources;
 use tokio::io::AsyncWrite;
@@ -642,6 +642,65 @@ impl RpcState {
                     ),
                 )
                 .await
+            }
+            RpcCommand::RecoveryInspect {
+                id,
+                authorization_token,
+            } => {
+                self.authorize_recovery(&authorization_token)?;
+                let pending = self
+                    .coding_session
+                    .as_ref()
+                    .ok_or_else(|| CliError::SessionFailure("no active session".into()))?
+                    .recovery_pending()?;
+                write_rpc_response(
+                    writer,
+                    RpcResponse::success(
+                        id,
+                        "recovery_inspect",
+                        Some(serde_json::json!({"pending": pending})),
+                    ),
+                )
+                .await
+            }
+            RpcCommand::RecoveryRetry {
+                id,
+                authorization_token,
+                operation_id,
+                recovery_id,
+                record_version,
+                descriptor_revision,
+                capability_generation,
+                schedule_with_backoff,
+                idempotency_key,
+            } => {
+                self.authorize_recovery(&authorization_token)?;
+                let key = self.parse_idempotency_key(idempotency_key)?;
+                if let Some(response) =
+                    self.idempotent_retry_response(key.as_ref(), "recovery_retry")?
+                {
+                    write_rpc_response(
+                        writer,
+                        RpcResponse::success(id, "recovery_retry", Some(response)),
+                    )
+                    .await?;
+                    return Ok(());
+                }
+                let request = CodingAgentRecoveryRetryRequest {
+                    operation_id,
+                    recovery_id,
+                    expected_record_version: record_version,
+                    expected_descriptor_revision: descriptor_revision,
+                    expected_capability_generation: capability_generation,
+                    schedule_with_backoff,
+                };
+                let result = self
+                    .coding_session
+                    .as_mut()
+                    .ok_or_else(|| CliError::SessionFailure("no active session".into()))?
+                    .retry_recovery(request)?;
+                self.remember_idempotency_key(key, "recovery_retry", OperationKind::Prompt);
+                write_rpc_response(writer, RpcResponse::success(id, "recovery_retry", Some(serde_json::json!({"operationId": result.operation_id, "recoveryId": result.recovery_id, "attemptCount": result.attempt_count, "lastAttemptAt": result.last_attempt_at, "nextAttemptAt": result.next_attempt_at})))) .await
             }
         }
     }

@@ -16,6 +16,14 @@
 
 ### Runtime Integrity
 
+- Added a typed `RecoveryPending` admission rejection. `SessionWriteRoot`
+  operations now inspect durable recovery evidence before
+  `OperationScheduler::admit` and fail closed for the affected session, while
+  read-only/query and explicit recovery-control paths remain usable.
+- Added authenticated RPC `recovery_inspect` and `recovery_retry` commands;
+  both require `PI_RUST_RPC_AUTH_TOKEN`, and retry honors the existing
+  idempotency ledger while preserving durable evidence checks.
+
 - Converged PluginLoad on the admitted operation identity and typed
   Completed/Failed/Aborted ProductEvent terminal evidence, with completion after
   capability generation installation.

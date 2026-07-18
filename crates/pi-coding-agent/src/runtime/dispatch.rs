@@ -81,6 +81,9 @@ impl CodingAgentSession {
         mut submission: Option<SubmissionCommitGuard>,
     ) -> Result<OperationOutcome, CodingSessionError> {
         let admission = self.resolve_operation_admission(&operation)?;
+        self.runtime_host
+            .session_coordinator
+            .ensure_write_admission(admission.descriptor.admission_class())?;
         let operation_permit = OperationScheduler::admit(
             &self.runtime_host.operation_supervisor.control,
             &admission,
@@ -309,6 +312,9 @@ impl CodingAgentSession {
                 .install_provider_runtime(runtime);
         }
         let admission = self.resolve_operation_admission(&operation)?;
+        self.runtime_host
+            .session_coordinator
+            .ensure_write_admission(admission.descriptor.admission_class())?;
         let operation_permit = OperationScheduler::admit(
             &self.runtime_host.operation_supervisor.control,
             &admission,
