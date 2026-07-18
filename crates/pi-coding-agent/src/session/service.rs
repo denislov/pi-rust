@@ -648,13 +648,7 @@ impl SessionService {
         let mut events = vec![EventService::session_write_pending_event(
             operation_id.clone(),
         )];
-        let committed =
-            EventService::session_write_committed_event(operation_id.clone(), session_id.clone());
-        let outbox_intent = DurableOutboxIntent::new(
-            format!("{session_id}/{operation_id}/session_write_committed"),
-            DurableOutboxRecordKind::SessionWrite,
-            committed.clone().into_product_draft(),
-        );
+        let (committed, outbox_intent) = session_write_outbox_intent(&session_id, &operation_id);
         transaction.commit_with_outbox(new_leaf_id.clone(), outbox_intent)?;
         events.push(committed);
         Ok(FinalizedSessionWrite {
@@ -790,16 +784,14 @@ impl SessionService {
         let mut events = vec![EventService::session_write_pending_event(
             operation_id.clone(),
         )];
-        transaction.commit(None)?;
+        let (committed, outbox_intent) = session_write_outbox_intent(&session_id, &operation_id);
+        transaction.commit_with_outbox(None, outbox_intent)?;
         self.transaction_writer.commit_session_mutation(
             Vec::new(),
             ManifestPatch::new().updated_at(SystemClock.now_rfc3339()),
             Some(operation_id.clone()),
         )?;
-        events.push(EventService::session_write_committed_event(
-            operation_id,
-            session_id.clone(),
-        ));
+        events.push(committed);
         Ok(FinalizedSessionWrite {
             events,
             session_id: Some(session_id),
@@ -828,16 +820,14 @@ impl SessionService {
         let mut events = vec![EventService::session_write_pending_event(
             operation_id.clone(),
         )];
-        transaction.fail(error_code, message)?;
+        let (committed, outbox_intent) = session_write_outbox_intent(&session_id, &operation_id);
+        transaction.fail_with_outbox(error_code, message, outbox_intent)?;
         self.transaction_writer.commit_session_mutation(
             Vec::new(),
             ManifestPatch::new().updated_at(SystemClock.now_rfc3339()),
             Some(operation_id.clone()),
         )?;
-        events.push(EventService::session_write_committed_event(
-            operation_id,
-            session_id.clone(),
-        ));
+        events.push(committed);
         Ok(FinalizedSessionWrite {
             events,
             session_id: Some(session_id),
@@ -897,11 +887,9 @@ impl SessionService {
         let mut events = vec![EventService::session_write_pending_event(
             operation_id.clone(),
         )];
-        transaction.abort(reason)?;
-        events.push(EventService::session_write_committed_event(
-            operation_id,
-            session_id.clone(),
-        ));
+        let (committed, outbox_intent) = session_write_outbox_intent(&session_id, &operation_id);
+        transaction.abort_with_outbox(reason, outbox_intent)?;
+        events.push(committed);
         Ok(FinalizedSessionWrite {
             events,
             session_id: Some(session_id),
@@ -1335,6 +1323,20 @@ impl SessionService {
         let mut ids = SystemIdGenerator;
         ids.next_leaf_id()
     }
+}
+
+fn session_write_outbox_intent(
+    session_id: &str,
+    operation_id: &str,
+) -> (SessionWriteEvent, DurableOutboxIntent) {
+    let committed =
+        EventService::session_write_committed_event(operation_id.to_owned(), session_id.to_owned());
+    let intent = DurableOutboxIntent::new(
+        format!("{session_id}/{operation_id}/session_write_committed"),
+        DurableOutboxRecordKind::SessionWrite,
+        committed.clone().into_product_draft(),
+    );
+    (committed, intent)
 }
 
 fn cleanup_failed_session_copy(
@@ -2594,6 +2596,68 @@ mod tests {
         );
         assert_eq!(record.operation_id.as_deref(), Some(operation_id.as_str()));
         assert!(!record.source_event_ids.is_empty());
+    }
+
+    #[test]
+    fn terminal_session_writes_persist_outbox_records() {
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_terminal_outbox")
+            .with_session_log_root(temp.path());
+        let mut service = SessionService::create(&options).unwrap();
+
+        let commit_transaction = service.begin_plugin_load_transaction();
+        let commit_operation_id = commit_transaction.operation_id().to_owned();
+        service
+            .commit_plugin_load_transaction(Some(commit_transaction), commit_operation_id.clone())
+            .unwrap();
+
+        let fail_transaction = service.begin_plugin_load_transaction();
+        let fail_operation_id = fail_transaction.operation_id().to_owned();
+        service
+            .fail_plugin_load_transaction(
+                Some(fail_transaction),
+                fail_operation_id.clone(),
+                "plugin_load_failed",
+                "plugin load failed",
+            )
+            .unwrap();
+
+        let abort_transaction = service.begin_prompt_transaction();
+        let abort_operation_id = abort_transaction.operation_id().to_owned();
+        service
+            .abort_prompt_transaction(
+                Some(abort_transaction),
+                abort_operation_id.clone(),
+                "cancelled",
+            )
+            .unwrap();
+
+        let outbox = std::fs::read_to_string(service.session_dir().join("outbox.jsonl")).unwrap();
+        let records = outbox
+            .lines()
+            .map(|line| {
+                serde_json::from_str::<crate::events::outbox::DurableOutboxRecord>(line).unwrap()
+            })
+            .collect::<Vec<_>>();
+        let operation_ids = records
+            .iter()
+            .filter_map(|record| record.operation_id.as_deref())
+            .collect::<Vec<_>>();
+
+        assert_eq!(records.len(), 3);
+        assert_eq!(
+            operation_ids,
+            vec![
+                commit_operation_id.as_str(),
+                fail_operation_id.as_str(),
+                abort_operation_id.as_str(),
+            ]
+        );
+        assert!(records.iter().all(|record| {
+            record.record_id.ends_with("/session_write_committed")
+                && !record.source_event_ids.is_empty()
+        }));
     }
 
     #[test]

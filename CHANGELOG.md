@@ -80,15 +80,18 @@
   pass. The next planned slice is `RIF-009` outbox/snapshot consistency.
 - Completed `RIF-009-001`: added the typed `DurableOutboxRecord` contract with
   schema/version, semantic identity, session/operation correlation, record kind,
-  and structured product draft payload. `RIF-009-002` is now active; the
-  retained EventService window remains explicitly process-local replay state,
-  not durable outbox proof.
-- Began `RIF-009-002`: session manifests now provision `outbox.jsonl`, writer
-  mutation batches accept typed outbox records, and prompt-success commits write
-  a `SessionWriteCommitted` draft correlated to source session event IDs.
+  and structured product draft payload. The retained EventService window remains
+  explicitly process-local replay state, not durable outbox proof.
+- Completed `RIF-009-002`: session manifests now provision `outbox.jsonl`, writer
+  mutation batches accept typed outbox records, and prompt success/failure/abort
+  plus non-leaf commit/failure paths write a `SessionWriteCommitted` draft
+  correlated to source session event IDs.
   Outbox intent is written before session facts under one append lock, so a
   later fact failure returns `PartialCommit` while leaving restart-visible
   recovery evidence.
+- Activated `RIF-009-003` for the committed projection/snapshot cursor. Durable
+  operation-terminal and recovery records remain sequenced behind the
+  supervisor state machine in `RIF-002`.
 
 ### Release Status
 

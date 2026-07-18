@@ -868,6 +868,7 @@ where
         self.flush_pending()
     }
 
+    #[cfg(test)]
     pub(crate) fn commit(&mut self, new_leaf_id: Option<String>) -> Result<(), CodingSessionError> {
         self.ensure_open()?;
         self.push_event(SessionEventData::OperationCommitted {
@@ -887,22 +888,7 @@ where
         self.push_event(SessionEventData::OperationCommitted {
             new_leaf_id: new_leaf_id.clone(),
         });
-        let source_event_ids = self
-            .pending_events
-            .iter()
-            .map(|event| event.event_id.clone())
-            .collect();
-        let record = DurableOutboxRecord::new(
-            intent.record_id,
-            self.session_id.clone(),
-            Some(self.operation_id.clone()),
-            source_event_ids,
-            intent.kind,
-            intent.draft,
-        )
-        .map_err(|message| CodingSessionError::Session {
-            message: message.into(),
-        })?;
+        let record = self.outbox_record(intent)?;
         self.finalize_pending(new_leaf_id, vec![record])?;
         self.state = TransactionState::Committed;
         Ok(())
@@ -913,24 +899,61 @@ where
         self.state == TransactionState::InDoubt
     }
 
+    #[cfg(test)]
     pub(crate) fn abort(&mut self, reason: impl Into<String>) -> Result<(), CodingSessionError> {
+        self.abort_internal(reason.into(), None)
+    }
+
+    pub(crate) fn abort_with_outbox(
+        &mut self,
+        reason: impl Into<String>,
+        intent: DurableOutboxIntent,
+    ) -> Result<(), CodingSessionError> {
+        self.abort_internal(reason.into(), Some(intent))
+    }
+
+    fn abort_internal(
+        &mut self,
+        reason: String,
+        intent: Option<DurableOutboxIntent>,
+    ) -> Result<(), CodingSessionError> {
         self.ensure_open()?;
-        let reason = reason.into();
         self.cancel_open_lifecycle_events(&reason);
         self.push_event(SessionEventData::OperationAborted { reason });
-        self.finalize_pending(None, Vec::new())?;
+        let outbox_records = intent
+            .map(|intent| self.outbox_record(intent).map(|record| vec![record]))
+            .transpose()?
+            .unwrap_or_default();
+        self.finalize_pending(None, outbox_records)?;
         self.state = TransactionState::Aborted;
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn fail(
         &mut self,
         error_code: impl Into<String>,
         message: impl Into<String>,
     ) -> Result<(), CodingSessionError> {
+        self.fail_internal(error_code.into(), message.into(), None)
+    }
+
+    pub(crate) fn fail_with_outbox(
+        &mut self,
+        error_code: impl Into<String>,
+        message: impl Into<String>,
+        intent: DurableOutboxIntent,
+    ) -> Result<(), CodingSessionError> {
+        self.fail_internal(error_code.into(), message.into(), Some(intent))
+    }
+
+    fn fail_internal(
+        &mut self,
+        error_code: String,
+        message: String,
+        intent: Option<DurableOutboxIntent>,
+    ) -> Result<(), CodingSessionError> {
         self.ensure_open()?;
-        let error_code = error_code.into();
-        let message = message.into();
         self.cancel_open_lifecycle_events("failed");
         self.push_event(SessionEventData::DiagnosticEmitted {
             level: DiagnosticLevel::Error,
@@ -940,7 +963,11 @@ where
             error_code,
             message,
         });
-        self.finalize_pending(None, Vec::new())?;
+        let outbox_records = intent
+            .map(|intent| self.outbox_record(intent).map(|record| vec![record]))
+            .transpose()?
+            .unwrap_or_default();
+        self.finalize_pending(None, outbox_records)?;
         self.state = TransactionState::Failed;
         Ok(())
     }
@@ -955,6 +982,28 @@ where
         .with_operation_id(self.operation_id.clone())
         .with_turn_id(self.turn_id.clone());
         self.pending_events.push(event);
+    }
+
+    fn outbox_record(
+        &self,
+        intent: DurableOutboxIntent,
+    ) -> Result<DurableOutboxRecord, CodingSessionError> {
+        let source_event_ids = self
+            .pending_events
+            .iter()
+            .map(|event| event.event_id.clone())
+            .collect();
+        DurableOutboxRecord::new(
+            intent.record_id,
+            self.session_id.clone(),
+            Some(self.operation_id.clone()),
+            source_event_ids,
+            intent.kind,
+            intent.draft,
+        )
+        .map_err(|message| CodingSessionError::Session {
+            message: message.into(),
+        })
     }
 
     fn flush_pending(&mut self) -> Result<(), CodingSessionError> {
