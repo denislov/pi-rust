@@ -40,7 +40,8 @@
 - Began `RIF-008` by making `CodingAgentSession` a facade over one `RuntimeHost`
   with explicit OperationSupervisor, SessionCoordinator, EventHub, and
   ClientProjectionCoordinator ownership. Added the identity-bearing session
-  writer command/reply protocol and routed default-profile mutation through it.
+  writer command/reply protocol and routed default-profile, active-leaf, and
+  tree-label mutations through it.
 
 ### Release Status
 

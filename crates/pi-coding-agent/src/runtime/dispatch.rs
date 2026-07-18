@@ -143,11 +143,20 @@ impl CodingAgentSession {
                         .session_write
                         .as_ref(),
                 )?;
-                crate::operations::session_navigation::switch_active_leaf(
-                    &mut self.runtime_host.session_coordinator.persistence,
-                    &target_leaf_id,
-                    &operation_permit.capability_snapshot().operation_id,
+                let reply = self
+                    .runtime_host
+                    .session_coordinator
+                    .execute_writer_command(
+                    crate::runtime::session_coordinator::SessionWriterCommand::switch_active_leaf(
+                        operation_permit.execution().operation_id.clone(),
+                        operation_permit.execution().capability_generation,
+                        target_leaf_id,
+                    ),
                 )?;
+                debug_assert_eq!(
+                    reply,
+                    crate::runtime::session_coordinator::SessionWriterReply::ActiveLeaf
+                );
                 self.refresh_snapshot_projection();
                 Ok(OperationOutcome::SwitchActiveLeaf)
             }
@@ -158,17 +167,31 @@ impl CodingAgentSession {
                         .session_write
                         .as_ref(),
                 )?;
-                let update = crate::operations::session_navigation::set_tree_label(
-                    &mut self.runtime_host.session_coordinator.persistence,
-                    &entry_id,
-                    label,
-                    &operation_permit.capability_snapshot().operation_id,
-                )?;
+                let reply = self
+                    .runtime_host
+                    .session_coordinator
+                    .execute_writer_command(
+                        crate::runtime::session_coordinator::SessionWriterCommand::
+                            set_session_tree_label(
+                                operation_permit.execution().operation_id.clone(),
+                                operation_permit.execution().capability_generation,
+                                entry_id,
+                                label,
+                            ),
+                    )?;
                 self.refresh_snapshot_projection();
+                let crate::runtime::session_coordinator::SessionWriterReply::SessionTreeLabel {
+                    entry_id,
+                    label,
+                    updated_at,
+                } = reply
+                else {
+                    unreachable!("tree-label writer command returns its typed reply")
+                };
                 Ok(OperationOutcome::SessionTreeLabelChanged {
-                    entry_id: update.entry_id,
-                    label: update.label,
-                    updated_at: update.updated_at,
+                    entry_id,
+                    label,
+                    updated_at,
                 })
             }
             Operation::SetDefaultAgentProfile { profile_id } => {
@@ -193,10 +216,9 @@ impl CodingAgentSession {
                     )?;
                 debug_assert_eq!(
                     reply,
-                    crate::runtime::session_coordinator::SessionWriterReply::
-                        DefaultAgentProfileChanged {
-                            profile_id: profile_id.clone(),
-                        }
+                    crate::runtime::session_coordinator::SessionWriterReply::DefaultAgentProfile {
+                        profile_id: profile_id.clone(),
+                    }
                 );
                 self.runtime_host
                     .event_hub

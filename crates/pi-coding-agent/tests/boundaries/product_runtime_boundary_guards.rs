@@ -2351,6 +2351,15 @@ fn runtime_host_owner_graph_and_first_writer_command_are_explicit() {
         !dispatch.contains("set_default_agent_profile_id("),
         "default-profile mutation must not bypass the writer command protocol"
     );
+    for bypass in [
+        "session_navigation::switch_active_leaf(",
+        "session_navigation::set_tree_label(",
+    ] {
+        assert!(
+            !dispatch.contains(bypass),
+            "session mutation must not bypass the writer command protocol: {bypass}"
+        );
+    }
 
     let mut workflow_host_leaks = Vec::new();
     for path in rust_files_under(&scan.crate_root.join("src/operations")) {

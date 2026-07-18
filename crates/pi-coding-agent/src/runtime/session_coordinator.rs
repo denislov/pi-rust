@@ -36,11 +36,50 @@ impl SessionWriterCommand {
             mutation: SessionMutation::SetDefaultAgentProfile { profile_id },
         }
     }
+
+    pub(super) fn switch_active_leaf(
+        operation_id: impl Into<String>,
+        capability_generation: CapabilityGeneration,
+        target_leaf_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            operation_id: operation_id.into(),
+            capability_generation,
+            mutation: SessionMutation::SwitchActiveLeaf {
+                target_leaf_id: target_leaf_id.into(),
+            },
+        }
+    }
+
+    pub(super) fn set_session_tree_label(
+        operation_id: impl Into<String>,
+        capability_generation: CapabilityGeneration,
+        entry_id: impl Into<String>,
+        label: Option<String>,
+    ) -> Self {
+        Self {
+            operation_id: operation_id.into(),
+            capability_generation,
+            mutation: SessionMutation::SetSessionTreeLabel {
+                entry_id: entry_id.into(),
+                label,
+            },
+        }
+    }
 }
 
 #[derive(Debug)]
 pub(super) enum SessionMutation {
-    SetDefaultAgentProfile { profile_id: ProfileId },
+    SetDefaultAgentProfile {
+        profile_id: ProfileId,
+    },
+    SwitchActiveLeaf {
+        target_leaf_id: String,
+    },
+    SetSessionTreeLabel {
+        entry_id: String,
+        label: Option<String>,
+    },
 }
 
 #[cfg(test)]
@@ -72,7 +111,7 @@ mod tests {
 
         assert_eq!(
             reply,
-            SessionWriterReply::DefaultAgentProfileChanged {
+            SessionWriterReply::DefaultAgentProfile {
                 profile_id: ProfileId::from("reviewer"),
             }
         );
@@ -104,7 +143,15 @@ mod tests {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum SessionWriterReply {
-    DefaultAgentProfileChanged { profile_id: ProfileId },
+    DefaultAgentProfile {
+        profile_id: ProfileId,
+    },
+    ActiveLeaf,
+    SessionTreeLabel {
+        entry_id: String,
+        label: Option<String>,
+        updated_at: String,
+    },
 }
 
 impl SessionCoordinator {
@@ -143,7 +190,33 @@ impl SessionCoordinator {
                         state.default_agent_profile_id = profile_id.clone();
                     }
                 }
-                Ok(SessionWriterReply::DefaultAgentProfileChanged { profile_id })
+                Ok(SessionWriterReply::DefaultAgentProfile { profile_id })
+            }
+            SessionMutation::SwitchActiveLeaf { target_leaf_id } => {
+                let SessionPersistence::Persistent(session_service) = &mut self.persistence else {
+                    return Err(CodingSessionError::UnsupportedCapability {
+                        capability:
+                            "active leaf navigation requires a persistent Rust-native session"
+                                .into(),
+                    });
+                };
+                session_service.switch_active_leaf(&target_leaf_id, &command.operation_id)?;
+                Ok(SessionWriterReply::ActiveLeaf)
+            }
+            SessionMutation::SetSessionTreeLabel { entry_id, label } => {
+                let SessionPersistence::Persistent(session_service) = &mut self.persistence else {
+                    return Err(CodingSessionError::UnsupportedCapability {
+                        capability: "session tree labels require a persistent Rust-native session"
+                            .into(),
+                    });
+                };
+                let update =
+                    session_service.set_tree_label(&entry_id, label, &command.operation_id)?;
+                Ok(SessionWriterReply::SessionTreeLabel {
+                    entry_id: update.entry_id,
+                    label: update.label,
+                    updated_at: update.updated_at,
+                })
             }
         }
     }
