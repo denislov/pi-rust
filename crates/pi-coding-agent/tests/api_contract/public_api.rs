@@ -1477,20 +1477,18 @@ fn snapshot_writers_4_navigation_refreshes_projection_before_publication() {
         .rfind("Operation::ForkSession { target_leaf_id } => {")
         .unwrap()..];
     let transition = fork_arm
-        .find("crate::operations::session_navigation::fork(")
+        .find("SessionWriterCommand::fork_session(")
         .unwrap();
     let refresh = fork_arm
         .find("self.refresh_snapshot_projection();")
         .unwrap();
-    let publish = fork_arm
-        .find("emit_session_opened(transition.session_id)")
-        .unwrap();
+    let publish = fork_arm.find("emit_session_opened(session_id)").unwrap();
     assert!(transition < refresh && refresh < publish);
 
     let navigation =
         fs::read_to_string(crate_root.join("src/operations/session_navigation/mod.rs")).unwrap();
-    assert!(navigation.contains("fork_current_admitted(target_leaf_id, operation_id)"));
-    assert!(navigation.contains("switch_active_leaf(target_leaf_id, operation_id)"));
+    assert!(navigation.contains("pub(crate) fn fork_session("));
+    assert!(navigation.contains(".fork_current(target_leaf_id)?"));
 }
 
 #[test]

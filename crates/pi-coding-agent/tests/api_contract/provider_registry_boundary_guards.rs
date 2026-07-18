@@ -834,7 +834,7 @@ fn session_admission_installs_the_session_owned_provider_runtime() {
         .expect("read prompt runtime source");
 
     assert!(
-        dispatch.contains("self.runtime_service.install_provider_runtime(runtime)"),
+        dispatch.contains("runtime_host") && dispatch.contains("install_provider_runtime(runtime)"),
         "ordinary session admission must install its provider runtime into operation-local state"
     );
     assert!(
