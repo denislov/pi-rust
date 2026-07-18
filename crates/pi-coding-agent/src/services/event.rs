@@ -1074,7 +1074,7 @@ impl EventService {
         })
     }
 
-    fn emit_prompt_diagnostics(&self, outcome: &PromptTurnOutcome) {
+    pub(crate) fn emit_prompt_diagnostics(&self, outcome: &PromptTurnOutcome) {
         let (operation_id, diagnostics) = match outcome {
             PromptTurnOutcome::Success {
                 operation_id,

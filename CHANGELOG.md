@@ -130,9 +130,10 @@
   original `PartialCommit` error is preserved and the handoff fails closed.
 - Added the first normal terminal persistence slice for Prompt: the coordinator
   writes an `operation.terminal.recorded` SessionEvent and `OperationTerminal`
-  outbox draft atomically, and restart redelivery reconstructs the Prompt root
-  terminal metadata. Compact and remaining operation families still need the
-  same terminal draft migration.
+  outbox draft atomically, publishes the Prompt terminal only after that commit,
+  and restart redelivery reconstructs the Prompt root terminal metadata.
+  Compact and remaining operation families still need the same terminal draft
+  migration.
 
 ### Release Status
 

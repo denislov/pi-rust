@@ -119,10 +119,13 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   typed writer batch, outbox-first append ordering under the session append lock,
   source event correlation, and session-write outbox persistence for prompt
   success/failure/abort and non-leaf commit/failure paths. Operation-terminal
-  publication remains open under `RIF-002`; recovery publication now persists
+  Compact and remaining operation-terminal publication remains open under
+  `RIF-002`; recovery publication now persists
   `Recovery` outbox records atomically with `OperationRecovered` facts, while
   broader restart reconciliation remains open under `RIF-009-004`.
-  `RIF-009-004` now owns the next
+  Prompt terminal publication now occurs only after the terminal fact/outbox
+  commit succeeds; Compact and remaining operation-terminal families remain
+  open. `RIF-009-004` now owns the next
   restart/reconnect/redelivery consistency slice. The completed cursor work:
   outbox schema v2 stores `committed_through_session_sequence`, while only the
   repository may turn a validated candidate into a cursor-bearing durable

@@ -156,7 +156,7 @@ impl PromptOperation<'_> {
                 .emit_events_before_prompt_outcome(context.coding_events());
         }
         self.event_service.emit_session_write_events(&finalized);
-        self.event_service.emit_prompt_outcome(&outcome);
+        self.event_service.emit_prompt_diagnostics(&outcome);
         self.authorization_service
             .cancel_operation(context.operation_id(), "operation completed");
         Ok(outcome)

@@ -671,5 +671,11 @@ impl CodingAgentSession {
         self.runtime_host
             .session_coordinator
             .persist_terminal_decision(decision, draft)
+            .map(|_| {
+                self.runtime_host
+                    .event_hub
+                    .service
+                    .emit_prompt_terminal(outcome)
+            })
     }
 }
