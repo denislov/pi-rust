@@ -95,8 +95,8 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   resolves durable evidence to `Committed`/`DefinitelyFailed`/`InDoubt`;
   partial commits with evidence enter non-terminal `RecoveryPending`, and
   EventHub emits typed `OperationRecoveryPending` evidence without terminal
-  fields. Missing evidence preserves the original `PartialCommit`; automatic
-  retry and authenticated remote control remain open.
+  fields. Missing evidence preserves the original `PartialCommit`; bounded
+  retry and authenticated remote control are implemented and audited.
   The public session facade now exposes a read-only `recovery_pending()` list
   with stable recovery IDs and persisted operation-kind hints. Its trusted-host
   `resolve_recovery()` control accepts only Failed/Aborted and rejects stale
@@ -166,15 +166,16 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   operation-terminal publication stays open under `RIF-002`; recovery
   publication now persists
   `Recovery` outbox records atomically with non-terminal
-  `OperationRecoveryPending` facts, while broader restart reconciliation remains
-  open under `RIF-009-004`.
+  `OperationRecoveryPending` facts. Offline restart/reconnect/redelivery
+  reconciliation is complete under `RIF-009-004`; provider/live stress is a
+  later hardening concern.
   Prompt terminal publication now occurs only after the terminal fact/outbox
   commit succeeds. Compact success/failure, PluginLoad success/failure/abort,
   and SelfHealingEdit success/failure/abort now use the same ordering and an
   outbox operation-kind hint for correct restart redelivery. BranchSummary is
   intentionally outcome-acknowledged. Standalone AgentInvocation/AgentTeam
   are non-session ProductEvent terminals and do not create session outbox rows.
-  `RIF-009-004` now owns the next
+  `RIF-009-004` owns the completed offline
   restart/reconnect/redelivery consistency slice. The completed cursor work:
   outbox schema v2 stores `committed_through_session_sequence`, while only the
   repository may turn a validated candidate into a cursor-bearing durable
@@ -182,7 +183,7 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   public snapshots expose `last_session_sequence`. Completed `RIF-009-003`
   returns a typed `SessionCommitReceipt` from the bounded writer, retains that
   cursor monotonically in SessionService, and installs projection state from the
-  receipt-derived cursor without replaying. `RIF-009-004` now owns the recovery
+  receipt-derived cursor without replaying. `RIF-009-004` completed the recovery
   and redelivery matrix; session open rejects malformed, regressed, or duplicate
   outbox records before runtime startup, and EventService redelivers startup
   records once per runtime by semantic record ID. The first matrix slice covers
