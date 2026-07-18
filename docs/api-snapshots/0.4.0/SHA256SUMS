@@ -1,0 +1,10 @@
+007b31f4e4c188675afeb59ce31de6ecc9dd5d1a3e33f48b76ca4101aba6df94  ./pi-coding-agent.rustdoc.json
+1014f40ae81c990385ec8959ca00017d74f7469d4aa3d15cfe7fdcfc7717d540  ./pi-tui.public-api.json
+2472cac712b58f18026e6407132ef887b56c9c938dacd5b0af6b0de1b0b4b90c  ./pi-coding-agent.public-api.json
+349744ec7a778e0486080dd968d29a8206443d03a579805c72e68bf3dd189d84  ./pi-tui.rustdoc.json
+5bf7c9173952036a3d3b0ad0e1968410f62fc23d521ed46305e913cc0c41c8f1  ./workspace-metadata.json
+b9d0465115d382634f3795a6bd968025262c4613d93f7e17f2fe964e5327f1f8  ./pi-agent-core.public-api.json
+d2af0a6e145d9f3636a91d22ee9ee693c7d960d278b1f3c35152c68ac8fd1687  ./toolchain.txt
+d939984d663bc2ab5c628d3ee02b6c711ee3d165f8964ba8646b332c3fe5a6fb  ./pi-ai.rustdoc.json
+d97a2cd2ee501e8edd79de11755a15b7397b29c5acfaed363cdeb83111fda33c  ./pi-ai.public-api.json
+fe81828821ff0f17d56d00fb611e7ad5b1dab5b4fdfa2fa109a7245e39562b94  ./pi-agent-core.rustdoc.json

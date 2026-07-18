@@ -1,6 +1,9 @@
 # Changes
 
-## 0.4.0 - Unreleased
+## 0.4.0 - 2026-07-19
+
+Workspace packages are versioned `0.4.0`; API/protocol snapshots and the offline
+release gates passed on 2026-07-19.
 
 ### Architecture And Planning
 
@@ -39,11 +42,10 @@
   `docs/architecture/runtime-baseline-0.4.0.md` evidence for admission, writer
   pressure, session/outbox commit, snapshot/reconnect, and recovery scan paths.
 - Refreshed the 0.4.x roadmap status: all current 0.4.0 implementation/debt
-  rows and offline reconnect/lag matrices are closed; final release convergence
-  remains open. Provider/live reconnect stress is deferred to later hardening.
-- Corrected `scripts/release-gates.sh` defaults to the actual `0.3.1` workspace
-  and API snapshot baseline; the script no longer points at the retired `0.3.0`
-  and `0.2.0-alpha.1` defaults.
+  rows, offline reconnect/lag matrices, API snapshots, and release gates are
+  closed. Provider/live reconnect stress is deferred to later hardening.
+- Corrected `scripts/release-gates.sh` defaults to the `0.4.0` workspace and API
+  snapshot baseline; the script no longer points at retired pre-train defaults.
 
 - Added a typed `RecoveryPending` admission rejection. `SessionWriteRoot`
   operations now inspect durable recovery evidence before
