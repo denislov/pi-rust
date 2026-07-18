@@ -12,7 +12,9 @@ use super::manifest::{
     default_agent_profile_id,
 };
 use super::replay::{SessionReplay, fold_events};
-use crate::events::outbox::{DurableOutboxRecord, DurableOutboxRecordCandidate};
+use crate::events::outbox::{
+    DurableOutboxRecord, DurableOutboxRecordCandidate, OUTBOX_SCHEMA, OUTBOX_VERSION,
+};
 use crate::runtime::facade::{CodingSessionError, ProfileId};
 use crate::session::event::SessionEventEnvelope;
 
@@ -534,6 +536,71 @@ impl SessionLogStore {
     ) -> Result<SessionReplay, CodingSessionError> {
         let events = self.read_events(handle)?;
         Ok(fold_events(&events))
+    }
+
+    pub(crate) fn read_outbox(
+        &self,
+        handle: &SessionHandle,
+    ) -> Result<Vec<DurableOutboxRecord>, CodingSessionError> {
+        let outbox_path = outbox_log_path(&handle.session_dir, &handle.manifest)?;
+        let content = fs::read_to_string(&outbox_path).map_err(|error| {
+            session_error(format!(
+                "failed to read session outbox {}: {error}",
+                outbox_path.display()
+            ))
+        })?;
+        let mut records = Vec::new();
+        let mut record_ids = std::collections::HashSet::new();
+        let mut previous_sequence = 0_u64;
+        for (index, line) in content.lines().enumerate() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let record: DurableOutboxRecord = serde_json::from_str(line).map_err(|error| {
+                session_error(format!(
+                    "failed to decode session outbox {} line {}: {error}",
+                    outbox_path.display(),
+                    index + 1
+                ))
+            })?;
+            if record.schema != OUTBOX_SCHEMA || record.version != OUTBOX_VERSION {
+                return Err(session_error(format!(
+                    "unsupported session outbox schema/version at {} line {}",
+                    outbox_path.display(),
+                    index + 1
+                )));
+            }
+            if record.session_id != handle.manifest.session_id
+                || record.committed_through_session_sequence == 0
+                || record.source_event_ids.is_empty()
+                || record
+                    .source_event_ids
+                    .iter()
+                    .any(|event_id| event_id.trim().is_empty())
+            {
+                return Err(session_error(format!(
+                    "invalid session outbox identity at {} line {}",
+                    outbox_path.display(),
+                    index + 1
+                )));
+            }
+            if record.committed_through_session_sequence < previous_sequence {
+                return Err(session_error(format!(
+                    "session outbox cursor regressed at {} line {}",
+                    outbox_path.display(),
+                    index + 1
+                )));
+            }
+            if !record_ids.insert(record.record_id.clone()) {
+                return Err(session_error(format!(
+                    "duplicate session outbox record {}",
+                    record.record_id
+                )));
+            }
+            previous_sequence = record.committed_through_session_sequence;
+            records.push(record);
+        }
+        Ok(records)
     }
 
     pub(crate) fn update_manifest(

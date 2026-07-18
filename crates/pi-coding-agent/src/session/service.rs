@@ -162,6 +162,9 @@ impl SessionService {
             .last()
             .and_then(|event| event.session_sequence)
             .unwrap_or_default();
+        // Opening a session validates the durable outbox before any runtime
+        // owner can publish or redeliver its records after restart.
+        let _ = store.read_outbox(&handle)?;
         let transaction_writer = SessionTransactionWriter::new(store.clone(), handle.clone());
         Ok(Self {
             store,
@@ -2104,6 +2107,23 @@ mod tests {
         assert_eq!(service.committed_session_sequence(), 1);
         assert_eq!(replay.committed_through_session_sequence, 1);
         assert!(replay.transcript.is_empty());
+    }
+
+    #[test]
+    fn open_rejects_malformed_durable_outbox_before_runtime_startup() {
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_bad_outbox")
+            .with_session_log_root(temp.path());
+        let service = SessionService::create(&options).unwrap();
+        std::fs::write(
+            service.session_dir().join("outbox.jsonl"),
+            "{\"schema\":\"invalid\",\"version\":0}\n",
+        )
+        .unwrap();
+        drop(service);
+
+        assert!(SessionService::open(&options).is_err());
     }
 
     #[test]

@@ -102,6 +102,9 @@
   responses and a monotonic SessionService cursor cache; projection refresh no
   longer replays the session log. `RIF-009-003` is complete and `RIF-009-004`
   recovery/redelivery matrix work is active.
+- Began the `RIF-009-004` restart slice: opening a session now validates durable
+  outbox schema/version, session identity, monotonic commit cursors, source
+  event IDs, and duplicate semantic identities before runtime startup.
 
 ### Release Status
 
