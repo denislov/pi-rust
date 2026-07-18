@@ -2770,6 +2770,49 @@ mod tests {
     }
 
     #[test]
+    fn manifest_failure_reopens_with_outbox_redelivery_evidence() {
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_restart_outbox")
+            .with_session_log_root(temp.path());
+        let mut service = SessionService::create(&options).unwrap();
+        let mut transaction = service.begin_prompt_transaction();
+        let operation_id = transaction.operation_id().to_owned();
+        transaction
+            .record_user_input(vec![PersistedContentBlock::Text {
+                text: "restart evidence".into(),
+            }])
+            .unwrap();
+        service.fail_store_after_for_tests(StoreFailurePoint::UpdateManifest, 0);
+
+        let error = service
+            .commit_prompt_transaction(Some(transaction), operation_id.clone())
+            .unwrap_err();
+        assert!(matches!(error, CodingSessionError::PartialCommit { .. }));
+        service.shutdown_transaction_writer().unwrap();
+        drop(service);
+
+        let mut reopened = SessionService::open(&options).unwrap();
+        let replay = reopened.replay().unwrap();
+        let startup_records = reopened.take_startup_outbox_records();
+
+        assert_eq!(
+            replay.operation_status(&operation_id),
+            Some(OperationReplayStatus::Committed)
+        );
+        assert!(replay.committed_through_session_sequence > 0);
+        assert_eq!(startup_records.len(), 1);
+        assert_eq!(
+            startup_records[0].operation_id.as_deref(),
+            Some(operation_id.as_str())
+        );
+        assert!(
+            startup_records[0].committed_through_session_sequence
+                <= replay.committed_through_session_sequence
+        );
+    }
+
+    #[test]
     fn session_events_record_runtime_generation_references() {
         let temp = tempfile::tempdir().unwrap();
         let options = CodingAgentSessionOptions::new()

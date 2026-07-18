@@ -110,6 +110,9 @@
   suppressed within the runtime.
 - Added the first `RIF-009-004` matrix test covering duplicate suppression,
   retained-gap recovery, replay-through ordering, and current-cursor reconnect.
+- Added a full restart failure case: manifest failure after outbox/fact append,
+  writer shutdown, reopen, replay cursor validation, and startup outbox evidence
+  for redelivery.
 
 ### Release Status
 

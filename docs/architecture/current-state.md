@@ -121,7 +121,8 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   outbox records before runtime startup, and EventService redelivers startup
   records once per runtime by semantic record ID. The first matrix slice covers
   duplicate suppression, retained gaps, replay ordering, and reconnect from the
-  current cursor.
+  current cursor. A manifest-failure -> writer shutdown -> reopen integration
+  test proves durable outbox evidence survives the restart boundary.
 - The current transaction may append facts and then fail a manifest refresh,
   producing partial-commit uncertainty that startup recovery can inspect.
 
