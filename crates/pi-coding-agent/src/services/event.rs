@@ -1580,6 +1580,9 @@ impl EventService {
         session_id: impl Into<String>,
         operation_kind: Option<crate::runtime::control::OperationKind>,
         capability_generation: Option<u64>,
+        attempt_count: u32,
+        last_attempt_at: Option<String>,
+        next_attempt_at: Option<String>,
     ) -> ProductEvent {
         let operation_id = operation_id.into();
         self.publish(
@@ -1591,9 +1594,9 @@ impl EventService {
                 record_version: crate::events::recovery::RECOVERY_RECORD_VERSION,
                 descriptor_revision: crate::runtime::outcome::OPERATION_DESCRIPTOR_REVISION,
                 capability_generation,
-                attempt_count: 0,
-                last_attempt_at: None,
-                next_attempt_at: None,
+                attempt_count,
+                last_attempt_at,
+                next_attempt_at,
             }
             .into_product_draft(),
             ProductEventEmissionContext {

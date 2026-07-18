@@ -97,6 +97,9 @@ impl CodingAgentSession {
                         .operation_kind
                         .and_then(persisted_runtime_operation_kind),
                     marker.capability_generation,
+                    marker.attempt_count,
+                    marker.last_attempt_at,
+                    marker.next_attempt_at,
                 );
         }
     }

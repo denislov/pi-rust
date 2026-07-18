@@ -550,6 +550,80 @@ mod cases {
     }
 
     #[tokio::test]
+    async fn due_recovery_retry_runs_once_on_session_open_without_terminal() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = crate::session::repository::SessionLogStore::new(temp.path());
+        let handle = store
+            .create_session(crate::session::repository::CreateSessionOptions::new(
+                "sess_recovery_due",
+                "2026-07-19T00:00:00Z",
+            ))
+            .unwrap();
+        store
+            .append_events(
+                &handle,
+                &[SessionEventEnvelope::new(
+                    "sess_recovery_due",
+                    "evt_started",
+                    "2026-07-19T00:00:01Z",
+                    SessionEventData::OperationStarted {
+                        operation: crate::session::event::OperationKind::Prompt,
+                        runtime_generation: Default::default(),
+                    },
+                )
+                .with_operation_id("op_recovery_due")],
+            )
+            .unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_recovery_due")
+            .with_session_log_root(temp.path());
+        let mut session = CodingAgentSession::open(options.clone()).await.unwrap();
+        let pending = session.recovery_pending().unwrap().pop().unwrap();
+        let scheduled = session
+            .retry_recovery(
+                crate::runtime::facade::CodingAgentRecoveryRetryRequest::from_pending(&pending)
+                    .with_backoff(),
+            )
+            .unwrap();
+        assert!(scheduled.next_attempt_at.is_some());
+        drop(session);
+
+        tokio::time::sleep(std::time::Duration::from_millis(1_100)).await;
+        let reopened = CodingAgentSession::open(options).await.unwrap();
+        let pending = reopened.recovery_pending().unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].attempt_count, 2);
+        assert!(pending[0].next_attempt_at.is_none());
+        assert!(
+            reopened
+                .runtime_host
+                .event_hub
+                .service
+                .product_events_after(crate::events::ProductEventSequence::default())
+                .unwrap()
+                .iter()
+                .all(|event| event.terminal_status().is_none())
+        );
+
+        let events = store
+            .read_events(&store.open_session_id("sess_recovery_due").unwrap())
+            .unwrap();
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(
+                    event.data,
+                    SessionEventData::OperationRecoveryPending {
+                        attempt_count: 2,
+                        ..
+                    }
+                ))
+                .count(),
+            1
+        );
+    }
+
+    #[tokio::test]
     async fn public_product_event_receiver_maps_internal_product_events() {
         let session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
             .await

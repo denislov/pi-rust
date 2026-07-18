@@ -59,6 +59,9 @@ pub(crate) struct StartupRecoveryMarker {
     pub(crate) capability_generation: Option<u64>,
     pub(crate) record_version: u64,
     pub(crate) descriptor_revision: u16,
+    pub(crate) attempt_count: u32,
+    pub(crate) last_attempt_at: Option<String>,
+    pub(crate) next_attempt_at: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1642,10 +1645,29 @@ impl SessionService {
         let existing_pending = durable_events
             .iter()
             .filter_map(|event| match &event.data {
-                SessionEventData::OperationRecoveryPending { recovery_id, .. } => event
-                    .operation_id
-                    .clone()
-                    .map(|operation_id| (operation_id, recovery_id.clone())),
+                SessionEventData::OperationRecoveryPending {
+                    recovery_id,
+                    record_version,
+                    descriptor_revision,
+                    capability_generation,
+                    attempt_count,
+                    last_attempt_at,
+                    next_attempt_at,
+                    ..
+                } => event.operation_id.clone().map(|operation_id| {
+                    (
+                        operation_id,
+                        (
+                            recovery_id.clone(),
+                            *record_version,
+                            *descriptor_revision,
+                            *capability_generation,
+                            *attempt_count,
+                            last_attempt_at.clone(),
+                            next_attempt_at.clone(),
+                        ),
+                    )
+                }),
                 _ => None,
             })
             .collect::<std::collections::HashMap<_, _>>();
@@ -1668,10 +1690,46 @@ impl SessionService {
                     capability_generation,
                     record_version: RECOVERY_RECORD_VERSION,
                     descriptor_revision: crate::runtime::outcome::OPERATION_DESCRIPTOR_REVISION,
+                    attempt_count: 0,
+                    last_attempt_at: None,
+                    next_attempt_at: None,
                 }
             })
             .collect::<Vec<_>>();
-        let recovery_events = markers
+        let mut retry_markers = existing_pending
+            .iter()
+            .filter_map(|(operation_id, pending)| {
+                let next_attempt_at = pending.6.as_deref()?;
+                if pending.4 >= MAX_RECOVERY_RETRY_ATTEMPTS
+                    || !recovery_retry_is_due(&observed_at, next_attempt_at)
+                {
+                    return None;
+                }
+                let (operation_kind, _) = operation_facts.get(operation_id).cloned().unwrap_or((
+                    OperationKind::Other {
+                        name: "unknown".into(),
+                    },
+                    None,
+                ));
+                Some(StartupRecoveryMarker {
+                    operation_id: operation_id.clone(),
+                    recovery_id: pending.0.clone(),
+                    reason: "automatic recovery retry inspected durable facts and outbox"
+                        .to_owned(),
+                    session_id: session_id.clone(),
+                    operation_kind: Some(operation_kind),
+                    capability_generation: pending.3,
+                    record_version: pending.1,
+                    descriptor_revision: pending.2,
+                    attempt_count: pending.4 + 1,
+                    last_attempt_at: Some(observed_at.clone()),
+                    next_attempt_at: None,
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut all_markers = markers;
+        all_markers.append(&mut retry_markers);
+        let recovery_events = all_markers
             .iter()
             .map(|marker| {
                 SessionEventEnvelope::new(
@@ -1684,23 +1742,30 @@ impl SessionService {
                         record_version: marker.record_version,
                         descriptor_revision: marker.descriptor_revision,
                         capability_generation: marker.capability_generation,
-                        attempt_count: 0,
-                        last_attempt_at: None,
-                        next_attempt_at: None,
+                        attempt_count: marker.attempt_count,
+                        last_attempt_at: marker.last_attempt_at.clone(),
+                        next_attempt_at: marker.next_attempt_at.clone(),
                     },
                 )
                 .with_operation_id(marker.operation_id.clone())
             })
             .collect::<Vec<_>>();
-        let recovery_outbox = markers
+        let recovery_outbox = all_markers
             .iter()
             .zip(&recovery_events)
             .map(|(marker, event)| {
                 DurableOutboxRecordCandidate::new(
-                    format!(
-                        "{}/{}/recovery_pending",
-                        marker.session_id, marker.operation_id
-                    ),
+                    if marker.attempt_count == 0 {
+                        format!(
+                            "{}/{}/recovery_pending",
+                            marker.session_id, marker.operation_id
+                        )
+                    } else {
+                        format!(
+                            "{}/{}/recovery_pending/retry/{}",
+                            marker.session_id, marker.operation_id, marker.attempt_count
+                        )
+                    },
                     marker.session_id.clone(),
                     Some(marker.operation_id.clone()),
                     vec![event.event_id.clone()],
@@ -1713,9 +1778,9 @@ impl SessionService {
                         record_version: marker.record_version,
                         descriptor_revision: marker.descriptor_revision,
                         capability_generation: marker.capability_generation,
-                        attempt_count: 0,
-                        last_attempt_at: None,
-                        next_attempt_at: None,
+                        attempt_count: marker.attempt_count,
+                        last_attempt_at: marker.last_attempt_at.clone(),
+                        next_attempt_at: marker.next_attempt_at.clone(),
                     }
                     .into_product_draft(),
                 )
@@ -1751,7 +1816,7 @@ impl SessionService {
             ManifestPatch::new().updated_at(observed_at),
             None,
         )?;
-        self.startup_recovery_markers.extend(markers);
+        self.startup_recovery_markers.extend(all_markers);
         Ok(())
     }
 
@@ -2070,6 +2135,17 @@ fn recovery_next_attempt_at(
         .map_err(|error| CodingSessionError::Session {
             message: format!("recovery retry timestamp formatting failed: {error}"),
         })
+}
+
+fn recovery_retry_is_due(now: &str, next_attempt_at: &str) -> bool {
+    let format = &time::format_description::well_known::Rfc3339;
+    match (
+        time::OffsetDateTime::parse(now, format),
+        time::OffsetDateTime::parse(next_attempt_at, format),
+    ) {
+        (Ok(now), Ok(next)) => next <= now,
+        _ => false,
+    }
 }
 
 fn session_write_outbox_intent(

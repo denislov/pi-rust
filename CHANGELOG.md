@@ -132,7 +132,9 @@
   appends a pending snapshot and Recovery outbox record with durable attempt
   count and timestamps, caps attempts at three, and never reruns an external
   side effect. `with_backoff()` records deterministic `+1s`, `+2s`, and `+4s`
-  next-attempt timestamps; automatic due-time execution remains pending.
+  next-attempt timestamps. Session startup executes one elapsed inspection
+  attempt atomically, preserves the three-attempt cap, and never reruns external
+  side effects.
 - Began `RIF-002`: `OperationSupervisor` now owns typed immutable
   `FinalizationDecision` creation for every dispatch path. Decisions freeze the
   admitted identity, lineage, descriptor, capability generation, terminal
