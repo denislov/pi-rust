@@ -194,17 +194,20 @@
   success/failure/abort now use the same coordinator path and restart as typed
   PluginLoad terminals. SelfHealingEdit success/failure/abort now follow the
   same commit-before-publication and typed restart path; cancellation arriving
-  after Flow success no longer drops its session transaction. Remaining
-  operation families still need the same terminal draft migration. Standalone
+  after Flow success no longer drops its session transaction. BranchSummary is
+  intentionally outcome-acknowledged, while SelfHealingEdit uses typed terminal
+  evidence. Standalone
   AgentInvocation/AgentTeam roots now publish terminal ProductEvents after
   supervisor finalization while delegated child ownership remains explicit.
   Added a read-only `recovery_pending()` session inspection surface that reports
   stable recovery IDs and persisted operation kinds without synthesizing a
-  terminal outcome. Retry/resolve operator controls remain pending.
+  terminal outcome. Authenticated inspect/retry/resolve operator controls now
+  persist evidence and audit authority.
 
 ### Release Status
 
-- `RIF-001`, `RIF-005`, `RIF-006`, `RIF-007`, and `RIF-008` are complete.
+- `RIF-001`, `RIF-003`, `RIF-005`, `RIF-006`, `RIF-007`, `RIF-008`, and
+  `RIF-010` are complete. `RIF-004` and `RIF-009` remain in progress.
   Workspace packages remain at `0.3.1` until all `0.4.0` implementation, debt,
   and release gates close.
 
