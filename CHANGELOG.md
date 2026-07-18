@@ -29,6 +29,9 @@
 - Closed projection root-invention debt: unknown local events no longer create
   running operation roots without admitted kind, terminal evidence, or explicit
   root identity.
+- Closed durable publication/snapshot consistency debt: session commit, outbox
+  cursor, manifest-failure reopen, and startup redelivery now have explicit
+  cross-checks in the session matrix.
 
 - Added a typed `RecoveryPending` admission rejection. `SessionWriteRoot`
   operations now inspect durable recovery evidence before

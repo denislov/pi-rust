@@ -131,6 +131,9 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   bypass tracked by `RIF-D002`.
 - Client operation projection now fails closed for unknown local events; a new
   running root requires explicit admission/root evidence or terminal evidence.
+- Durable session commit tests cross-check the final event cursor, replay cursor,
+  manifest snapshot, and outbox cursor, including manifest-failure reopen and
+  startup redelivery evidence.
 
 ## Events, Sessions, And Clients
 
