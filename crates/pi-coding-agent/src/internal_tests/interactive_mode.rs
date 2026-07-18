@@ -870,7 +870,9 @@ fn collect_jsonl_files_recursive(root: &std::path::Path, out: &mut Vec<std::path
         let path = entry.path();
         if path.is_dir() {
             collect_jsonl_files_recursive(&path, out);
-        } else if path.extension().and_then(|ext| ext.to_str()) == Some("jsonl") {
+        } else if path.extension().and_then(|ext| ext.to_str()) == Some("jsonl")
+            && path.file_name().and_then(|name| name.to_str()) != Some("outbox.jsonl")
+        {
             out.push(path);
         }
     }

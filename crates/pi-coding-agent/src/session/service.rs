@@ -5,6 +5,7 @@ use pi_agent_core::api::transcript::{SessionEntry, SessionTreeNode, StoredAgentM
 use pi_ai::api::conversation::ContentBlock;
 
 use crate::events::CodingAgentSessionWriteFailureStatus;
+use crate::events::outbox::{DurableOutboxIntent, DurableOutboxRecordKind};
 use crate::events::session::SessionWriteEvent;
 use crate::operations::export::flow::{ExportContext, ExportOptions};
 use crate::operations::prompt::context::{
@@ -647,11 +648,15 @@ impl SessionService {
         let mut events = vec![EventService::session_write_pending_event(
             operation_id.clone(),
         )];
-        transaction.commit(new_leaf_id.clone())?;
-        events.push(EventService::session_write_committed_event(
-            operation_id,
-            session_id.clone(),
-        ));
+        let committed =
+            EventService::session_write_committed_event(operation_id.clone(), session_id.clone());
+        let outbox_intent = DurableOutboxIntent::new(
+            format!("{session_id}/{operation_id}/session_write_committed"),
+            DurableOutboxRecordKind::SessionWrite,
+            committed.clone().into_product_draft(),
+        );
+        transaction.commit_with_outbox(new_leaf_id.clone(), outbox_intent)?;
+        events.push(committed);
         Ok(FinalizedSessionWrite {
             events,
             session_id: Some(session_id),
@@ -2026,6 +2031,7 @@ mod tests {
         assert_eq!(service.session_id(), "sess_test");
         assert!(service.session_dir().join("session.json").is_file());
         assert!(service.session_dir().join("events.jsonl").is_file());
+        assert!(service.session_dir().join("outbox.jsonl").is_file());
 
         let replay = service.replay().unwrap();
         assert_eq!(replay.session_id, "sess_test");
@@ -2579,6 +2585,15 @@ mod tests {
                 .as_deref(),
             replay.active_leaf_id.as_deref()
         );
+        let outbox = std::fs::read_to_string(service.session_dir().join("outbox.jsonl")).unwrap();
+        let record: crate::events::outbox::DurableOutboxRecord =
+            serde_json::from_str(outbox.lines().next().unwrap()).unwrap();
+        assert_eq!(
+            record.record_id,
+            format!("sess_commit_prompt/{operation_id}/session_write_committed")
+        );
+        assert_eq!(record.operation_id.as_deref(), Some(operation_id.as_str()));
+        assert!(!record.source_event_ids.is_empty());
     }
 
     #[test]

@@ -83,6 +83,12 @@
   and structured product draft payload. `RIF-009-002` is now active; the
   retained EventService window remains explicitly process-local replay state,
   not durable outbox proof.
+- Began `RIF-009-002`: session manifests now provision `outbox.jsonl`, writer
+  mutation batches accept typed outbox records, and prompt-success commits write
+  a `SessionWriteCommitted` draft correlated to source session event IDs.
+  Outbox intent is written before session facts under one append lock, so a
+  later fact failure returns `PartialCommit` while leaving restart-visible
+  recovery evidence.
 
 ### Release Status
 

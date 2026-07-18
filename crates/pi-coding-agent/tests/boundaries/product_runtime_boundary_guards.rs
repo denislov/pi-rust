@@ -52,6 +52,7 @@ fn session_store_failure_controls_remain_test_only() {
         "WriteManifest",
         "CreateEventLog",
         "AppendEvents",
+        "AppendOutbox",
         "UpdateManifest",
         "RemoveSession",
     ] {
@@ -2440,6 +2441,8 @@ fn turn_transaction_stages_through_typed_writer_commands_without_repository_hand
         "let mut handle = handle",
         "execute_writer_command(&store, &mut handle, envelope.command)",
         "refresh_writer_handle(store, handle)",
+        "outbox_records: Vec<DurableOutboxRecord>",
+        "append_events_and_outbox(handle, &events, &outbox_records)",
     ] {
         assert!(
             transaction.contains(transport),

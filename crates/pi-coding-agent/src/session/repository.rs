@@ -7,10 +7,12 @@ use std::sync::{Arc, Mutex};
 use serde_json::Value;
 
 use super::manifest::{
-    EVENT_SCHEMA, EVENT_VERSION, SESSION_EVENT_LOG_FILE, SESSION_MANIFEST_FILE, SESSION_SCHEMA,
-    SESSION_VERSION, SessionManifest, default_agent_profile_id,
+    EVENT_SCHEMA, EVENT_VERSION, SESSION_EVENT_LOG_FILE, SESSION_MANIFEST_FILE,
+    SESSION_OUTBOX_LOG_FILE, SESSION_SCHEMA, SESSION_VERSION, SessionManifest,
+    default_agent_profile_id,
 };
 use super::replay::{SessionReplay, fold_events};
+use crate::events::outbox::DurableOutboxRecord;
 use crate::runtime::facade::{CodingSessionError, ProfileId};
 use crate::session::event::SessionEventEnvelope;
 
@@ -30,6 +32,7 @@ pub(crate) enum StoreFailurePoint {
     WriteManifest,
     CreateEventLog,
     AppendEvents,
+    AppendOutbox,
     UpdateManifest,
     RemoveSession,
 }
@@ -42,6 +45,7 @@ struct StoreFailureState {
     write_manifest: Option<usize>,
     create_event_log: Option<usize>,
     append_events: Option<usize>,
+    append_outbox: Option<usize>,
     update_manifest: Option<usize>,
     remove_session: Option<usize>,
 }
@@ -122,6 +126,7 @@ impl SessionLogStore {
             StoreFailurePoint::WriteManifest => &mut failures.write_manifest,
             StoreFailurePoint::CreateEventLog => &mut failures.create_event_log,
             StoreFailurePoint::AppendEvents => &mut failures.append_events,
+            StoreFailurePoint::AppendOutbox => &mut failures.append_outbox,
             StoreFailurePoint::UpdateManifest => &mut failures.update_manifest,
             StoreFailurePoint::RemoveSession => &mut failures.remove_session,
         };
@@ -137,6 +142,7 @@ impl SessionLogStore {
             StoreFailurePoint::WriteManifest => &mut failures.write_manifest,
             StoreFailurePoint::CreateEventLog => &mut failures.create_event_log,
             StoreFailurePoint::AppendEvents => &mut failures.append_events,
+            StoreFailurePoint::AppendOutbox => &mut failures.append_outbox,
             StoreFailurePoint::UpdateManifest => &mut failures.update_manifest,
             StoreFailurePoint::RemoveSession => &mut failures.remove_session,
         };
@@ -202,7 +208,8 @@ impl SessionLogStore {
             write_manifest(&session_dir, &manifest)?;
             #[cfg(test)]
             self.fail_if_injected(StoreFailurePoint::CreateEventLog)?;
-            create_empty_event_log(&session_dir)
+            create_empty_event_log(&session_dir)?;
+            create_empty_outbox_log(&session_dir)
         })();
         if let Err(create_error) = initialization {
             return Err(match self.remove_created_session_dir(&session_dir) {
@@ -233,6 +240,10 @@ impl SessionLogStore {
                 "session event log is missing: {}",
                 event_log_path.display()
             )));
+        }
+        let outbox_path = outbox_log_path(&session_dir, &manifest)?;
+        if !outbox_path.is_file() {
+            create_empty_outbox_log(&session_dir)?;
         }
 
         Ok(SessionHandle {
@@ -315,6 +326,25 @@ impl SessionLogStore {
         events: &[SessionEventEnvelope],
     ) -> Result<(), CodingSessionError> {
         let _append_guard = self.append_lock.lock().unwrap();
+        self.append_events_locked(handle, events)
+    }
+
+    pub(crate) fn append_events_and_outbox(
+        &self,
+        handle: &SessionHandle,
+        events: &[SessionEventEnvelope],
+        records: &[DurableOutboxRecord],
+    ) -> Result<(), CodingSessionError> {
+        let _append_guard = self.append_lock.lock().unwrap();
+        self.append_outbox_locked(handle, records)?;
+        self.append_events_locked(handle, events)
+    }
+
+    fn append_events_locked(
+        &self,
+        handle: &SessionHandle,
+        events: &[SessionEventEnvelope],
+    ) -> Result<(), CodingSessionError> {
         #[cfg(test)]
         self.fail_if_injected(StoreFailurePoint::AppendEvents)?;
         let event_log_path = event_log_path(&handle.session_dir, &handle.manifest)?;
@@ -348,6 +378,48 @@ impl SessionLogStore {
             session_error(format!(
                 "failed to flush session event log {}: {error}",
                 event_log_path.display()
+            ))
+        })
+    }
+
+    fn append_outbox_locked(
+        &self,
+        handle: &SessionHandle,
+        records: &[DurableOutboxRecord],
+    ) -> Result<(), CodingSessionError> {
+        if records.is_empty() {
+            return Ok(());
+        }
+        #[cfg(test)]
+        self.fail_if_injected(StoreFailurePoint::AppendOutbox)?;
+        let outbox_path = outbox_log_path(&handle.session_dir, &handle.manifest)?;
+        let file = OpenOptions::new()
+            .append(true)
+            .open(&outbox_path)
+            .map_err(|error| {
+                session_error(format!(
+                    "failed to open session outbox {}: {error}",
+                    outbox_path.display()
+                ))
+            })?;
+        let mut writer = BufWriter::new(file);
+        for record in records {
+            serde_json::to_writer(&mut writer, record).map_err(|error| {
+                session_error(format!(
+                    "failed to serialize session outbox record: {error}"
+                ))
+            })?;
+            writer.write_all(b"\n").map_err(|error| {
+                session_error(format!(
+                    "failed to append session outbox record to {}: {error}",
+                    outbox_path.display()
+                ))
+            })?;
+        }
+        writer.flush().map_err(|error| {
+            session_error(format!(
+                "failed to flush session outbox {}: {error}",
+                outbox_path.display()
             ))
         })
     }
@@ -690,6 +762,16 @@ fn create_empty_event_log(session_dir: &Path) -> Result<(), CodingSessionError> 
         })
 }
 
+fn create_empty_outbox_log(session_dir: &Path) -> Result<(), CodingSessionError> {
+    let outbox_path = session_dir.join(SESSION_OUTBOX_LOG_FILE);
+    File::create_new(&outbox_path).map(|_| ()).map_err(|error| {
+        session_error(format!(
+            "failed to create session outbox {}: {error}",
+            outbox_path.display()
+        ))
+    })
+}
+
 fn validate_manifest(manifest: &SessionManifest) -> Result<(), CodingSessionError> {
     if manifest.schema != SESSION_SCHEMA {
         return Err(session_error(format!(
@@ -704,6 +786,7 @@ fn validate_manifest(manifest: &SessionManifest) -> Result<(), CodingSessionErro
         )));
     }
     validate_relative_manifest_path(&manifest.event_log)?;
+    validate_relative_manifest_path(&manifest.outbox_log)?;
     Ok(())
 }
 
@@ -735,6 +818,14 @@ fn event_log_path(
 ) -> Result<PathBuf, CodingSessionError> {
     validate_relative_manifest_path(&manifest.event_log)?;
     Ok(session_dir.join(&manifest.event_log))
+}
+
+fn outbox_log_path(
+    session_dir: &Path,
+    manifest: &SessionManifest,
+) -> Result<PathBuf, CodingSessionError> {
+    validate_relative_manifest_path(&manifest.outbox_log)?;
+    Ok(session_dir.join(&manifest.outbox_log))
 }
 
 fn next_session_sequence(

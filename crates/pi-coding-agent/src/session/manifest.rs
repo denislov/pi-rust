@@ -8,6 +8,7 @@ pub(crate) const EVENT_SCHEMA: &str = "pi-rust.session.event";
 pub(crate) const EVENT_VERSION: u32 = 2;
 pub(crate) const SESSION_MANIFEST_FILE: &str = "session.json";
 pub(crate) const SESSION_EVENT_LOG_FILE: &str = "events.jsonl";
+pub(crate) const SESSION_OUTBOX_LOG_FILE: &str = "outbox.jsonl";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct SessionManifest {
@@ -23,6 +24,8 @@ pub(crate) struct SessionManifest {
     #[serde(default = "default_agent_profile_id")]
     pub default_agent_profile_id: ProfileId,
     pub event_log: String,
+    #[serde(default = "default_outbox_log_file")]
+    pub outbox_log: String,
 }
 
 impl SessionManifest {
@@ -38,6 +41,7 @@ impl SessionManifest {
             active_leaf_id: None,
             default_agent_profile_id: default_agent_profile_id(),
             event_log: SESSION_EVENT_LOG_FILE.into(),
+            outbox_log: SESSION_OUTBOX_LOG_FILE.into(),
         }
     }
 
@@ -63,6 +67,10 @@ pub(crate) fn default_agent_profile_id() -> ProfileId {
     ProfileId::from("default")
 }
 
+fn default_outbox_log_file() -> String {
+    SESSION_OUTBOX_LOG_FILE.into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -82,6 +90,7 @@ mod tests {
         assert_eq!(value["active_leaf_id"], "leaf_1");
         assert_eq!(value["default_agent_profile_id"], "default");
         assert_eq!(value["event_log"], SESSION_EVENT_LOG_FILE);
+        assert_eq!(value["outbox_log"], SESSION_OUTBOX_LOG_FILE);
         assert!(
             value["event_log"]
                 .as_str()

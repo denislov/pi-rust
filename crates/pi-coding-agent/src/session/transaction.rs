@@ -12,6 +12,7 @@ use serde_json::Value;
 use super::id::{Clock, IdGenerator};
 use super::manifest::SessionManifest;
 use super::repository::{ManifestPatch, SessionHandle, SessionLogStore};
+use crate::events::outbox::{DurableOutboxIntent, DurableOutboxRecord};
 use crate::operations::self_healing_edit::flow::{
     SelfHealingEditOutcome, SelfHealingEditRepairAttempt,
 };
@@ -76,11 +77,13 @@ enum SessionTransactionWriterCommand {
     },
     Finalize {
         events: Vec<SessionEventEnvelope>,
+        outbox_records: Vec<DurableOutboxRecord>,
         updated_at: String,
         active_leaf_id: Option<String>,
     },
     CommitSessionMutation {
         events: Vec<SessionEventEnvelope>,
+        outbox_records: Vec<DurableOutboxRecord>,
         manifest_patch: ManifestPatch,
         operation_id: Option<String>,
     },
@@ -195,8 +198,19 @@ impl SessionTransactionWriter {
         manifest_patch: ManifestPatch,
         operation_id: Option<String>,
     ) -> Result<(), CodingSessionError> {
+        self.commit_session_mutation_with_outbox(events, Vec::new(), manifest_patch, operation_id)
+    }
+
+    pub(crate) fn commit_session_mutation_with_outbox(
+        &self,
+        events: Vec<SessionEventEnvelope>,
+        outbox_records: Vec<DurableOutboxRecord>,
+        manifest_patch: ManifestPatch,
+        operation_id: Option<String>,
+    ) -> Result<(), CodingSessionError> {
         self.execute(SessionTransactionWriterCommand::CommitSessionMutation {
             events,
+            outbox_records,
             manifest_patch,
             operation_id,
         })
@@ -355,10 +369,11 @@ fn execute_writer_command(
         }
         SessionTransactionWriterCommand::Finalize {
             events,
+            outbox_records,
             updated_at,
             active_leaf_id,
         } => {
-            store.append_events(handle, &events)?;
+            store.append_events_and_outbox(handle, &events, &outbox_records)?;
             if active_leaf_id.is_some() {
                 store.update_manifest(
                     handle,
@@ -372,11 +387,16 @@ fn execute_writer_command(
         }
         SessionTransactionWriterCommand::CommitSessionMutation {
             events,
+            outbox_records,
             manifest_patch,
             operation_id,
         } => {
-            if !events.is_empty() {
+            if outbox_records.is_empty() {
                 store.append_events(handle, &events)?;
+            } else {
+                store
+                    .append_events_and_outbox(handle, &events, &outbox_records)
+                    .map_err(|error| mutation_commit_error(operation_id.as_deref(), error))?;
             }
             store
                 .update_manifest(handle, manifest_patch)
@@ -853,7 +873,37 @@ where
         self.push_event(SessionEventData::OperationCommitted {
             new_leaf_id: new_leaf_id.clone(),
         });
-        self.finalize_pending(new_leaf_id)?;
+        self.finalize_pending(new_leaf_id, Vec::new())?;
+        self.state = TransactionState::Committed;
+        Ok(())
+    }
+
+    pub(crate) fn commit_with_outbox(
+        &mut self,
+        new_leaf_id: Option<String>,
+        intent: DurableOutboxIntent,
+    ) -> Result<(), CodingSessionError> {
+        self.ensure_open()?;
+        self.push_event(SessionEventData::OperationCommitted {
+            new_leaf_id: new_leaf_id.clone(),
+        });
+        let source_event_ids = self
+            .pending_events
+            .iter()
+            .map(|event| event.event_id.clone())
+            .collect();
+        let record = DurableOutboxRecord::new(
+            intent.record_id,
+            self.session_id.clone(),
+            Some(self.operation_id.clone()),
+            source_event_ids,
+            intent.kind,
+            intent.draft,
+        )
+        .map_err(|message| CodingSessionError::Session {
+            message: message.into(),
+        })?;
+        self.finalize_pending(new_leaf_id, vec![record])?;
         self.state = TransactionState::Committed;
         Ok(())
     }
@@ -868,7 +918,7 @@ where
         let reason = reason.into();
         self.cancel_open_lifecycle_events(&reason);
         self.push_event(SessionEventData::OperationAborted { reason });
-        self.finalize_pending(None)?;
+        self.finalize_pending(None, Vec::new())?;
         self.state = TransactionState::Aborted;
         Ok(())
     }
@@ -890,7 +940,7 @@ where
             error_code,
             message,
         });
-        self.finalize_pending(None)?;
+        self.finalize_pending(None, Vec::new())?;
         self.state = TransactionState::Failed;
         Ok(())
     }
@@ -925,11 +975,13 @@ where
     fn finalize_pending(
         &mut self,
         active_leaf_id: Option<String>,
+        outbox_records: Vec<DurableOutboxRecord>,
     ) -> Result<(), CodingSessionError> {
         if let Err(error) = self
             .writer
             .execute(SessionTransactionWriterCommand::Finalize {
                 events: self.pending_events.clone(),
+                outbox_records,
                 updated_at: self.clock.now_rfc3339(),
                 active_leaf_id,
             })
@@ -1022,12 +1074,13 @@ fn runtime_generation_for_operation(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::events::outbox::DurableOutboxRecordKind;
     use crate::operations::self_healing_edit::flow::{
         SelfHealingEditCheckOutput, SelfHealingEditDiagnostic, SelfHealingEditOutcome,
         SelfHealingEditRepairAttempt, SelfHealingEditReplacement,
     };
     use crate::session::id::{DeterministicIdGenerator, FixedClock};
-    use crate::session::repository::{CreateSessionOptions, SessionLogStore};
+    use crate::session::repository::{CreateSessionOptions, SessionLogStore, StoreFailurePoint};
 
     fn setup() -> (tempfile::TempDir, SessionLogStore, SessionHandle) {
         let temp = tempfile::tempdir().unwrap();
@@ -1113,6 +1166,115 @@ mod tests {
         writer_two.append_checkpoint_events(Vec::new()).unwrap();
 
         release_sender.send(()).unwrap();
+    }
+
+    fn outbox_record_for_tests(operation_id: &str, source_event_id: &str) -> DurableOutboxRecord {
+        DurableOutboxRecord::new(
+            format!("sess_tx/{operation_id}/operation_started"),
+            "sess_tx",
+            Some(operation_id.into()),
+            vec![source_event_id.into()],
+            DurableOutboxRecordKind::SessionWrite,
+            crate::events::emission::ProductEventDraft {
+                event: crate::events::CodingAgentProductEventKind::Diagnostic(
+                    crate::events::CodingAgentDiagnosticProductEvent::Diagnostic {
+                        operation_id: Some(operation_id.into()),
+                        message: "outbox test".into(),
+                    },
+                ),
+                operation_id: Some(operation_id.into()),
+                session_id: Some("sess_tx".into()),
+                terminal_status: None,
+                durability: crate::events::CodingAgentProductEventDurability::Durable {
+                    session_id: "sess_tx".into(),
+                },
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn writer_batch_persists_session_facts_and_outbox_records_together() {
+        let (_temp, store, handle) = setup();
+        let event_path = handle.event_log_path().unwrap();
+        let outbox_path = handle.session_dir().join(&handle.manifest().outbox_log);
+        let writer = SessionTransactionWriter::new(store, handle);
+        let event = SessionEventEnvelope::new(
+            "sess_tx",
+            "evt_outbox_operation_started",
+            "2026-06-29T00:00:01Z",
+            SessionEventData::OperationStarted {
+                operation: OperationKind::Prompt,
+                runtime_generation: Default::default(),
+            },
+        )
+        .with_operation_id("op_outbox");
+
+        writer
+            .commit_session_mutation_with_outbox(
+                vec![event],
+                vec![outbox_record_for_tests(
+                    "op_outbox",
+                    "evt_outbox_operation_started",
+                )],
+                ManifestPatch::new().updated_at("2026-06-29T00:00:02Z"),
+                Some("op_outbox".into()),
+            )
+            .unwrap();
+
+        assert!(
+            std::fs::read_to_string(event_path)
+                .unwrap()
+                .contains("evt_outbox_operation_started")
+        );
+        assert!(
+            std::fs::read_to_string(outbox_path)
+                .unwrap()
+                .contains("sess_tx/op_outbox/operation_started")
+        );
+    }
+
+    #[test]
+    fn session_fact_failure_leaves_durable_outbox_recovery_evidence() {
+        let (_temp, store, handle) = setup();
+        let event_path = handle.event_log_path().unwrap();
+        let outbox_path = handle.session_dir().join(&handle.manifest().outbox_log);
+        store.fail_after(StoreFailurePoint::AppendEvents, 0);
+        let writer = SessionTransactionWriter::new(store, handle);
+        let event = SessionEventEnvelope::new(
+            "sess_tx",
+            "evt_outbox_uncertain",
+            "2026-06-29T00:00:01Z",
+            SessionEventData::OperationStarted {
+                operation: OperationKind::Prompt,
+                runtime_generation: Default::default(),
+            },
+        )
+        .with_operation_id("op_outbox_uncertain");
+
+        let error = writer
+            .commit_session_mutation_with_outbox(
+                vec![event],
+                vec![outbox_record_for_tests(
+                    "op_outbox_uncertain",
+                    "evt_outbox_uncertain",
+                )],
+                ManifestPatch::new().updated_at("2026-06-29T00:00:02Z"),
+                Some("op_outbox_uncertain".into()),
+            )
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            CodingSessionError::PartialCommit { operation_id, .. }
+                if operation_id == "op_outbox_uncertain"
+        ));
+        assert!(std::fs::read_to_string(event_path).unwrap().is_empty());
+        assert!(
+            std::fs::read_to_string(outbox_path)
+                .unwrap()
+                .contains("sess_tx/op_outbox_uncertain/operation_started")
+        );
     }
 
     #[test]

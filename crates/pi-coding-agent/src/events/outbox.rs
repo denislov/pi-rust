@@ -1,5 +1,3 @@
-#![allow(dead_code)] // RIF-009-002 consumes this contract in the session writer batch.
-
 use serde::{Deserialize, Serialize};
 
 use super::emission::ProductEventDraft;
@@ -15,6 +13,27 @@ pub enum DurableOutboxRecordKind {
     Recovery,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DurableOutboxIntent {
+    pub(crate) record_id: String,
+    pub(crate) kind: DurableOutboxRecordKind,
+    pub(crate) draft: ProductEventDraft,
+}
+
+impl DurableOutboxIntent {
+    pub(crate) fn new(
+        record_id: impl Into<String>,
+        kind: DurableOutboxRecordKind,
+        draft: ProductEventDraft,
+    ) -> Self {
+        Self {
+            record_id: record_id.into(),
+            kind,
+            draft,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DurableOutboxRecord {
     pub schema: String,
@@ -22,6 +41,7 @@ pub struct DurableOutboxRecord {
     pub record_id: String,
     pub session_id: String,
     pub operation_id: Option<String>,
+    pub source_event_ids: Vec<String>,
     pub kind: DurableOutboxRecordKind,
     pub draft: ProductEventDraft,
 }
@@ -31,6 +51,7 @@ impl DurableOutboxRecord {
         record_id: impl Into<String>,
         session_id: impl Into<String>,
         operation_id: Option<String>,
+        source_event_ids: Vec<String>,
         kind: DurableOutboxRecordKind,
         draft: ProductEventDraft,
     ) -> Result<Self, &'static str> {
@@ -42,19 +63,23 @@ impl DurableOutboxRecord {
         if session_id.trim().is_empty() {
             return Err("outbox session id must not be empty");
         }
+        if source_event_ids.is_empty()
+            || source_event_ids
+                .iter()
+                .any(|event_id| event_id.trim().is_empty())
+        {
+            return Err("outbox source event ids must not be empty");
+        }
         Ok(Self {
             schema: OUTBOX_SCHEMA.into(),
             version: OUTBOX_VERSION,
             record_id,
             session_id,
             operation_id,
+            source_event_ids,
             kind,
             draft,
         })
-    }
-
-    pub fn semantic_id(&self) -> &str {
-        &self.record_id
     }
 }
 
@@ -86,6 +111,7 @@ mod tests {
             "session-outbox/op-outbox/diagnostic/outbox-test",
             "session-outbox",
             Some("op-outbox".into()),
+            vec!["evt-outbox".into()],
             DurableOutboxRecordKind::SessionWrite,
             draft(),
         )
@@ -94,7 +120,7 @@ mod tests {
         assert_eq!(record.schema, OUTBOX_SCHEMA);
         assert_eq!(record.version, OUTBOX_VERSION);
         assert_eq!(
-            record.semantic_id(),
+            record.record_id,
             "session-outbox/op-outbox/diagnostic/outbox-test"
         );
     }
@@ -106,6 +132,7 @@ mod tests {
                 "",
                 "session-outbox",
                 None,
+                vec!["evt-outbox".into()],
                 DurableOutboxRecordKind::Recovery,
                 draft(),
             )
@@ -116,6 +143,18 @@ mod tests {
                 "record",
                 "",
                 None,
+                vec!["evt-outbox".into()],
+                DurableOutboxRecordKind::Recovery,
+                draft(),
+            )
+            .is_err()
+        );
+        assert!(
+            DurableOutboxRecord::new(
+                "record",
+                "session-outbox",
+                None,
+                Vec::new(),
                 DurableOutboxRecordKind::Recovery,
                 draft(),
             )
@@ -129,6 +168,7 @@ mod tests {
             "record-1",
             "session-outbox",
             None,
+            vec!["evt-outbox".into()],
             DurableOutboxRecordKind::Recovery,
             draft(),
         )
