@@ -291,10 +291,6 @@ impl ManualCompactionContext {
         self.transaction.take()
     }
 
-    pub(crate) fn take_failure_error(&mut self) -> Option<CodingSessionError> {
-        self.failure_error.take()
-    }
-
     pub(crate) fn finish_success(&self) -> Result<ManualCompactionOutcome, CodingSessionError> {
         Ok(ManualCompactionOutcome {
             summary: self
@@ -484,7 +480,20 @@ impl ManualCompactionContext {
 }
 
 pub(crate) struct ManualCompactionFlow {
+    #[allow(dead_code)]
     flow: Flow<ManualCompactionContext>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ManualCompactionStep {
+    Start,
+    LoadReplay,
+    SelectRange,
+    PrepareSummary,
+    RunSummary,
+    RecordEvents,
+    Finalize,
+    EmitCompletion,
 }
 
 impl ManualCompactionFlow {
@@ -506,6 +515,7 @@ impl ManualCompactionFlow {
         self.flow.run(ctx).await.map_err(flow_error)
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn run_with_options(
         &self,
         ctx: &mut ManualCompactionContext,
@@ -515,6 +525,51 @@ impl ManualCompactionFlow {
             .run_with_options(ctx, options)
             .await
             .map_err(flow_error)
+    }
+
+    pub(crate) async fn run_typed(
+        &self,
+        ctx: &mut ManualCompactionContext,
+    ) -> Result<ManualCompactionOutcome, CodingSessionError> {
+        let mut step = ManualCompactionStep::Start;
+        loop {
+            let result = match step {
+                ManualCompactionStep::Start => ctx.start_compaction(),
+                ManualCompactionStep::LoadReplay => ctx.load_session_replay(),
+                ManualCompactionStep::SelectRange => ctx.select_compaction_range(),
+                ManualCompactionStep::PrepareSummary => ctx.prepare_summary_context(),
+                ManualCompactionStep::RunSummary => ctx.run_summary_model().await,
+                ManualCompactionStep::RecordEvents => ctx.record_compaction_events(),
+                ManualCompactionStep::Finalize => ctx.finalize_compaction(),
+                ManualCompactionStep::EmitCompletion => {
+                    ctx.emit_completion()?;
+                    return ctx.finish_success();
+                }
+            };
+            if let Err(error) = result {
+                let message = ctx.fail(error.clone());
+                return Err(CodingSessionError::Flow { message });
+            }
+            if ctx
+                .options()
+                .cancellation()
+                .is_some_and(|token| token.is_cancelled())
+            {
+                let error = CodingSessionError::Cancelled;
+                ctx.fail(error.clone());
+                return Err(error);
+            }
+            step = match step {
+                ManualCompactionStep::Start => ManualCompactionStep::LoadReplay,
+                ManualCompactionStep::LoadReplay => ManualCompactionStep::SelectRange,
+                ManualCompactionStep::SelectRange => ManualCompactionStep::PrepareSummary,
+                ManualCompactionStep::PrepareSummary => ManualCompactionStep::RunSummary,
+                ManualCompactionStep::RunSummary => ManualCompactionStep::RecordEvents,
+                ManualCompactionStep::RecordEvents => ManualCompactionStep::Finalize,
+                ManualCompactionStep::Finalize => ManualCompactionStep::EmitCompletion,
+                ManualCompactionStep::EmitCompletion => unreachable!(),
+            };
+        }
     }
 }
 
@@ -622,7 +677,7 @@ mod tests {
         );
 
         let error = crate::services::flow::FlowService::new()
-            .run_manual_compaction_graph(&mut context)
+            .run_manual_compaction(&mut context)
             .await
             .unwrap_err();
         assert_eq!(error, CodingSessionError::Cancelled);

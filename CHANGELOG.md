@@ -23,6 +23,9 @@
 - Completed `AWC-002`: the production Agent turn now uses a private exhaustive
   typed state/transition runner with a bounded per-turn state-step guard. The
   generic Flow wrapper remains only for tests and compatibility callers.
+- Started `AWC-003` with the ManualCompaction vertical slice: production manual
+  compaction now runs through a typed eight-step pipeline with cancellation
+  checks between steps while retaining the existing transaction boundary.
 
 ## 0.4.0 - 2026-07-19
 

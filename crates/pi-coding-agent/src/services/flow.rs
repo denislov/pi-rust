@@ -266,6 +266,7 @@ impl FlowService {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn run_manual_compaction_graph(
         &self,
         ctx: &mut ManualCompactionContext,
@@ -286,10 +287,7 @@ impl FlowService {
         &self,
         ctx: &mut ManualCompactionContext,
     ) -> Result<ManualCompactionOutcome, CodingSessionError> {
-        match self.run_manual_compaction_graph(ctx).await {
-            Ok(_) => ctx.finish_success(),
-            Err(error) => Err(ctx.take_failure_error().unwrap_or(error)),
-        }
+        self.manual_compaction_flow()?.run_typed(ctx).await
     }
 
     pub(crate) async fn run_prompt_turn_graph(
