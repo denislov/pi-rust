@@ -1692,19 +1692,25 @@ mod tests {
         session.runtime_shutdown_handle().request_shutdown();
         session.shutdown().await.unwrap();
         let boundary = session
-            .snapshot_coordinator
+            .runtime_host
+            .client_projection
+            .coordinator
             .shutdown_drain_boundary()
             .expect("shutdown event must establish a drain boundary");
 
         assert!(
             session
-                .snapshot_coordinator
+                .runtime_host
+                .client_projection
+                .coordinator
                 .shutdown_lag_recovery(&eligible.handle(), boundary)
                 .is_ok()
         );
         assert_eq!(
             session
-                .snapshot_coordinator
+                .runtime_host
+                .client_projection
+                .coordinator
                 .shutdown_lag_recovery(&ineligible.handle(), boundary)
                 .unwrap_err(),
             ClientRegistryError::Lifecycle(
@@ -1738,19 +1744,25 @@ mod tests {
         session.runtime_shutdown_handle().request_shutdown();
         session.shutdown().await.unwrap();
         let boundary = session
-            .snapshot_coordinator
+            .runtime_host
+            .client_projection
+            .coordinator
             .shutdown_drain_boundary()
             .expect("shutdown event must establish a drain boundary");
 
         assert!(
             session
-                .snapshot_coordinator
+                .runtime_host
+                .client_projection
+                .coordinator
                 .shutdown_lag_recovery(&second.handle(), boundary)
                 .is_ok()
         );
         assert_eq!(
             session
-                .snapshot_coordinator
+                .runtime_host
+                .client_projection
+                .coordinator
                 .shutdown_lag_recovery(&first.handle(), boundary)
                 .unwrap_err(),
             ClientRegistryError::Lifecycle(

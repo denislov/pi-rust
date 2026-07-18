@@ -105,8 +105,8 @@ use crate::runtime::control::{OperationControl, PromptControlCleanup, PromptCont
 pub(crate) use crate::runtime::control::{OperationKind, PromptControlHandle};
 use crate::runtime::intent::{ControlIntent, IntentRouter, QueryIntent};
 pub(crate) use crate::runtime::operation::OperationIdempotencyKey;
+use crate::runtime::owners::RuntimeHost;
 use crate::runtime::snapshot::SnapshotCoordinator;
-use crate::runtime::submission::PendingSubmissionLease;
 pub(crate) use crate::runtime::submission::SubmissionLeaseLifecycle;
 use crate::services::authorization::AuthorizationService;
 use crate::services::capability::CapabilityService;
@@ -115,9 +115,7 @@ use crate::services::flow::FlowService;
 use crate::services::plugin::PluginService;
 use crate::services::runtime::RuntimeService;
 use crate::services::session::{default_cwd, replay_derived_owner_state, session_cwd};
-use crate::session::service::{
-    SessionPersistence, SessionService, StartupRecoveryMarker, TransientSessionState,
-};
+use crate::session::service::{SessionPersistence, SessionService, TransientSessionState};
 pub(in crate::runtime) use control::PromptControlCleanupGuard;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -127,20 +125,5 @@ use crate::plugins::{
 };
 #[derive(Debug)]
 pub struct CodingAgentSession {
-    pub(super) persistence: SessionPersistence,
-    pub(super) runtime_service: RuntimeService,
-    pub(super) flow_service: FlowService,
-    pub(super) event_service: EventService,
-    pub(super) capability_service: CapabilityService,
-    pub(super) plugin_service: PluginService,
-    pub(super) profile_registry: ProfileRegistry,
-    pub(super) default_plugin_load_options: PluginLoadOptions,
-    pub(super) operation_control: OperationControl,
-    pub(super) pending_delegation_confirmations: PendingDelegationConfirmationQueue,
-    pub(super) authorization_service: AuthorizationService,
-    pub(super) capability_snapshots: CapabilitySnapshotService,
-    pub(super) snapshot_coordinator: Arc<SnapshotCoordinator>,
-    pub(super) client_service: ClientService,
-    pub(super) pending_submission: Option<PendingSubmissionLease>,
-    pub(super) startup_recovery_markers: Mutex<Vec<StartupRecoveryMarker>>,
+    pub(super) runtime_host: RuntimeHost,
 }

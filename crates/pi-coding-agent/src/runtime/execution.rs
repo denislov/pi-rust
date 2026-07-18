@@ -41,14 +41,18 @@ impl CodingAgentSession {
         &mut self,
         operation: CodingAgentOperation,
     ) -> Result<CodingAgentOperationTask, CodingSessionError> {
-        self.snapshot_coordinator.ensure_runtime_running()?;
+        self.runtime_host
+            .client_projection
+            .coordinator
+            .ensure_runtime_running()?;
         let runtime = tokio::runtime::Handle::try_current().map_err(|_| {
             CodingSessionError::UnsupportedCapability {
                 capability: "runtime operation submission requires an active Tokio runtime".into(),
             }
         })?;
         let fingerprint = operation.submission_fingerprint();
-        let mut operation = operation.into_internal(self.default_plugin_load_options.clone());
+        let mut operation =
+            operation.into_internal(self.runtime_host.default_plugin_load_options.clone());
         let descriptor = operation.descriptor();
         if descriptor.admission_class() != OperationClass::NonSessionRoot
             || descriptor.dispatch_mode != OperationDispatchMode::Async
@@ -67,13 +71,15 @@ impl CodingAgentSession {
         if let Some(options) = operation.prompt_options_mut()
             && let Some(runtime) = options.runtime_mut()
         {
-            self.runtime_service.install_provider_runtime(runtime);
+            self.runtime_host
+                .runtime_service
+                .install_provider_runtime(runtime);
         }
 
         let mut submission = self.consume_submission_lease(descriptor, fingerprint.as_ref());
         let admission = self.resolve_operation_admission(&operation)?;
         let operation_permit = OperationScheduler::admit(
-            &self.operation_control,
+            &self.runtime_host.operation_supervisor.control,
             &admission,
             OperationDispatchMode::Async,
         )
@@ -93,23 +99,33 @@ impl CodingAgentSession {
         if let (Some(submission), Some(cancellation)) =
             (submission.as_ref(), Some(cancellation_handle.clone()))
         {
-            self.snapshot_coordinator.bind_operation_cancellation(
-                submission.handle.clone(),
-                operation_id.clone(),
-                cancellation,
-            );
+            self.runtime_host
+                .client_projection
+                .coordinator
+                .bind_operation_cancellation(
+                    submission.handle.clone(),
+                    operation_id.clone(),
+                    cancellation,
+                );
         }
         let prompt_control_receiver = if matches!(operation, Operation::AgentInvocation(_)) {
-            let receiver = self.operation_control.take_prompt_control_receiver();
-            self.operation_control.clear_prompt_control_receiver();
+            let receiver = self
+                .runtime_host
+                .operation_supervisor
+                .control
+                .take_prompt_control_receiver();
+            self.runtime_host
+                .operation_supervisor
+                .control
+                .clear_prompt_control_receiver();
             receiver
         } else {
             None
         };
-        let profile_registry = self.profile_registry.clone();
-        let plugin_service = self.plugin_service.clone();
-        let event_service = self.event_service.clone();
-        let operation_control = self.operation_control.clone();
+        let profile_registry = self.runtime_host.profile_registry.clone();
+        let plugin_service = self.runtime_host.plugin_service.clone();
+        let event_service = self.runtime_host.event_hub.service.clone();
+        let operation_control = self.runtime_host.operation_supervisor.control.clone();
 
         let task = runtime.spawn(async move {
             let result = match operation {

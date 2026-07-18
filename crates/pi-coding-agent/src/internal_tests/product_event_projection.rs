@@ -178,7 +178,9 @@ async fn receiver_detached_before_phase_a_never_enters_shutdown_drain() {
         panic!("detached control must start with a live receiver")
     };
     session
-        .event_service
+        .runtime_host
+        .event_hub
+        .service
         .emit_diagnostic(None::<String>, "queued before detach");
     assert_eq!(
         detached.detach().unwrap(),
@@ -188,7 +190,12 @@ async fn receiver_detached_before_phase_a_never_enters_shutdown_drain() {
     let attached = session
         .connect(CodingAgentClientId::new("phase-a-participant"))
         .unwrap();
-    let cursor = session.event_service.current_product_sequence().get();
+    let cursor = session
+        .runtime_host
+        .event_hub
+        .service
+        .current_product_sequence()
+        .get();
     let CodingAgentReconnect::Replayed {
         receiver: mut attached_receiver,
         ..

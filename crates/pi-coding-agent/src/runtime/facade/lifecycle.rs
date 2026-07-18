@@ -65,13 +65,15 @@ impl CodingAgentSession {
         event_capacity: usize,
     ) -> Result<Self, CodingSessionError> {
         let mut session = Self::non_persistent(options).await?;
-        session.event_service = EventService::with_event_capacity_and_coordinator_for_tests(
-            event_capacity,
-            session.snapshot_coordinator.clone(),
-        );
+        session.runtime_host.event_hub.service =
+            EventService::with_event_capacity_and_coordinator_for_tests(
+                event_capacity,
+                session.runtime_host.client_projection.coordinator.clone(),
+            );
         session
+            .runtime_host
             .authorization_service
-            .set_event_service(session.event_service.clone());
+            .set_event_service(session.runtime_host.event_hub.service.clone());
         Ok(session)
     }
 
@@ -82,14 +84,16 @@ impl CodingAgentSession {
         retained_capacity: usize,
     ) -> Result<Self, CodingSessionError> {
         let mut session = Self::non_persistent(options).await?;
-        session.event_service = EventService::with_event_capacities_and_coordinator_for_tests(
-            channel_capacity,
-            retained_capacity,
-            session.snapshot_coordinator.clone(),
-        );
+        session.runtime_host.event_hub.service =
+            EventService::with_event_capacities_and_coordinator_for_tests(
+                channel_capacity,
+                retained_capacity,
+                session.runtime_host.client_projection.coordinator.clone(),
+            );
         session
+            .runtime_host
             .authorization_service
-            .set_event_service(session.event_service.clone());
+            .set_event_service(session.runtime_host.event_hub.service.clone());
         Ok(session)
     }
 
@@ -155,30 +159,42 @@ impl CodingAgentSession {
         );
 
         let session = Self {
-            persistence: SessionPersistence::Persistent(session_service),
-            runtime_service,
-            flow_service: FlowService::new(),
-            event_service,
-            capability_service: CapabilityService::new(),
-            plugin_service: PluginService::new(),
-            profile_registry,
-            default_plugin_load_options,
-            operation_control: OperationControl::with_snapshot_coordinator(
-                snapshot_coordinator.clone(),
-            ),
-            pending_delegation_confirmations: replay_state.pending_delegation_confirmations,
-            authorization_service,
-            capability_snapshots: CapabilitySnapshotService::with_snapshot_coordinator(
-                snapshot_coordinator.clone(),
-            ),
-            snapshot_coordinator,
-            client_service,
-            pending_submission: None,
-            startup_recovery_markers: Mutex::new(replay_state.startup_recovery_markers),
+            runtime_host: crate::runtime::owners::RuntimeHost {
+                operation_supervisor: crate::runtime::owners::OperationSupervisor {
+                    control: OperationControl::with_snapshot_coordinator(
+                        snapshot_coordinator.clone(),
+                    ),
+                    capabilities: CapabilitySnapshotService::with_snapshot_coordinator(
+                        snapshot_coordinator.clone(),
+                    ),
+                },
+                session_coordinator: crate::runtime::session_coordinator::SessionCoordinator {
+                    persistence: SessionPersistence::Persistent(session_service),
+                    pending_delegation_confirmations: replay_state.pending_delegation_confirmations,
+                    startup_recovery_markers: Mutex::new(replay_state.startup_recovery_markers),
+                },
+                event_hub: crate::runtime::owners::EventHub {
+                    service: event_service,
+                },
+                client_projection: crate::runtime::owners::ClientProjectionCoordinator {
+                    coordinator: snapshot_coordinator,
+                    clients: client_service,
+                    pending_submission: None,
+                },
+                runtime_service,
+                flow_service: FlowService::new(),
+                capability_service: CapabilityService::new(),
+                plugin_service: PluginService::new(),
+                profile_registry,
+                default_plugin_load_options,
+                authorization_service,
+            },
         };
         session.refresh_snapshot_projection();
         session
-            .event_service
+            .runtime_host
+            .event_hub
+            .service
             .emit_session_opened(session.view().session_id);
         Ok(session)
     }
@@ -199,26 +215,36 @@ impl CodingAgentSession {
             event_service.clone(),
         );
         let session = Self {
-            persistence: SessionPersistence::NonPersistent(state),
-            runtime_service,
-            flow_service: FlowService::new(),
-            event_service,
-            capability_service: CapabilityService::new(),
-            plugin_service: PluginService::new(),
-            profile_registry,
-            default_plugin_load_options,
-            operation_control: OperationControl::with_snapshot_coordinator(
-                snapshot_coordinator.clone(),
-            ),
-            pending_delegation_confirmations: PendingDelegationConfirmationQueue::default(),
-            authorization_service,
-            capability_snapshots: CapabilitySnapshotService::with_snapshot_coordinator(
-                snapshot_coordinator.clone(),
-            ),
-            snapshot_coordinator,
-            client_service,
-            pending_submission: None,
-            startup_recovery_markers: Mutex::new(Vec::new()),
+            runtime_host: crate::runtime::owners::RuntimeHost {
+                operation_supervisor: crate::runtime::owners::OperationSupervisor {
+                    control: OperationControl::with_snapshot_coordinator(
+                        snapshot_coordinator.clone(),
+                    ),
+                    capabilities: CapabilitySnapshotService::with_snapshot_coordinator(
+                        snapshot_coordinator.clone(),
+                    ),
+                },
+                session_coordinator: crate::runtime::session_coordinator::SessionCoordinator {
+                    persistence: SessionPersistence::NonPersistent(state),
+                    pending_delegation_confirmations: PendingDelegationConfirmationQueue::default(),
+                    startup_recovery_markers: Mutex::new(Vec::new()),
+                },
+                event_hub: crate::runtime::owners::EventHub {
+                    service: event_service,
+                },
+                client_projection: crate::runtime::owners::ClientProjectionCoordinator {
+                    coordinator: snapshot_coordinator,
+                    clients: client_service,
+                    pending_submission: None,
+                },
+                runtime_service,
+                flow_service: FlowService::new(),
+                capability_service: CapabilityService::new(),
+                plugin_service: PluginService::new(),
+                profile_registry,
+                default_plugin_load_options,
+                authorization_service,
+            },
         };
         session.refresh_snapshot_projection();
         Ok(session)

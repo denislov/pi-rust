@@ -97,9 +97,12 @@ mod cases {
             "delegated task",
         );
         crate::operations::delegation::confirmation::queue_pending(
-            &mut session.persistence,
-            &mut session.pending_delegation_confirmations,
-            &session.event_service,
+            &mut session.runtime_host.session_coordinator.persistence,
+            &mut session
+                .runtime_host
+                .session_coordinator
+                .pending_delegation_confirmations,
+            &session.runtime_host.event_hub.service,
             pending,
             true,
         )
@@ -149,7 +152,10 @@ mod cases {
             .await
             .unwrap();
         pending_session.queue_pending_delegation_for_tests("op_pending", "tool_pending");
-        let pending = pending_session.pending_delegation_confirmations();
+        let pending = pending_session
+            .runtime_host
+            .session_coordinator
+            .pending_delegation_confirmations();
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].operation_id, "op_pending");
         assert_eq!(pending[0].tool_call_id, "tool_pending");
@@ -198,7 +204,11 @@ mod cases {
         assert_eq!(snapshot.capabilities, session.capabilities());
         assert_eq!(
             snapshot.cursor.last_event_sequence,
-            session.event_service.current_product_sequence()
+            session
+                .runtime_host
+                .event_hub
+                .service
+                .current_product_sequence()
         );
         assert_eq!(
             snapshot.cursor.capability_generation,
@@ -282,7 +292,9 @@ mod cases {
             .unwrap();
         let mut receiver = session.subscribe_product_events_public();
         session
-            .event_service
+            .runtime_host
+            .event_hub
+            .service
             .emit_diagnostic(None::<String>, "public event");
 
         let event = receiver.recv().await.unwrap();
@@ -305,7 +317,9 @@ mod cases {
         assert_eq!(receiver.try_recv().unwrap(), None);
 
         session
-            .event_service
+            .runtime_host
+            .event_hub
+            .service
             .emit_diagnostic(None::<String>, "public event");
         let event = receiver
             .try_recv()
@@ -388,7 +402,13 @@ mod cases {
         .await
         .unwrap();
 
-        assert!(session.pending_delegation_confirmations().is_empty());
+        assert!(
+            session
+                .runtime_host
+                .session_coordinator
+                .pending_delegation_confirmations()
+                .is_empty()
+        );
         let error = session
             .run(CodingAgentOperation::ApproveDelegation {
                 operation_id: "op_parent".into(),
@@ -1158,8 +1178,16 @@ runtime = "lua"
             panic!("initial cursor must establish a replay/live boundary")
         };
 
-        session.event_service.emit_diagnostic(None::<String>, "one");
-        session.event_service.emit_diagnostic(None::<String>, "two");
+        session
+            .runtime_host
+            .event_hub
+            .service
+            .emit_diagnostic(None::<String>, "one");
+        session
+            .runtime_host
+            .event_hub
+            .service
+            .emit_diagnostic(None::<String>, "two");
 
         let Some(CodingAgentReconnectDelivery::FreshSnapshotRequired(recovery)) =
             receiver.try_recv().unwrap()
@@ -1197,12 +1225,16 @@ runtime = "lua"
                 .unwrap();
         }
         let (sender, mut receiver) = operation_control::prompt_control_channel();
-        session.snapshot_coordinator.bind_prompt_control(
-            connection.handle(),
-            "op-receipts".into(),
-            operation_control::PromptControlGeneration(1),
-            sender,
-        );
+        session
+            .runtime_host
+            .client_projection
+            .coordinator
+            .bind_prompt_control(
+                connection.handle(),
+                "op-receipts".into(),
+                operation_control::PromptControlGeneration(1),
+                sender,
+            );
         let control = connection.prompt_control("op-receipts");
 
         let abort = control
@@ -1788,7 +1820,7 @@ runtime = "lua"
         let lease = connection
             .prepare_submission(&mut session, draft_id, &operation)
             .unwrap();
-        let coordinator = session.snapshot_coordinator.clone();
+        let coordinator = session.runtime_host.client_projection.coordinator.clone();
         let mut run = Box::pin(session.run(operation));
 
         tokio::select! {
@@ -2032,7 +2064,9 @@ runtime = "lua"
         ));
         assert!(matches!(
             session
-                .snapshot_coordinator
+                .runtime_host
+                .client_projection
+                .coordinator
                 .state
                 .lock()
                 .unwrap()
@@ -2071,7 +2105,7 @@ runtime = "lua"
         let lease = connection
             .prepare_submission(&mut session, draft_id, &operation)
             .unwrap();
-        let coordinator = session.snapshot_coordinator.clone();
+        let coordinator = session.runtime_host.client_projection.coordinator.clone();
         let mut run = Box::pin(session.run(operation));
 
         tokio::select! {
@@ -2355,7 +2389,10 @@ runtime = "lua"
                 .contains("agent team invocation requires a non-empty task"),
             "{error}"
         );
-        assert_eq!(session.operation_control.active(), None);
+        assert_eq!(
+            session.runtime_host.operation_supervisor.control.active(),
+            None
+        );
     }
 
     #[tokio::test]
@@ -2394,7 +2431,7 @@ runtime = "lua"
             .expect("runtime-owned invocation did not reach provider")
             .unwrap();
         assert_eq!(
-            session.operation_control.active(),
+            session.runtime_host.operation_supervisor.control.active(),
             Some(OperationKind::AgentInvocation)
         );
         let prompt_control = session
@@ -2420,7 +2457,7 @@ runtime = "lua"
             }) if final_text == "second"
         ));
         assert_eq!(
-            session.operation_control.active(),
+            session.runtime_host.operation_supervisor.control.active(),
             Some(OperationKind::AgentInvocation)
         );
 
@@ -2436,7 +2473,10 @@ runtime = "lua"
                 ..
             }) if final_text == "first"
         ));
-        assert_eq!(session.operation_control.active(), None);
+        assert_eq!(
+            session.runtime_host.operation_supervisor.control.active(),
+            None
+        );
         assert_eq!(contexts.lock().unwrap().len(), 2);
     }
 
@@ -2458,7 +2498,10 @@ runtime = "lua"
                 .to_string()
                 .contains("supported async non-session roots")
         );
-        assert_eq!(session.operation_control.active(), None);
+        assert_eq!(
+            session.runtime_host.operation_supervisor.control.active(),
+            None
+        );
     }
 
     #[tokio::test]
@@ -2626,7 +2669,7 @@ runtime = "lua"
             .unwrap();
         let operation_id = task.operation_id().to_owned();
         assert_eq!(
-            session.operation_control.active(),
+            session.runtime_host.operation_supervisor.control.active(),
             Some(OperationKind::AgentTeam)
         );
 
@@ -2647,7 +2690,10 @@ runtime = "lua"
                 assert_eq!(event_operation_id, operation_id);
             }
         }
-        assert_eq!(session.operation_control.active(), None);
+        assert_eq!(
+            session.runtime_host.operation_supervisor.control.active(),
+            None
+        );
     }
 
     #[tokio::test]
@@ -2664,7 +2710,10 @@ runtime = "lua"
             error.to_string(),
             "unsupported capability: export requires a persistent Rust-native session"
         );
-        assert_eq!(session.operation_control.active(), None);
+        assert_eq!(
+            session.runtime_host.operation_supervisor.control.active(),
+            None
+        );
     }
 
     #[tokio::test]
@@ -2673,7 +2722,9 @@ runtime = "lua"
             .await
             .unwrap();
         let _guard = session
-            .operation_control
+            .runtime_host
+            .operation_supervisor
+            .control
             .begin(OperationKind::Prompt, "op_test".into())
             .unwrap();
 
@@ -2687,7 +2738,7 @@ runtime = "lua"
             "unsupported capability: export requires a persistent Rust-native session"
         );
         assert_eq!(
-            session.operation_control.active(),
+            session.runtime_host.operation_supervisor.control.active(),
             Some(OperationKind::Prompt)
         );
     }
@@ -2774,7 +2825,9 @@ runtime = "lua"
             .await
             .unwrap();
         let _guard = session
-            .operation_control
+            .runtime_host
+            .operation_supervisor
+            .control
             .begin(OperationKind::Prompt, "op_test".into())
             .unwrap();
 
@@ -2787,7 +2840,7 @@ runtime = "lua"
 
         assert_eq!(error.code(), "busy");
         assert_eq!(
-            session.operation_control.active(),
+            session.runtime_host.operation_supervisor.control.active(),
             Some(OperationKind::Prompt)
         );
     }
@@ -2798,7 +2851,9 @@ runtime = "lua"
             .await
             .unwrap();
         let _guard = session
-            .operation_control
+            .runtime_host
+            .operation_supervisor
+            .control
             .begin(OperationKind::Prompt, "op_test".into())
             .unwrap();
 
@@ -2811,7 +2866,7 @@ runtime = "lua"
 
         assert_eq!(error.code(), "busy");
         assert_eq!(
-            session.operation_control.active(),
+            session.runtime_host.operation_supervisor.control.active(),
             Some(OperationKind::Prompt)
         );
     }
@@ -3206,7 +3261,10 @@ runtime = "lua"
             error.to_string(),
             "plugin error: plugin command not found: missing.command"
         );
-        assert_eq!(session.operation_control.active(), None);
+        assert_eq!(
+            session.runtime_host.operation_supervisor.control.active(),
+            None
+        );
     }
 
     #[tokio::test]
@@ -3215,7 +3273,9 @@ runtime = "lua"
             .await
             .unwrap();
         let _guard = session
-            .operation_control
+            .runtime_host
+            .operation_supervisor
+            .control
             .begin(OperationKind::Prompt, "op_test".into())
             .unwrap();
         let operation = CodingAgentOperation::PluginCommand {
@@ -3228,7 +3288,7 @@ runtime = "lua"
         assert_eq!(error.code(), "unsupported_capability");
         assert!(error.to_string().contains("missing.command"));
         assert_eq!(
-            session.operation_control.active(),
+            session.runtime_host.operation_supervisor.control.active(),
             Some(OperationKind::Prompt)
         );
     }
@@ -3239,6 +3299,8 @@ runtime = "lua"
             .await
             .unwrap();
         session
+            .runtime_host
+            .session_coordinator
             .pending_delegation_confirmations
             .push(pending_delegation_confirmation_state(ProfileKind::Team));
         let now = SystemClock.now_rfc3339();
@@ -3256,6 +3318,8 @@ runtime = "lua"
             .await
             .unwrap();
         session
+            .runtime_host
+            .session_coordinator
             .pending_delegation_confirmations
             .push(pending_delegation_confirmation_state(ProfileKind::Team));
         let operation = Operation::ApproveDelegationConfirmation {
@@ -3366,7 +3430,9 @@ runtime = "lua"
             .await
             .unwrap();
         let _operation = session
-            .operation_control
+            .runtime_host
+            .operation_supervisor
+            .control
             .begin(OperationKind::Prompt, "op_test".into())
             .unwrap();
         let operation = Operation::ApproveDelegationConfirmation {
@@ -3384,7 +3450,7 @@ runtime = "lua"
             "{error}"
         );
         assert_eq!(
-            session.operation_control.active(),
+            session.runtime_host.operation_supervisor.control.active(),
             Some(OperationKind::Prompt)
         );
     }
@@ -3395,10 +3461,14 @@ runtime = "lua"
             .await
             .unwrap();
         session
+            .runtime_host
+            .session_coordinator
             .pending_delegation_confirmations
             .push(pending_delegation_confirmation_state(ProfileKind::Agent));
         let _operation = session
-            .operation_control
+            .runtime_host
+            .operation_supervisor
+            .control
             .begin(OperationKind::Prompt, "op_test".into())
             .unwrap();
 
@@ -3419,9 +3489,16 @@ runtime = "lua"
                 operation: "prompt".into(),
             }
         );
-        assert_eq!(session.pending_delegation_confirmations().len(), 1);
         assert_eq!(
-            session.operation_control.active(),
+            session
+                .runtime_host
+                .session_coordinator
+                .pending_delegation_confirmations()
+                .len(),
+            1
+        );
+        assert_eq!(
+            session.runtime_host.operation_supervisor.control.active(),
             Some(OperationKind::Prompt)
         );
     }
@@ -3432,10 +3509,14 @@ runtime = "lua"
             .await
             .unwrap();
         session
+            .runtime_host
+            .session_coordinator
             .pending_delegation_confirmations
             .push(pending_delegation_confirmation_state(ProfileKind::Agent));
         let _operation = session
-            .operation_control
+            .runtime_host
+            .operation_supervisor
+            .control
             .begin(OperationKind::Prompt, "op_test".into())
             .unwrap();
 
@@ -3454,9 +3535,16 @@ runtime = "lua"
                 operation: "prompt".into(),
             }
         );
-        assert_eq!(session.pending_delegation_confirmations().len(), 1);
         assert_eq!(
-            session.operation_control.active(),
+            session
+                .runtime_host
+                .session_coordinator
+                .pending_delegation_confirmations()
+                .len(),
+            1
+        );
+        assert_eq!(
+            session.runtime_host.operation_supervisor.control.active(),
             Some(OperationKind::Prompt)
         );
     }
@@ -3466,7 +3554,12 @@ runtime = "lua"
         let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
             .await
             .unwrap();
-        let _handle = session.operation_control.prompt_control_handle().unwrap();
+        let _handle = session
+            .runtime_host
+            .operation_supervisor
+            .control
+            .prompt_control_handle()
+            .unwrap();
         let operation = Operation::AgentInvocation(AgentInvocationOptions::new(
             "helper",
             "",
@@ -3482,8 +3575,18 @@ runtime = "lua"
                 .contains("agent invocation requires a non-empty task"),
             "{error}"
         );
-        assert_eq!(session.operation_control.active(), None);
-        assert!(session.operation_control.prompt_control_handle().is_ok());
+        assert_eq!(
+            session.runtime_host.operation_supervisor.control.active(),
+            None
+        );
+        assert!(
+            session
+                .runtime_host
+                .operation_supervisor
+                .control
+                .prompt_control_handle()
+                .is_ok()
+        );
     }
 
     #[tokio::test]
@@ -3505,7 +3608,10 @@ runtime = "lua"
                 .contains("self-healing edit requires a persistent Rust-native session"),
             "{error}"
         );
-        assert_eq!(session.operation_control.active(), None);
+        assert_eq!(
+            session.runtime_host.operation_supervisor.control.active(),
+            None
+        );
     }
 
     #[tokio::test]
@@ -3531,7 +3637,10 @@ runtime = "lua"
                 .contains("branch summary without persistent session"),
             "{error}"
         );
-        assert_eq!(session.operation_control.active(), None);
+        assert_eq!(
+            session.runtime_host.operation_supervisor.control.active(),
+            None
+        );
     }
 
     #[tokio::test]
@@ -3549,7 +3658,10 @@ runtime = "lua"
         assert!(outcome.loaded_plugin_ids.is_empty());
         assert!(outcome.diagnostics.is_empty());
         assert!(!outcome.capability_changed);
-        assert_eq!(session.operation_control.active(), None);
+        assert_eq!(
+            session.runtime_host.operation_supervisor.control.active(),
+            None
+        );
     }
 
     #[tokio::test]
@@ -3571,7 +3683,10 @@ runtime = "lua"
                 .contains("compact operation options do not include a runtime snapshot"),
             "{error}"
         );
-        assert_eq!(session.operation_control.active(), None);
+        assert_eq!(
+            session.runtime_host.operation_supervisor.control.active(),
+            None
+        );
     }
 
     #[tokio::test]
@@ -3587,7 +3702,10 @@ runtime = "lua"
 
         assert_eq!(error.code(), "config");
         assert!(error.to_string().contains("runtime snapshot"), "{error}");
-        assert_eq!(session.operation_control.active(), None);
+        assert_eq!(
+            session.runtime_host.operation_supervisor.control.active(),
+            None
+        );
     }
 
     #[tokio::test]
@@ -4536,7 +4654,7 @@ runtime = "lua"
         let mut session = CodingAgentSession::create(options.clone()).await.unwrap();
         let mut registry = PluginRegistry::new();
         registry.register_command_provider(Arc::new(SessionPluginCommandProvider));
-        session.default_plugin_load_options =
+        session.runtime_host.default_plugin_load_options =
             PluginLoadOptions::new().with_candidate(PluginLoadCandidate::new(
                 PluginLoadManifest::new(
                     "canonical-command",
@@ -4580,7 +4698,10 @@ runtime = "lua"
             error.to_string(),
             "plugin error: plugin command not found: missing.command"
         );
-        assert_eq!(session.operation_control.active(), None);
+        assert_eq!(
+            session.runtime_host.operation_supervisor.control.active(),
+            None
+        );
 
         let profile = session
             .run(CodingAgentOperation::SetDefaultAgentProfile {
@@ -4617,7 +4738,13 @@ runtime = "lua"
             rejected,
             CodingAgentOperationOutcome::DelegationRejected
         ));
-        assert!(session.pending_delegation_confirmations().is_empty());
+        assert!(
+            session
+                .runtime_host
+                .session_coordinator
+                .pending_delegation_confirmations()
+                .is_empty()
+        );
 
         queue_persistent_delegation_confirmation(
             &mut session,
@@ -4636,7 +4763,13 @@ runtime = "lua"
             approved,
             CodingAgentOperationOutcome::DelegationApproved
         ));
-        assert!(session.pending_delegation_confirmations().is_empty());
+        assert!(
+            session
+                .runtime_host
+                .session_coordinator
+                .pending_delegation_confirmations()
+                .is_empty()
+        );
         let emitted = std::iter::from_fn(|| events.try_recv().unwrap()).collect::<Vec<_>>();
         assert!(emitted.iter().any(|event| matches!(
             event.event(),
@@ -4718,7 +4851,14 @@ runtime = "lua"
                     .unwrap_err()
             };
             assert_eq!(error.code(), "session");
-            assert_eq!(session.pending_delegation_confirmations().len(), 1);
+            assert_eq!(
+                session
+                    .runtime_host
+                    .session_coordinator
+                    .pending_delegation_confirmations()
+                    .len(),
+                1
+            );
             assert_eq!(std::fs::read(&event_log_path).unwrap(), events_before);
             assert_eq!(std::fs::read(&manifest_path).unwrap(), manifest_before);
             assert_eq!(
@@ -4771,7 +4911,14 @@ runtime = "lua"
                 } if durable_operation_id == &operation_id
             ));
             assert_eq!(error.code(), "partial_commit");
-            assert_eq!(session.pending_delegation_confirmations().len(), 1);
+            assert_eq!(
+                session
+                    .runtime_host
+                    .session_coordinator
+                    .pending_delegation_confirmations()
+                    .len(),
+                1
+            );
             let reopened = CodingAgentSession::open(options).await.unwrap();
             assert!(reopened.pending_delegation_confirmations().is_empty());
             assert!(
@@ -5601,7 +5748,9 @@ runtime = "lua"
         .await
         .unwrap();
         let _operation = session
-            .operation_control
+            .runtime_host
+            .operation_supervisor
+            .control
             .begin(OperationKind::Prompt, "op_test".into())
             .unwrap();
         let output = temp.path().join("session.html");
@@ -5618,7 +5767,7 @@ runtime = "lua"
         assert_eq!(exported, output);
         assert!(output.exists());
         assert_eq!(
-            session.operation_control.active(),
+            session.runtime_host.operation_supervisor.control.active(),
             Some(OperationKind::Prompt)
         );
     }

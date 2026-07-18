@@ -22,8 +22,13 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
 
 ## Runtime And Operations
 
-- `CodingAgentSession` is the current product runtime facade and still owns a
-  broad set of long-lived collaborators that `RIF-008` will decompose.
+- `CodingAgentSession` is a facade over one `RuntimeHost` composition root.
+  Admission/capability authority resides in `OperationSupervisor`, session state
+  in `SessionCoordinator`, product-event fan-out in `EventHub`, and client
+  snapshots/controls in `ClientProjectionCoordinator`. An identity-bearing
+  `SessionWriterCommand`/`SessionWriterReply` protocol owns default-profile
+  mutation; bounded transport and the remaining session mutations are still
+  active `RIF-008` work.
 - `IntentRouter`, `OperationScheduler`, `OperationControl`, typed operation
   metadata, root/child lineage, capability snapshots, and generation-scoped
   cancellation exist.

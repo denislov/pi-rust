@@ -48,7 +48,7 @@ impl CodingAgentSession {
         &mut self,
     ) -> Result<PromptControlHandle, CodingSessionError> {
         IntentRouter::prompt_control_handle(
-            &mut self.operation_control,
+            &mut self.runtime_host.operation_supervisor.control,
             ControlIntent::PromptControl,
         )
     }

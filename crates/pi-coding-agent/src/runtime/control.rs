@@ -12,7 +12,7 @@ use crate::runtime::operation::OperationClass;
 const DEFAULT_RUNTIME_ROOT_LIMIT: usize = 4;
 
 pub(crate) fn operation_control_for_adapter(session: &CodingAgentSession) -> OperationControl {
-    session.operation_control.clone()
+    session.runtime_host.operation_supervisor.control.clone()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

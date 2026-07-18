@@ -19,8 +19,8 @@ impl CodingAgentSession {
             | Operation::BranchSummary { options, .. } => {
                 if options.runtime().is_some() {
                     *options = crate::operations::prompt::apply_default_agent_profile(
-                        &self.persistence,
-                        &self.profile_registry,
+                        &self.runtime_host.session_coordinator.persistence,
+                        &self.runtime_host.profile_registry,
                         options.clone(),
                     )?;
                 }
@@ -30,8 +30,8 @@ impl CodingAgentSession {
                     && repair.prompt_options().runtime().is_some()
                 {
                     let resolved = crate::operations::prompt::apply_default_agent_profile(
-                        &self.persistence,
-                        &self.profile_registry,
+                        &self.runtime_host.session_coordinator.persistence,
+                        &self.runtime_host.profile_registry,
                         repair.prompt_options().clone(),
                     )?;
                     *repair.prompt_options_mut() = resolved;
@@ -64,7 +64,10 @@ impl CodingAgentSession {
             } => {
                 let now = SystemClock.now_rfc3339();
                 let pending = crate::operations::delegation::confirmation::active_pending(
-                    &self.pending_delegation_confirmations,
+                    &self
+                        .runtime_host
+                        .session_coordinator
+                        .pending_delegation_confirmations,
                     operation_id.as_str(),
                     tool_call_id.as_str(),
                     &now,
@@ -87,14 +90,16 @@ impl CodingAgentSession {
         };
         let operation_id = self.next_operation_admission_id(operation);
         let snapshot = self
-            .capability_snapshots
+            .runtime_host
+            .operation_supervisor
+            .capabilities
             .snapshot(self.snapshot_input_for_operation(
                 operation_id,
                 kind,
                 operation,
                 operation_runtime.as_ref(),
             ));
-        let session_identity = Some(match &self.persistence {
+        let session_identity = Some(match &self.runtime_host.session_coordinator.persistence {
             SessionPersistence::Persistent(service) => service.session_id().to_owned(),
             SessionPersistence::NonPersistent(state) => state.runtime_id.clone(),
         });
@@ -120,7 +125,7 @@ impl CodingAgentSession {
         operation: &Operation,
         operation_runtime: Option<&crate::operations::prompt::context::RuntimeSnapshot>,
     ) -> CapabilitySnapshotInput {
-        let plugin_capabilities = self.plugin_service.capabilities();
+        let plugin_capabilities = self.runtime_host.plugin_service.capabilities();
         let runtime_tools = self.operation_runtime_tool_names(operation_runtime);
         let profile_tools = match self.active_agent_profile() {
             Some(profile) if !profile.tools.is_empty() => profile.tools.clone(),
@@ -134,7 +139,10 @@ impl CodingAgentSession {
             uses_model: operation_runtime.is_some(),
             model_profile_id: operation_runtime.and_then(|runtime| runtime.profile_id().cloned()),
             plugin_capabilities,
-            persistent_session: matches!(self.persistence, SessionPersistence::Persistent(_)),
+            persistent_session: matches!(
+                self.runtime_host.session_coordinator.persistence,
+                SessionPersistence::Persistent(_)
+            ),
             cwd: operation_runtime
                 .and_then(|runtime| runtime.cwd().map(PathBuf::from))
                 .or_else(|| self.cwd()),
@@ -158,7 +166,8 @@ impl CodingAgentSession {
             names.extend(runtime.tools().iter().map(|tool| tool.name.clone()));
         }
         names.extend(
-            self.plugin_service
+            self.runtime_host
+                .plugin_service
                 .collect_tools()
                 .into_iter()
                 .map(|tool| tool.name),
@@ -175,7 +184,7 @@ impl CodingAgentSession {
     }
 
     fn cwd(&self) -> Option<PathBuf> {
-        match &self.persistence {
+        match &self.runtime_host.session_coordinator.persistence {
             SessionPersistence::Persistent(session_service) => session_cwd(session_service),
             SessionPersistence::NonPersistent(_) => None,
         }
@@ -183,7 +192,7 @@ impl CodingAgentSession {
 
     fn active_agent_profile(&self) -> Option<&AgentProfile> {
         let id = self.default_agent_profile_id();
-        self.profile_registry.agent(id.as_str())
+        self.runtime_host.profile_registry.agent(id.as_str())
     }
 
     fn current_runtime_tool_names(&self) -> Vec<String> {
@@ -206,7 +215,10 @@ impl CodingAgentSession {
         now: &str,
     ) -> Result<OperationKind, CodingSessionError> {
         let pending = crate::operations::delegation::confirmation::active_pending(
-            &self.pending_delegation_confirmations,
+            &self
+                .runtime_host
+                .session_coordinator
+                .pending_delegation_confirmations,
             operation_id,
             tool_call_id,
             now,

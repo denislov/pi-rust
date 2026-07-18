@@ -2290,6 +2290,83 @@ fn durable_operation_paths_consume_admitted_identity_without_regeneration() {
 }
 
 #[test]
+fn runtime_host_owner_graph_and_first_writer_command_are_explicit() {
+    let scan = SourceScan::new();
+    let facade = fs::read_to_string(scan.crate_root.join("src/runtime/facade.rs"))
+        .expect("read runtime facade source");
+    assert!(
+        facade.contains(
+            "pub struct CodingAgentSession {\n    pub(super) runtime_host: RuntimeHost,\n}"
+        ),
+        "CodingAgentSession must remain a facade over one RuntimeHost composition root"
+    );
+    for legacy_field in [
+        "pub(super) persistence: SessionPersistence",
+        "pub(super) operation_control: OperationControl",
+        "pub(super) event_service: EventService",
+        "pub(super) snapshot_coordinator: Arc<SnapshotCoordinator>",
+        "pub(super) client_service: ClientService",
+    ] {
+        assert!(
+            !facade.contains(legacy_field),
+            "facade must not retain owner authority: {legacy_field}"
+        );
+    }
+
+    let owners = fs::read_to_string(scan.crate_root.join("src/runtime/owners.rs"))
+        .expect("read runtime owners source");
+    for owner in [
+        "struct RuntimeHost",
+        "struct OperationSupervisor",
+        "struct EventHub",
+        "struct ClientProjectionCoordinator",
+    ] {
+        assert!(owners.contains(owner), "missing runtime owner: {owner}");
+    }
+    let session_coordinator =
+        fs::read_to_string(scan.crate_root.join("src/runtime/session_coordinator.rs"))
+            .expect("read session coordinator source");
+    for contract in [
+        "struct SessionCoordinator",
+        "struct SessionWriterCommand",
+        "enum SessionMutation",
+        "enum SessionWriterReply",
+        "fn execute_writer_command(",
+        "operation_id: String",
+        "capability_generation: CapabilityGeneration",
+    ] {
+        assert!(
+            session_coordinator.contains(contract),
+            "missing writer protocol contract: {contract}"
+        );
+    }
+
+    let dispatch = fs::read_to_string(scan.crate_root.join("src/runtime/dispatch.rs"))
+        .expect("read operation dispatch source");
+    assert!(
+        dispatch.contains(".execute_writer_command("),
+        "session mutation dispatch must enter the SessionCoordinator writer protocol"
+    );
+    assert!(
+        !dispatch.contains("set_default_agent_profile_id("),
+        "default-profile mutation must not bypass the writer command protocol"
+    );
+
+    let mut workflow_host_leaks = Vec::new();
+    for path in rust_files_under(&scan.crate_root.join("src/operations")) {
+        let source = fs::read_to_string(&path).expect("read workflow source");
+        if source.contains("RuntimeHost") {
+            workflow_host_leaks.push(relative_path(&scan.repo_root, &path));
+        }
+    }
+    assert!(
+        workflow_host_leaks.is_empty(),
+        "RuntimeHost must not become a workflow service locator:\n{}",
+        workflow_host_leaks.join("\n")
+    );
+}
+
+#[test]
 fn delegated_child_flows_require_scheduler_lineage_admission() {
     let scan = SourceScan::new();
     for relative in [

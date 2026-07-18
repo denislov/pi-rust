@@ -37,10 +37,15 @@
   children, and removing the transitional operation metadata registry.
 - Moved external API compile fixtures and their Cargo targets under the project
   `target/api-boundary-fixtures/` tree.
+- Began `RIF-008` by making `CodingAgentSession` a facade over one `RuntimeHost`
+  with explicit OperationSupervisor, SessionCoordinator, EventHub, and
+  ClientProjectionCoordinator ownership. Added the identity-bearing session
+  writer command/reply protocol and routed default-profile mutation through it.
 
 ### Release Status
 
-- `RIF-001`, `RIF-005`, `RIF-006`, and `RIF-007` are complete; `RIF-008` is next.
+- `RIF-001`, `RIF-005`, `RIF-006`, and `RIF-007` are complete; `RIF-008` is in
+  progress.
   Workspace packages remain at `0.3.1` until all `0.4.0` implementation, debt,
   and release gates close.
 

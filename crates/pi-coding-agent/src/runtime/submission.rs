@@ -194,14 +194,18 @@ impl CodingAgentSession {
         &mut self,
         operation: CodingAgentOperation,
     ) -> Result<CodingAgentOperationOutcome, CodingSessionError> {
-        self.snapshot_coordinator.ensure_runtime_running()?;
+        self.runtime_host
+            .client_projection
+            .coordinator
+            .ensure_runtime_running()?;
         if matches!(operation, CodingAgentOperation::PluginCommand { .. }) {
             return self.submit(operation)?.join().await;
         }
         let descriptor = operation.descriptor();
         let fingerprint = operation.submission_fingerprint();
         let submission = self.consume_submission_lease(descriptor, fingerprint.as_ref());
-        let operation = operation.into_internal(self.default_plugin_load_options.clone());
+        let operation =
+            operation.into_internal(self.runtime_host.default_plugin_load_options.clone());
         let dispatch_mode = operation.descriptor().dispatch_mode;
         let outcome = match dispatch_mode {
             OperationDispatchMode::Async => self.run_operation(operation, submission).await?,
@@ -222,16 +226,20 @@ impl CodingAgentSession {
         prompt_fingerprint: Option<(String, String)>,
         expected_prompt_draft: Option<snapshot_coordinator::DraftRecord>,
     ) -> Result<Arc<Mutex<SubmissionLeaseLifecycle>>, CodingSessionError> {
-        if let Some(pending) = &self.pending_submission {
+        if let Some(pending) = &self.runtime_host.client_projection.pending_submission {
             let lifecycle = *pending.lifecycle.lock().unwrap();
             if lifecycle != SubmissionLeaseLifecycle::Abandoned
-                && self.snapshot_coordinator.is_current(&pending.handle)
+                && self
+                    .runtime_host
+                    .client_projection
+                    .coordinator
+                    .is_current(&pending.handle)
             {
                 return Err(CodingSessionError::SubmissionPreparationBusy);
             }
         }
         let lifecycle = Arc::new(Mutex::new(SubmissionLeaseLifecycle::Prepared));
-        self.pending_submission = Some(PendingSubmissionLease {
+        self.runtime_host.client_projection.pending_submission = Some(PendingSubmissionLease {
             handle,
             descriptor,
             prompt_fingerprint,
@@ -246,19 +254,28 @@ impl CodingAgentSession {
         descriptor: public_operation::OperationDescriptor,
         fingerprint: Option<&(String, String)>,
     ) -> Option<SubmissionCommitGuard> {
-        let pending = self.pending_submission.as_ref()?;
+        let pending = self
+            .runtime_host
+            .client_projection
+            .pending_submission
+            .as_ref()?;
         if *pending.lifecycle.lock().unwrap() == SubmissionLeaseLifecycle::Abandoned {
-            self.pending_submission = None;
+            self.runtime_host.client_projection.pending_submission = None;
             return None;
         }
         if pending.descriptor != descriptor || pending.prompt_fingerprint.as_ref() != fingerprint {
             return None;
         }
-        let pending = self.pending_submission.take().unwrap();
+        let pending = self
+            .runtime_host
+            .client_projection
+            .pending_submission
+            .take()
+            .unwrap();
         *pending.lifecycle.lock().unwrap() = SubmissionLeaseLifecycle::Consuming;
         Some(SubmissionCommitGuard {
-            client_service: self.client_service.clone(),
-            coordinator: self.snapshot_coordinator.clone(),
+            client_service: self.runtime_host.client_projection.clients.clone(),
+            coordinator: self.runtime_host.client_projection.coordinator.clone(),
             handle: pending.handle,
             lifecycle: pending.lifecycle,
             execution: None,

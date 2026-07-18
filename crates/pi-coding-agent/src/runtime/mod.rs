@@ -9,6 +9,8 @@ pub(crate) mod facade;
 pub(crate) mod intent;
 pub(crate) mod operation;
 pub(crate) mod outcome;
+pub(crate) mod owners;
 pub(crate) mod scheduler;
+pub(crate) mod session_coordinator;
 pub(crate) mod snapshot;
 pub(crate) mod submission;

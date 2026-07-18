@@ -81,9 +81,12 @@ impl CodingAgentSession {
             delegation_lineage: Vec::new(),
         };
         crate::operations::delegation::confirmation::queue_pending(
-            &mut self.persistence,
-            &mut self.pending_delegation_confirmations,
-            &self.event_service,
+            &mut self.runtime_host.session_coordinator.persistence,
+            &mut self
+                .runtime_host
+                .session_coordinator
+                .pending_delegation_confirmations,
+            &self.runtime_host.event_hub.service,
             pending,
             true,
         )
@@ -92,7 +95,7 @@ impl CodingAgentSession {
 
     #[cfg(test)]
     pub(super) fn persistent_session_service(&self) -> &SessionService {
-        match &self.persistence {
+        match &self.runtime_host.session_coordinator.persistence {
             SessionPersistence::Persistent(session_service) => session_service,
             SessionPersistence::NonPersistent(_) => {
                 panic!("expected persistent coding agent session")
@@ -104,6 +107,9 @@ impl CodingAgentSession {
     pub(super) fn current_capability_generation_for_tests(
         &self,
     ) -> crate::runtime::capability::CapabilityGeneration {
-        self.capability_snapshots.current_generation()
+        self.runtime_host
+            .operation_supervisor
+            .capabilities
+            .current_generation()
     }
 }
