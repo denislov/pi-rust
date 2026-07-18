@@ -35,11 +35,13 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   fields; checkpoint and finalization use typed `SessionTransactionWriter`
   commands while staged events remain workflow-local. Transactions created by
   one `SessionService` share a bounded writer actor and reject queue saturation.
-  Last-client drop closes the sender and joins the actor; closed writers reject
-  commands. RuntimeHost shutdown drains active operations, closes/joins the
-  writer, and only then publishes shutdown. Independently opened same-session
-  coordination and remaining direct session mutations are active `RIF-008`
-  work.
+  Authorization request/resolution facts use that same actor, and their scoped
+  writer carries only the session identity plus the writer port. Last
+  writer-handle drop closes the sender and joins the actor; closed writers
+  reject commands. RuntimeHost shutdown drains active operations, closes/joins
+  the writer, and only then publishes shutdown. Independently opened
+  same-session coordination and remaining direct session mutations are active
+  `RIF-008` work.
 - `IntentRouter`, `OperationScheduler`, `OperationControl`, typed operation
   metadata, root/child lineage, capability snapshots, and generation-scoped
   cancellation exist.

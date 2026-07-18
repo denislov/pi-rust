@@ -57,8 +57,8 @@ pub(crate) struct SessionService {
 
 #[derive(Debug, Clone)]
 pub(crate) struct SessionEventWriter {
-    store: SessionLogStore,
-    handle: SessionHandle,
+    session_id: String,
+    writer: SessionTransactionWriter,
 }
 
 impl SessionEventWriter {
@@ -71,7 +71,6 @@ impl SessionEventWriter {
         if data.is_empty() {
             return Ok(());
         }
-        let session_id = self.handle.manifest().session_id.clone();
         let mut ids = SystemIdGenerator;
         let clock = SystemClock;
         let updated_at = clock.now_rfc3339();
@@ -79,7 +78,7 @@ impl SessionEventWriter {
             .into_iter()
             .map(|data| {
                 SessionEventEnvelope::new(
-                    session_id.clone(),
+                    self.session_id.clone(),
                     ids.next_event_id(),
                     updated_at.clone(),
                     data,
@@ -88,7 +87,7 @@ impl SessionEventWriter {
                 .with_turn_id(turn_id)
             })
             .collect::<Vec<_>>();
-        self.store.append_events(&self.handle, &events)
+        self.writer.append_checkpoint_events(events)
     }
 }
 
@@ -991,8 +990,8 @@ impl SessionService {
 
     pub(crate) fn event_writer(&self) -> SessionEventWriter {
         SessionEventWriter {
-            store: self.store.clone(),
-            handle: self.handle.clone(),
+            session_id: self.handle.manifest().session_id.clone(),
+            writer: self.transaction_writer(),
         }
     }
 

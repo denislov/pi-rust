@@ -120,6 +120,13 @@ impl SessionTransactionWriter {
         })?
     }
 
+    pub(crate) fn append_checkpoint_events(
+        &self,
+        events: Vec<SessionEventEnvelope>,
+    ) -> Result<(), CodingSessionError> {
+        self.execute(SessionTransactionWriterCommand::Checkpoint { events })
+    }
+
     pub(crate) fn shutdown(&self) -> Result<(), CodingSessionError> {
         match self.inner.sender.lock() {
             Ok(mut sender) => {
@@ -707,9 +714,7 @@ where
     fn flush_pending(&mut self) -> Result<(), CodingSessionError> {
         if let Err(error) = self
             .writer
-            .execute(SessionTransactionWriterCommand::Checkpoint {
-                events: self.pending_events.clone(),
-            })
+            .append_checkpoint_events(self.pending_events.clone())
         {
             self.state = TransactionState::InDoubt;
             return Err(CodingSessionError::PartialCommit {

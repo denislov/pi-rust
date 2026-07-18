@@ -2439,6 +2439,25 @@ fn turn_transaction_stages_through_typed_writer_commands_without_repository_hand
         service.contains("transaction_writer: SessionTransactionWriter"),
         "one SessionService owner must share one transaction writer transport"
     );
+    let event_writer_start = service
+        .find("pub(crate) struct SessionEventWriter")
+        .expect("SessionEventWriter declaration");
+    let event_writer_impl = service[event_writer_start..]
+        .find("impl SessionEventWriter")
+        .map(|offset| event_writer_start + offset)
+        .expect("SessionEventWriter implementation");
+    let event_writer_fields = &service[event_writer_start..event_writer_impl];
+    assert!(event_writer_fields.contains("writer: SessionTransactionWriter"));
+    assert!(event_writer_fields.contains("session_id: String"));
+    assert!(
+        !event_writer_fields.contains("store: SessionLogStore")
+            && !event_writer_fields.contains("handle: SessionHandle"),
+        "authorization event writer must not retain raw repository authority"
+    );
+    assert!(
+        service.contains("self.writer.append_checkpoint_events(events)"),
+        "authorization durable facts must use the shared bounded writer"
+    );
     let connection = fs::read_to_string(scan.crate_root.join("src/runtime/facade/connection.rs"))
         .expect("read runtime shutdown source");
     let drain = connection

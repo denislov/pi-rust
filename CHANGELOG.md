@@ -46,8 +46,10 @@
   workflow-local staging now reaches persistence through typed checkpoint and
   finalize writer commands over a shared bounded transaction actor, preserving
   checkpoint and PartialCommit semantics while rejecting queue saturation and
-  closed writers; last-client drop and drained RuntimeHost shutdown close and
-  join the actor before shutdown publication.
+  closed writers. Authorization request/resolution facts now use the same
+  bounded actor instead of retaining raw repository handles. Last writer-handle
+  drop and drained RuntimeHost shutdown close and join the actor before shutdown
+  publication.
 
 ### Release Status
 
