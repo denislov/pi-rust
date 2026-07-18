@@ -109,7 +109,10 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   success/failure/abort and non-leaf commit/failure paths. Operation-terminal
   and recovery publication plus restart reconciliation remain open under
   `RIF-002` and `RIF-009-004`, respectively. `RIF-009-003` now owns the next
-  committed projection/snapshot cursor slice.
+  committed projection/snapshot cursor slice. Its first slice is implemented:
+  outbox schema v2 stores `committed_through_session_sequence`, while only the
+  repository may turn a validated candidate into a cursor-bearing durable
+  record. The committed read model and public snapshot are not yet cursor-bound.
 - The current transaction may append facts and then fail a manifest refresh,
   producing partial-commit uncertainty that startup recovery can inspect.
 

@@ -12,7 +12,7 @@ use super::manifest::{
     default_agent_profile_id,
 };
 use super::replay::{SessionReplay, fold_events};
-use crate::events::outbox::DurableOutboxRecord;
+use crate::events::outbox::{DurableOutboxRecord, DurableOutboxRecordCandidate};
 use crate::runtime::facade::{CodingSessionError, ProfileId};
 use crate::session::event::SessionEventEnvelope;
 
@@ -333,11 +333,47 @@ impl SessionLogStore {
         &self,
         handle: &SessionHandle,
         events: &[SessionEventEnvelope],
-        records: &[DurableOutboxRecord],
+        records: &[DurableOutboxRecordCandidate],
     ) -> Result<(), CodingSessionError> {
         let _append_guard = self.append_lock.lock().unwrap();
-        self.append_outbox_locked(handle, records)?;
-        self.append_events_locked(handle, events)
+        let prepared_events = self.prepare_events_locked(handle, events)?;
+        let committed_through_session_sequence = prepared_events
+            .last()
+            .and_then(|event| event.session_sequence)
+            .ok_or_else(|| {
+                session_error("outbox commit requires at least one sequenced session event")
+            })?;
+        let source_event_ids = prepared_events
+            .iter()
+            .map(|event| event.event_id.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        let records = records
+            .iter()
+            .cloned()
+            .map(|candidate| {
+                if candidate.session_id != handle.manifest.session_id {
+                    return Err(session_error(format!(
+                        "outbox session {} does not match session {}",
+                        candidate.session_id, handle.manifest.session_id
+                    )));
+                }
+                if candidate
+                    .source_event_ids
+                    .iter()
+                    .any(|event_id| !source_event_ids.contains(event_id.as_str()))
+                {
+                    return Err(session_error(format!(
+                        "outbox record {} references an event outside its commit batch",
+                        candidate.record_id
+                    )));
+                }
+                candidate
+                    .commit(committed_through_session_sequence)
+                    .map_err(session_error)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        self.append_outbox_locked(handle, &records)?;
+        self.append_prepared_events_locked(handle, &prepared_events)
     }
 
     fn append_events_locked(
@@ -345,10 +381,35 @@ impl SessionLogStore {
         handle: &SessionHandle,
         events: &[SessionEventEnvelope],
     ) -> Result<(), CodingSessionError> {
+        let prepared_events = self.prepare_events_locked(handle, events)?;
+        self.append_prepared_events_locked(handle, &prepared_events)
+    }
+
+    fn prepare_events_locked(
+        &self,
+        handle: &SessionHandle,
+        events: &[SessionEventEnvelope],
+    ) -> Result<Vec<SessionEventEnvelope>, CodingSessionError> {
+        let event_log_path = event_log_path(&handle.session_dir, &handle.manifest)?;
+        let next_sequence = next_session_sequence(&event_log_path, &handle.manifest.session_id)?;
+        (next_sequence..)
+            .zip(events)
+            .map(|(next_sequence, event)| {
+                let event = event.clone().with_session_sequence(next_sequence);
+                validate_event_for_session(&event, &handle.manifest.session_id)?;
+                Ok(event)
+            })
+            .collect()
+    }
+
+    fn append_prepared_events_locked(
+        &self,
+        handle: &SessionHandle,
+        events: &[SessionEventEnvelope],
+    ) -> Result<(), CodingSessionError> {
         #[cfg(test)]
         self.fail_if_injected(StoreFailurePoint::AppendEvents)?;
         let event_log_path = event_log_path(&handle.session_dir, &handle.manifest)?;
-        let next_sequence = next_session_sequence(&event_log_path, &handle.manifest.session_id)?;
         let file = OpenOptions::new()
             .append(true)
             .open(&event_log_path)
@@ -360,9 +421,7 @@ impl SessionLogStore {
             })?;
         let mut writer = BufWriter::new(file);
 
-        for (next_sequence, event) in (next_sequence..).zip(events) {
-            let event = event.clone().with_session_sequence(next_sequence);
-            validate_event_for_session(&event, &handle.manifest.session_id)?;
+        for event in events {
             serde_json::to_writer(&mut writer, &event).map_err(|error| {
                 session_error(format!("failed to serialize session event: {error}"))
             })?;

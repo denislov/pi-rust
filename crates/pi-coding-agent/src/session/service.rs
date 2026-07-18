@@ -2596,6 +2596,7 @@ mod tests {
         );
         assert_eq!(record.operation_id.as_deref(), Some(operation_id.as_str()));
         assert!(!record.source_event_ids.is_empty());
+        assert!(record.committed_through_session_sequence > 0);
     }
 
     #[test]

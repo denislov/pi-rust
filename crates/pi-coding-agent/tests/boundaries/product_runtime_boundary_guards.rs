@@ -2441,12 +2441,24 @@ fn turn_transaction_stages_through_typed_writer_commands_without_repository_hand
         "let mut handle = handle",
         "execute_writer_command(&store, &mut handle, envelope.command)",
         "refresh_writer_handle(store, handle)",
-        "outbox_records: Vec<DurableOutboxRecord>",
+        "outbox_records: Vec<DurableOutboxRecordCandidate>",
         "append_events_and_outbox(handle, &events, &outbox_records)",
     ] {
         assert!(
             transaction.contains(transport),
             "missing bounded transaction writer transport contract: {transport}"
+        );
+    }
+    let repository = fs::read_to_string(scan.crate_root.join("src/session/repository.rs"))
+        .expect("read session repository source");
+    for durable_cursor_contract in [
+        ".commit(committed_through_session_sequence)",
+        "outbox commit requires at least one sequenced session event",
+        "references an event outside its commit batch",
+    ] {
+        assert!(
+            repository.contains(durable_cursor_contract),
+            "repository must own durable outbox cursor assignment: {durable_cursor_contract}"
         );
     }
     let service = fs::read_to_string(scan.crate_root.join("src/session/service.rs"))

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use super::emission::ProductEventDraft;
 
 pub const OUTBOX_SCHEMA: &str = "pi.coding-agent.product-event-outbox";
-pub const OUTBOX_VERSION: u32 = 1;
+pub const OUTBOX_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -34,20 +34,18 @@ impl DurableOutboxIntent {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct DurableOutboxRecord {
-    pub schema: String,
-    pub version: u32,
-    pub record_id: String,
-    pub session_id: String,
-    pub operation_id: Option<String>,
-    pub source_event_ids: Vec<String>,
-    pub kind: DurableOutboxRecordKind,
-    pub draft: ProductEventDraft,
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DurableOutboxRecordCandidate {
+    pub(crate) record_id: String,
+    pub(crate) session_id: String,
+    pub(crate) operation_id: Option<String>,
+    pub(crate) source_event_ids: Vec<String>,
+    pub(crate) kind: DurableOutboxRecordKind,
+    pub(crate) draft: ProductEventDraft,
 }
 
-impl DurableOutboxRecord {
-    pub fn new(
+impl DurableOutboxRecordCandidate {
+    pub(crate) fn new(
         record_id: impl Into<String>,
         session_id: impl Into<String>,
         operation_id: Option<String>,
@@ -71,8 +69,6 @@ impl DurableOutboxRecord {
             return Err("outbox source event ids must not be empty");
         }
         Ok(Self {
-            schema: OUTBOX_SCHEMA.into(),
-            version: OUTBOX_VERSION,
             record_id,
             session_id,
             operation_id,
@@ -80,6 +76,62 @@ impl DurableOutboxRecord {
             kind,
             draft,
         })
+    }
+
+    pub(crate) fn commit(
+        self,
+        committed_through_session_sequence: u64,
+    ) -> Result<DurableOutboxRecord, &'static str> {
+        if committed_through_session_sequence == 0 {
+            return Err("outbox committed session sequence must be positive");
+        }
+        Ok(DurableOutboxRecord {
+            schema: OUTBOX_SCHEMA.into(),
+            version: OUTBOX_VERSION,
+            record_id: self.record_id,
+            session_id: self.session_id,
+            operation_id: self.operation_id,
+            source_event_ids: self.source_event_ids,
+            committed_through_session_sequence,
+            kind: self.kind,
+            draft: self.draft,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DurableOutboxRecord {
+    pub schema: String,
+    pub version: u32,
+    pub record_id: String,
+    pub session_id: String,
+    pub operation_id: Option<String>,
+    pub source_event_ids: Vec<String>,
+    pub committed_through_session_sequence: u64,
+    pub kind: DurableOutboxRecordKind,
+    pub draft: ProductEventDraft,
+}
+
+impl DurableOutboxRecord {
+    #[cfg(test)]
+    pub fn new(
+        record_id: impl Into<String>,
+        session_id: impl Into<String>,
+        operation_id: Option<String>,
+        source_event_ids: Vec<String>,
+        kind: DurableOutboxRecordKind,
+        draft: ProductEventDraft,
+        committed_through_session_sequence: u64,
+    ) -> Result<Self, &'static str> {
+        DurableOutboxRecordCandidate::new(
+            record_id,
+            session_id,
+            operation_id,
+            source_event_ids,
+            kind,
+            draft,
+        )?
+        .commit(committed_through_session_sequence)
     }
 }
 
@@ -114,6 +166,7 @@ mod tests {
             vec!["evt-outbox".into()],
             DurableOutboxRecordKind::SessionWrite,
             draft(),
+            7,
         )
         .unwrap();
 
@@ -123,6 +176,7 @@ mod tests {
             record.record_id,
             "session-outbox/op-outbox/diagnostic/outbox-test"
         );
+        assert_eq!(record.committed_through_session_sequence, 7);
     }
 
     #[test]
@@ -135,6 +189,7 @@ mod tests {
                 vec!["evt-outbox".into()],
                 DurableOutboxRecordKind::Recovery,
                 draft(),
+                1,
             )
             .is_err()
         );
@@ -146,6 +201,7 @@ mod tests {
                 vec!["evt-outbox".into()],
                 DurableOutboxRecordKind::Recovery,
                 draft(),
+                1,
             )
             .is_err()
         );
@@ -157,6 +213,19 @@ mod tests {
                 Vec::new(),
                 DurableOutboxRecordKind::Recovery,
                 draft(),
+                1,
+            )
+            .is_err()
+        );
+        assert!(
+            DurableOutboxRecord::new(
+                "record",
+                "session-outbox",
+                None,
+                vec!["evt-outbox".into()],
+                DurableOutboxRecordKind::Recovery,
+                draft(),
+                0,
             )
             .is_err()
         );
@@ -171,6 +240,7 @@ mod tests {
             vec!["evt-outbox".into()],
             DurableOutboxRecordKind::Recovery,
             draft(),
+            3,
         )
         .unwrap();
         let encoded = serde_json::to_string(&record).unwrap();

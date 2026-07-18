@@ -12,7 +12,7 @@ use serde_json::Value;
 use super::id::{Clock, IdGenerator};
 use super::manifest::SessionManifest;
 use super::repository::{ManifestPatch, SessionHandle, SessionLogStore};
-use crate::events::outbox::{DurableOutboxIntent, DurableOutboxRecord};
+use crate::events::outbox::{DurableOutboxIntent, DurableOutboxRecordCandidate};
 use crate::operations::self_healing_edit::flow::{
     SelfHealingEditOutcome, SelfHealingEditRepairAttempt,
 };
@@ -77,13 +77,13 @@ enum SessionTransactionWriterCommand {
     },
     Finalize {
         events: Vec<SessionEventEnvelope>,
-        outbox_records: Vec<DurableOutboxRecord>,
+        outbox_records: Vec<DurableOutboxRecordCandidate>,
         updated_at: String,
         active_leaf_id: Option<String>,
     },
     CommitSessionMutation {
         events: Vec<SessionEventEnvelope>,
-        outbox_records: Vec<DurableOutboxRecord>,
+        outbox_records: Vec<DurableOutboxRecordCandidate>,
         manifest_patch: ManifestPatch,
         operation_id: Option<String>,
     },
@@ -204,7 +204,7 @@ impl SessionTransactionWriter {
     pub(crate) fn commit_session_mutation_with_outbox(
         &self,
         events: Vec<SessionEventEnvelope>,
-        outbox_records: Vec<DurableOutboxRecord>,
+        outbox_records: Vec<DurableOutboxRecordCandidate>,
         manifest_patch: ManifestPatch,
         operation_id: Option<String>,
     ) -> Result<(), CodingSessionError> {
@@ -987,13 +987,13 @@ where
     fn outbox_record(
         &self,
         intent: DurableOutboxIntent,
-    ) -> Result<DurableOutboxRecord, CodingSessionError> {
+    ) -> Result<DurableOutboxRecordCandidate, CodingSessionError> {
         let source_event_ids = self
             .pending_events
             .iter()
             .map(|event| event.event_id.clone())
             .collect();
-        DurableOutboxRecord::new(
+        DurableOutboxRecordCandidate::new(
             intent.record_id,
             self.session_id.clone(),
             Some(self.operation_id.clone()),
@@ -1024,7 +1024,7 @@ where
     fn finalize_pending(
         &mut self,
         active_leaf_id: Option<String>,
-        outbox_records: Vec<DurableOutboxRecord>,
+        outbox_records: Vec<DurableOutboxRecordCandidate>,
     ) -> Result<(), CodingSessionError> {
         if let Err(error) = self
             .writer
@@ -1217,8 +1217,11 @@ mod tests {
         release_sender.send(()).unwrap();
     }
 
-    fn outbox_record_for_tests(operation_id: &str, source_event_id: &str) -> DurableOutboxRecord {
-        DurableOutboxRecord::new(
+    fn outbox_record_for_tests(
+        operation_id: &str,
+        source_event_id: &str,
+    ) -> DurableOutboxRecordCandidate {
+        DurableOutboxRecordCandidate::new(
             format!("sess_tx/{operation_id}/operation_started"),
             "sess_tx",
             Some(operation_id.into()),
@@ -1276,11 +1279,11 @@ mod tests {
                 .unwrap()
                 .contains("evt_outbox_operation_started")
         );
-        assert!(
-            std::fs::read_to_string(outbox_path)
-                .unwrap()
-                .contains("sess_tx/op_outbox/operation_started")
-        );
+        let outbox = std::fs::read_to_string(outbox_path).unwrap();
+        let record: crate::events::outbox::DurableOutboxRecord =
+            serde_json::from_str(outbox.lines().next().unwrap()).unwrap();
+        assert_eq!(record.record_id, "sess_tx/op_outbox/operation_started");
+        assert_eq!(record.committed_through_session_sequence, 1);
     }
 
     #[test]
@@ -1319,11 +1322,14 @@ mod tests {
                 if operation_id == "op_outbox_uncertain"
         ));
         assert!(std::fs::read_to_string(event_path).unwrap().is_empty());
-        assert!(
-            std::fs::read_to_string(outbox_path)
-                .unwrap()
-                .contains("sess_tx/op_outbox_uncertain/operation_started")
+        let outbox = std::fs::read_to_string(outbox_path).unwrap();
+        let record: crate::events::outbox::DurableOutboxRecord =
+            serde_json::from_str(outbox.lines().next().unwrap()).unwrap();
+        assert_eq!(
+            record.record_id,
+            "sess_tx/op_outbox_uncertain/operation_started"
         );
+        assert_eq!(record.committed_through_session_sequence, 1);
     }
 
     #[test]

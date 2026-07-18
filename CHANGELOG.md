@@ -92,6 +92,10 @@
 - Activated `RIF-009-003` for the committed projection/snapshot cursor. Durable
   operation-terminal and recovery records remain sequenced behind the
   supervisor state machine in `RIF-002`.
+- Added the first `RIF-009-003` cursor slice: outbox schema v2 records the
+  `committed_through_session_sequence`; transaction code passes an uncommitted
+  candidate, and only the repository assigns its durable cursor after validating
+  the candidate session and source event IDs against the sequenced fact batch.
 
 ### Release Status
 
