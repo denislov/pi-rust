@@ -78,9 +78,11 @@
   read authority, bounded pressure behavior, shutdown drain, independent-session
   concurrency, navigation projection ordering, and workspace release gates now
   pass. The next planned slice is `RIF-009` outbox/snapshot consistency.
-- Started the `RIF-009` work order with `RIF-009-001`: define durable outbox
-  records and semantic identities. The current retained EventService window is
-  explicitly documented as process-local replay state, not durable outbox proof.
+- Completed `RIF-009-001`: added the typed `DurableOutboxRecord` contract with
+  schema/version, semantic identity, session/operation correlation, record kind,
+  and structured product draft payload. `RIF-009-002` is now active; the
+  retained EventService window remains explicitly process-local replay state,
+  not durable outbox proof.
 
 ### Release Status
 

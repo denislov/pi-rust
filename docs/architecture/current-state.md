@@ -102,7 +102,8 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   exist; `RIF-009` owns it.
 - The retained broadcast window is live delivery/replay state, not durable
   evidence. `RIF-009-001` must define an outbox record and semantic identity
-  before a writer batch can claim session/outbox atomicity.
+  before a writer batch can claim session/outbox atomicity. The record contract
+  now exists in `events::outbox`; writer-batch persistence is `RIF-009-002`.
 - The current transaction may append facts and then fail a manifest refresh,
   producing partial-commit uncertainty that startup recovery can inspect.
 

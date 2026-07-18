@@ -6,6 +6,7 @@ pub(crate) mod delegation;
 pub(crate) mod diagnostic;
 pub(crate) mod emission;
 pub(crate) mod message;
+pub(crate) mod outbox;
 pub(crate) mod profile;
 pub(crate) mod prompt;
 pub(crate) mod prompt_stream;
