@@ -59,9 +59,12 @@ is absent from a projection.
 
 Authenticated, authorized controls expose inspect, retry-now, and resolve. Every
 control requires the recovery ID plus expected generation/version and emits a
-redacted audit record. Operator resolution may select failure or abort with a
-reason. Completion is permitted only when durable evidence proves the intended
-commit. Deleting or ignoring a recovery record is not a resolution.
+redacted audit record. The RPC adapter authenticates these controls with the
+trusted-host `PI_RUST_RPC_AUTH_TOKEN` and records `rpc_token` as the audit
+authority; the embedded Rust facade records `trusted_host`. Operator resolution
+may select failure or abort with a reason. Completion is permitted only when
+durable evidence proves the intended commit. Deleting or ignoring a recovery
+record is not a resolution.
 
 ### Subsequent Work
 
@@ -126,3 +129,5 @@ notes.
 - affected-session write blocking with unrelated-session concurrency;
 - snapshot/reconnect/RPC/JSON/TUI pending and resolution behavior;
 - audit, authorization, redaction, pressure, retention, and shutdown matrices.
+- RPC authorization rejects missing or mismatched tokens before any session
+  mutation; idempotency keys are scoped to the recovery command family.
