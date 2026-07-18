@@ -2,7 +2,10 @@ use std::sync::Mutex;
 
 use super::capability::CapabilityGeneration;
 use super::facade::CodingSessionError;
-use crate::operations::delegation::PendingDelegationConfirmationQueue;
+use crate::operations::delegation::{
+    PendingDelegationConfirmationQueue, PendingDelegationConfirmationState,
+};
+use crate::operations::prompt::context::DelegationRequest;
 use crate::profiles::ProfileId;
 use crate::services::session::{ReplayDerivedOwnerState, replay_derived_owner_state};
 #[cfg(test)]
@@ -11,7 +14,7 @@ use crate::session::service::{SessionPersistence, StartupRecoveryMarker};
 
 /// Sole mutable owner of product session state.
 #[derive(Debug)]
-pub(super) struct SessionCoordinator {
+pub(crate) struct SessionCoordinator {
     pub(super) persistence: SessionPersistence,
     pub(super) pending_delegation_confirmations: PendingDelegationConfirmationQueue,
     pub(super) startup_recovery_markers: Mutex<Vec<StartupRecoveryMarker>>,
@@ -19,7 +22,7 @@ pub(super) struct SessionCoordinator {
 
 /// Identity-bearing command accepted by the per-session writer.
 #[derive(Debug)]
-pub(super) struct SessionWriterCommand {
+pub(crate) struct SessionWriterCommand {
     pub(super) operation_id: String,
     pub(super) capability_generation: CapabilityGeneration,
     pub(super) mutation: SessionMutation,
@@ -79,10 +82,60 @@ impl SessionWriterCommand {
             mutation: SessionMutation::ForkSession { target_leaf_id },
         }
     }
+
+    pub(super) fn reject_delegation(
+        operation_id: impl Into<String>,
+        capability_generation: CapabilityGeneration,
+        source_operation_id: impl Into<String>,
+        tool_call_id: impl Into<String>,
+        now: impl Into<String>,
+        reason: impl Into<String>,
+    ) -> Self {
+        Self {
+            operation_id: operation_id.into(),
+            capability_generation,
+            mutation: SessionMutation::RejectDelegation {
+                source_operation_id: source_operation_id.into(),
+                tool_call_id: tool_call_id.into(),
+                now: now.into(),
+                reason: reason.into(),
+            },
+        }
+    }
+
+    pub(crate) fn approve_delegation(
+        operation_id: impl Into<String>,
+        capability_generation: CapabilityGeneration,
+        source_operation_id: impl Into<String>,
+        tool_call_id: impl Into<String>,
+        now: impl Into<String>,
+    ) -> Self {
+        Self {
+            operation_id: operation_id.into(),
+            capability_generation,
+            mutation: SessionMutation::ApproveDelegation {
+                source_operation_id: source_operation_id.into(),
+                tool_call_id: tool_call_id.into(),
+                now: now.into(),
+            },
+        }
+    }
+
+    pub(crate) fn adopt_delegations(
+        operation_id: impl Into<String>,
+        capability_generation: CapabilityGeneration,
+        pending: Vec<PendingDelegationConfirmationState>,
+    ) -> Self {
+        Self {
+            operation_id: operation_id.into(),
+            capability_generation,
+            mutation: SessionMutation::AdoptDelegations { pending },
+        }
+    }
 }
 
 #[derive(Debug)]
-pub(super) enum SessionMutation {
+pub(crate) enum SessionMutation {
     SetDefaultAgentProfile {
         profile_id: ProfileId,
     },
@@ -95,6 +148,20 @@ pub(super) enum SessionMutation {
     },
     ForkSession {
         target_leaf_id: Option<String>,
+    },
+    RejectDelegation {
+        source_operation_id: String,
+        tool_call_id: String,
+        now: String,
+        reason: String,
+    },
+    ApproveDelegation {
+        source_operation_id: String,
+        tool_call_id: String,
+        now: String,
+    },
+    AdoptDelegations {
+        pending: Vec<PendingDelegationConfirmationState>,
     },
 }
 
@@ -125,12 +192,13 @@ mod tests {
             ))
             .unwrap();
 
-        assert_eq!(
+        assert!(matches!(
             reply,
             SessionWriterReply::DefaultAgentProfile {
-                profile_id: ProfileId::from("reviewer"),
+                profile_id,
             }
-        );
+            if profile_id.as_str() == "reviewer"
+        ));
         let SessionPersistence::NonPersistent(state) = &coordinator.persistence else {
             unreachable!("fixture is transient")
         };
@@ -157,8 +225,8 @@ mod tests {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum SessionWriterReply {
+#[derive(Debug)]
+pub(crate) enum SessionWriterReply {
     DefaultAgentProfile {
         profile_id: ProfileId,
     },
@@ -171,6 +239,22 @@ pub(super) enum SessionWriterReply {
     ForkedSession {
         session_id: String,
     },
+    DelegationRejected {
+        request: DelegationRequest,
+        reason: String,
+    },
+    DelegationApproved {
+        pending: Box<PendingDelegationConfirmationState>,
+    },
+    DelegationsAdopted {
+        diagnostics: Vec<SessionWriterDiagnostic>,
+    },
+}
+
+#[derive(Debug)]
+pub(crate) struct SessionWriterDiagnostic {
+    pub(crate) operation_id: Option<String>,
+    pub(crate) message: String,
 }
 
 impl SessionCoordinator {
@@ -189,7 +273,7 @@ impl SessionCoordinator {
     /// This synchronous entry point is the first migration stage of the writer
     /// protocol. Its `&mut self` authority guarantees one logical writer; the
     /// bounded command transport is added without changing workflow contracts.
-    pub(super) fn execute_writer_command(
+    pub(crate) fn execute_writer_command(
         &mut self,
         command: SessionWriterCommand,
     ) -> Result<SessionWriterReply, CodingSessionError> {
@@ -256,6 +340,101 @@ impl SessionCoordinator {
                 let session_id = forked_service.session_id().to_owned();
                 self.install_forked_session(forked_service, owner_state);
                 Ok(SessionWriterReply::ForkedSession { session_id })
+            }
+            SessionMutation::RejectDelegation {
+                source_operation_id,
+                tool_call_id,
+                now,
+                reason,
+            } => {
+                let pending = crate::operations::delegation::confirmation::active_pending(
+                    &self.pending_delegation_confirmations,
+                    &source_operation_id,
+                    &tool_call_id,
+                    &now,
+                )?;
+                let reason = if reason.trim().is_empty() {
+                    "delegation rejected by user".to_string()
+                } else {
+                    reason
+                };
+                if let SessionPersistence::Persistent(session_service) = &mut self.persistence {
+                    session_service.record_delegation_confirmation_rejected(
+                        pending.request.operation_id.clone(),
+                        pending.request.tool_call_id.clone(),
+                        reason.clone(),
+                    )?;
+                }
+                let pending = self
+                    .pending_delegation_confirmations
+                    .remove_active(&source_operation_id, &tool_call_id, &now)
+                    .unwrap_or(pending);
+                Ok(SessionWriterReply::DelegationRejected {
+                    request: pending.request,
+                    reason,
+                })
+            }
+            SessionMutation::ApproveDelegation {
+                source_operation_id,
+                tool_call_id,
+                now,
+            } => {
+                let pending = crate::operations::delegation::confirmation::active_pending(
+                    &self.pending_delegation_confirmations,
+                    &source_operation_id,
+                    &tool_call_id,
+                    &now,
+                )?;
+                if let SessionPersistence::Persistent(session_service) = &mut self.persistence {
+                    session_service.record_delegation_confirmation_approved(
+                        pending.request.operation_id.clone(),
+                        pending.request.tool_call_id.clone(),
+                        command.operation_id.clone(),
+                    )?;
+                }
+                let pending = self
+                    .pending_delegation_confirmations
+                    .remove_active(&source_operation_id, &tool_call_id, &now)
+                    .unwrap_or(pending);
+                Ok(SessionWriterReply::DelegationApproved {
+                    pending: Box::new(pending),
+                })
+            }
+            SessionMutation::AdoptDelegations { pending } => {
+                let mut diagnostics = Vec::new();
+                for pending in pending {
+                    if self.pending_delegation_confirmations.is_duplicate(&pending) {
+                        diagnostics.push(SessionWriterDiagnostic {
+                            operation_id: Some(pending.request.operation_id.clone()),
+                            message: format!(
+                                "duplicate pending delegation confirmation ignored: operation_id={}, tool_call_id={}",
+                                pending.request.operation_id, pending.request.tool_call_id
+                            ),
+                        });
+                        continue;
+                    }
+                    let runtime_seed =
+                        crate::operations::delegation::delegation_runtime_seed_from_prompt_options(
+                            &pending.prompt_options,
+                            pending.child_delegation_depth,
+                            &pending.delegation_lineage,
+                        )?;
+                    if let SessionPersistence::Persistent(session_service) = &mut self.persistence {
+                        session_service.record_delegation_confirmation_requested(
+                            pending.request.operation_id.clone(),
+                            pending.request.turn_id.clone(),
+                            pending.request.tool_call_id.clone(),
+                            pending.request.requesting_profile_id.clone(),
+                            pending.request.target_kind,
+                            pending.request.target_id.clone(),
+                            pending.request.task.clone(),
+                            pending.reason.clone(),
+                            runtime_seed,
+                        )?;
+                    }
+                    self.pending_delegation_confirmations.push(pending);
+                }
+                Ok(SessionWriterReply::DelegationsAdopted { diagnostics })
             }
         }
     }

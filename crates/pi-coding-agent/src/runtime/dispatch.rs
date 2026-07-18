@@ -89,18 +89,30 @@ impl CodingAgentSession {
                         .as_ref(),
                 )?;
                 let now = SystemClock.now_rfc3339();
-                crate::operations::delegation::confirmation::reject_pending(
-                    &mut self.runtime_host.session_coordinator.persistence,
-                    &mut self
-                        .runtime_host
-                        .session_coordinator
-                        .pending_delegation_confirmations,
-                    &self.runtime_host.event_hub.service,
-                    operation_id.as_str(),
-                    tool_call_id.as_str(),
-                    &now,
-                    reason,
+                let reply = self
+                    .runtime_host
+                    .session_coordinator
+                    .execute_writer_command(
+                    crate::runtime::session_coordinator::SessionWriterCommand::reject_delegation(
+                        operation_permit.execution().operation_id.clone(),
+                        operation_permit.execution().capability_generation,
+                        operation_id,
+                        tool_call_id,
+                        now,
+                        reason,
+                    ),
                 )?;
+                let crate::runtime::session_coordinator::SessionWriterReply::DelegationRejected {
+                    request,
+                    reason,
+                } = reply
+                else {
+                    unreachable!("delegation rejection writer command returns its typed reply")
+                };
+                self.runtime_host
+                    .event_hub
+                    .service
+                    .emit_delegation_rejected(&request, &reason);
                 Ok(OperationOutcome::DelegationRejection)
             }
             Operation::ForkSession { target_leaf_id } => {
@@ -151,10 +163,10 @@ impl CodingAgentSession {
                         target_leaf_id,
                     ),
                 )?;
-                debug_assert_eq!(
+                debug_assert!(matches!(
                     reply,
                     crate::runtime::session_coordinator::SessionWriterReply::ActiveLeaf
-                );
+                ));
                 self.refresh_snapshot_projection();
                 Ok(OperationOutcome::SwitchActiveLeaf)
             }
@@ -212,12 +224,13 @@ impl CodingAgentSession {
                                 profile_id.clone(),
                             ),
                     )?;
-                debug_assert_eq!(
+                debug_assert!(matches!(
                     reply,
                     crate::runtime::session_coordinator::SessionWriterReply::DefaultAgentProfile {
-                        profile_id: profile_id.clone(),
+                        profile_id: ref changed_profile_id,
                     }
-                );
+                    if changed_profile_id == &profile_id
+                ));
                 self.runtime_host
                     .event_hub
                     .service
@@ -559,11 +572,7 @@ impl CodingAgentSession {
                         operation_id,
                         tool_call_id,
                     } => crate::operations::delegation::execution::approve(
-                        &mut self.runtime_host.session_coordinator.persistence,
-                        &mut self
-                            .runtime_host
-                            .session_coordinator
-                            .pending_delegation_confirmations,
+                        &mut self.runtime_host.session_coordinator,
                         &self.runtime_host.runtime_service,
                         &self.runtime_host.flow_service,
                         &self.runtime_host.profile_registry,

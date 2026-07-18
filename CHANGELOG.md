@@ -41,7 +41,7 @@
   with explicit OperationSupervisor, SessionCoordinator, EventHub, and
   ClientProjectionCoordinator ownership. Added the identity-bearing session
   writer command/reply protocol and routed default-profile, fork, active-leaf,
-  and tree-label mutations through it.
+  tree-label, and delegation approval/rejection mutations through it.
 
 ### Release Status
 

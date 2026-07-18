@@ -2352,6 +2352,7 @@ fn runtime_host_owner_graph_and_first_writer_command_are_explicit() {
         "default-profile mutation must not bypass the writer command protocol"
     );
     for bypass in [
+        "confirmation::reject_pending(",
         "session_navigation::fork(",
         "session_navigation::switch_active_leaf(",
         "session_navigation::set_tree_label(",
@@ -2361,6 +2362,21 @@ fn runtime_host_owner_graph_and_first_writer_command_are_explicit() {
             "session mutation must not bypass the writer command protocol: {bypass}"
         );
     }
+    let delegation_execution = fs::read_to_string(
+        scan.crate_root
+            .join("src/operations/delegation/execution.rs"),
+    )
+    .expect("read delegation execution source");
+    assert!(
+        delegation_execution.contains("session_coordinator: &mut SessionCoordinator"),
+        "delegation approval must receive the narrow session owner"
+    );
+    assert!(
+        !delegation_execution.contains("persistence: &mut SessionPersistence")
+            && !delegation_execution
+                .contains("pending_confirmations: &mut PendingDelegationConfirmationQueue"),
+        "delegation approval must not split persistence and pending-queue authority"
+    );
 
     let mut workflow_host_leaks = Vec::new();
     for path in rust_files_under(&scan.crate_root.join("src/operations")) {

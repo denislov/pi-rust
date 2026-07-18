@@ -25,47 +25,6 @@ pub(crate) fn active_pending(
         .ok_or_else(|| pending_delegation_confirmation_not_found(operation_id, tool_call_id))
 }
 
-pub(crate) fn approve_pending(
-    persistence: &mut SessionPersistence,
-    queue: &mut PendingDelegationConfirmationQueue,
-    event_service: &EventService,
-    operation_id: &str,
-    tool_call_id: &str,
-    now: &str,
-    approval_operation_id: String,
-) -> Result<PendingDelegationConfirmationState, CodingSessionError> {
-    let pending = active_pending(queue, operation_id, tool_call_id, now)?;
-    record_delegation_confirmation_approved(persistence, &pending, approval_operation_id)?;
-    let pending = queue
-        .remove_active(operation_id, tool_call_id, now)
-        .unwrap_or(pending);
-    event_service.emit_delegation_approved(&pending.request);
-    Ok(pending)
-}
-
-pub(crate) fn reject_pending(
-    persistence: &mut SessionPersistence,
-    queue: &mut PendingDelegationConfirmationQueue,
-    event_service: &EventService,
-    operation_id: &str,
-    tool_call_id: &str,
-    now: &str,
-    reason: String,
-) -> Result<(), CodingSessionError> {
-    let pending = active_pending(queue, operation_id, tool_call_id, now)?;
-    let reason = if reason.trim().is_empty() {
-        "delegation rejected by user".to_string()
-    } else {
-        reason
-    };
-    record_delegation_confirmation_rejected(persistence, &pending, reason.clone())?;
-    let pending = queue
-        .remove_active(operation_id, tool_call_id, now)
-        .unwrap_or(pending);
-    event_service.emit_delegation_rejected(&pending.request, &reason);
-    Ok(())
-}
-
 pub(crate) fn adopt_pending(
     persistence: &mut SessionPersistence,
     queue: &mut PendingDelegationConfirmationQueue,
@@ -134,36 +93,6 @@ fn record_delegation_confirmation_requested(
             pending.request.task.clone(),
             pending.reason.clone(),
             runtime_seed,
-        )?;
-    }
-    Ok(())
-}
-
-fn record_delegation_confirmation_approved(
-    persistence: &mut SessionPersistence,
-    pending: &PendingDelegationConfirmationState,
-    approval_operation_id: String,
-) -> Result<(), CodingSessionError> {
-    if let SessionPersistence::Persistent(session_service) = persistence {
-        session_service.record_delegation_confirmation_approved(
-            pending.request.operation_id.clone(),
-            pending.request.tool_call_id.clone(),
-            approval_operation_id,
-        )?;
-    }
-    Ok(())
-}
-
-fn record_delegation_confirmation_rejected(
-    persistence: &mut SessionPersistence,
-    pending: &PendingDelegationConfirmationState,
-    reason: String,
-) -> Result<(), CodingSessionError> {
-    if let SessionPersistence::Persistent(session_service) = persistence {
-        session_service.record_delegation_confirmation_rejected(
-            pending.request.operation_id.clone(),
-            pending.request.tool_call_id.clone(),
-            reason,
         )?;
     }
     Ok(())

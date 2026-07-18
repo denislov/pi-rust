@@ -29,8 +29,10 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   `SessionWriterCommand`/`SessionWriterReply` protocol owns default-profile,
   fork, active-leaf, and tree-label mutation; fork installation replaces
   persistence and replay-derived pending/recovery owner state as one coordinator
-  action. Bounded transport and the remaining session mutations are still active
-  `RIF-008` work.
+  action. Delegation approval/rejection durable facts and pending-queue changes
+  also share one writer action, while child execution and EventHub publication
+  occur after the writer reply. Bounded transport and the remaining session
+  mutations are still active `RIF-008` work.
 - `IntentRouter`, `OperationScheduler`, `OperationControl`, typed operation
   metadata, root/child lineage, capability snapshots, and generation-scoped
   cancellation exist.

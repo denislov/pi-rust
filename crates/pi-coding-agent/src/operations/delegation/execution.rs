@@ -1,5 +1,3 @@
-use super::PendingDelegationConfirmationQueue;
-use super::confirmation::{adopt_pending, approve_pending};
 use super::{
     DelegationLineageEntry, PendingDelegationConfirmationState,
     capability_snapshot_for_child_operation,
@@ -12,11 +10,13 @@ use crate::runtime::capability::{OperationCapabilitySnapshot, SessionWriteCapabi
 use crate::runtime::control::{OperationControl, OperationKind};
 use crate::runtime::facade::CodingSessionError;
 use crate::runtime::scheduler::OperationScheduler;
+use crate::runtime::session_coordinator::{
+    SessionCoordinator, SessionWriterCommand, SessionWriterReply,
+};
 use crate::services::event::EventService;
 use crate::services::flow::FlowService;
 use crate::services::plugin::PluginService;
 use crate::services::runtime::RuntimeService;
-use crate::session::service::SessionPersistence;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ApprovedDelegationExecution {
@@ -213,8 +213,7 @@ pub(crate) async fn execute_team(
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn approve(
-    persistence: &mut SessionPersistence,
-    pending_confirmations: &mut PendingDelegationConfirmationQueue,
+    session_coordinator: &mut SessionCoordinator,
     runtime_service: &RuntimeService,
     flow_service: &FlowService,
     profile_registry: &ProfileRegistry,
@@ -228,15 +227,20 @@ pub(crate) async fn approve(
 ) -> Result<(), CodingSessionError> {
     SessionWriteCapability::require(parent_capability_snapshot.session_write.as_ref())?;
     let approval_operation_id = parent_capability_snapshot.operation_id.clone();
-    let mut pending = approve_pending(
-        persistence,
-        pending_confirmations,
-        event_service,
-        operation_id.as_str(),
-        tool_call_id.as_str(),
-        &now,
-        approval_operation_id,
-    )?;
+    let approval_generation = parent_capability_snapshot.generation;
+    let reply =
+        session_coordinator.execute_writer_command(SessionWriterCommand::approve_delegation(
+            approval_operation_id.clone(),
+            approval_generation,
+            operation_id,
+            tool_call_id,
+            now,
+        ))?;
+    let SessionWriterReply::DelegationApproved { pending } = reply else {
+        unreachable!("delegation approval writer command returns its typed reply")
+    };
+    let mut pending = *pending;
+    event_service.emit_delegation_approved(&pending.request);
     if let Some(runtime) = pending.prompt_options.runtime_mut() {
         runtime_service.install_provider_runtime(runtime);
     }
@@ -272,12 +276,18 @@ pub(crate) async fn approve(
             .await
         }
     };
-    adopt_pending(
-        persistence,
-        pending_confirmations,
-        event_service,
-        outcome.pending_confirmations,
-    )?;
+    let reply =
+        session_coordinator.execute_writer_command(SessionWriterCommand::adopt_delegations(
+            approval_operation_id,
+            approval_generation,
+            outcome.pending_confirmations,
+        ))?;
+    let SessionWriterReply::DelegationsAdopted { diagnostics } = reply else {
+        unreachable!("delegation adoption writer command returns its typed reply")
+    };
+    for diagnostic in diagnostics {
+        event_service.emit_diagnostic(diagnostic.operation_id, diagnostic.message);
+    }
     outcome.execution.map(|_| ())
 }
 
