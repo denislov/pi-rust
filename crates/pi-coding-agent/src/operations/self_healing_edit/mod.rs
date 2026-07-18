@@ -92,7 +92,28 @@ pub(crate) async fn run(
                 .as_ref()
                 .is_some_and(CancellationToken::is_cancelled)
             {
-                return Err(CodingSessionError::Cancelled);
+                let error = CodingSessionError::Cancelled;
+                for repair in outcome.repair_attempts.iter() {
+                    SessionService::record_self_healing_edit_repair_attempted(
+                        &mut transaction,
+                        &outcome.path,
+                        repair,
+                    )?;
+                }
+                let finalized = session_service.fail_self_healing_edit_transaction(
+                    Some(transaction),
+                    operation_id.clone(),
+                    error.code(),
+                    error.to_string(),
+                )?;
+                event_service.defer_terminal_draft(
+                    operation_id.clone(),
+                    EventService::self_healing_edit_error_draft(operation_id, event_path, &error),
+                );
+                return Ok(SelfHealingEditExecution {
+                    result: Err(error),
+                    finalized,
+                });
             }
             for repair in outcome.repair_attempts.iter() {
                 SessionService::record_self_healing_edit_repair_attempted(
@@ -102,9 +123,12 @@ pub(crate) async fn run(
                 )?;
             }
             SessionService::record_self_healing_edit_completed(&mut transaction, &outcome)?;
-            event_service.emit_self_healing_edit_completed(operation_id.clone(), &outcome);
             let finalized = session_service
-                .commit_self_healing_edit_transaction(Some(transaction), operation_id)?;
+                .commit_self_healing_edit_transaction(Some(transaction), operation_id.clone())?;
+            event_service.defer_terminal_draft(
+                operation_id.clone(),
+                EventService::self_healing_edit_completed_draft(operation_id, &outcome),
+            );
             Ok(SelfHealingEditExecution {
                 result: Ok(outcome),
                 finalized,
@@ -118,25 +142,16 @@ pub(crate) async fn run(
                     repair,
                 )?;
             }
-            if error == CodingSessionError::Cancelled {
-                event_service.emit_self_healing_edit_aborted(
-                    operation_id.clone(),
-                    event_path.clone(),
-                    error.to_string(),
-                );
-            } else {
-                event_service.emit_self_healing_edit_failed(
-                    operation_id.clone(),
-                    event_path.clone(),
-                    &error,
-                );
-            }
             let finalized = session_service.fail_self_healing_edit_transaction(
                 Some(transaction),
-                operation_id,
+                operation_id.clone(),
                 error.code(),
                 error.to_string(),
             )?;
+            event_service.defer_terminal_draft(
+                operation_id.clone(),
+                EventService::self_healing_edit_error_draft(operation_id, event_path, &error),
+            );
             Ok(SelfHealingEditExecution {
                 result: Err(error),
                 finalized,

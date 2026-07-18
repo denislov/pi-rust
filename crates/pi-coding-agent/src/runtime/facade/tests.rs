@@ -3838,6 +3838,90 @@ runtime = "lua"
     }
 
     #[tokio::test]
+    async fn self_healing_edit_terminals_persist_and_restart_with_typed_family() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = temp.path().join("workspace");
+        let sessions = temp.path().join("sessions");
+        fs::create_dir_all(workspace.join("src")).unwrap();
+        fs::write(workspace.join("src/app.txt"), "one\ntwo\n").unwrap();
+        let session_id = "sess_self_healing_terminal_outbox";
+        let mut session = CodingAgentSession::create(
+            CodingAgentSessionOptions::new()
+                .with_session_id(session_id)
+                .with_cwd(&workspace)
+                .with_session_log_root(&sessions),
+        )
+        .await
+        .unwrap();
+        let mut product_events = session.subscribe_product_events();
+
+        session
+            .run(CodingAgentOperation::SelfHealingEdit(
+                SelfHealingEditRequest::new(
+                    "src/app.txt",
+                    vec![SelfHealingEditReplacement::new("two", "deux")],
+                ),
+            ))
+            .await
+            .unwrap();
+        session
+            .run(CodingAgentOperation::SelfHealingEdit(
+                SelfHealingEditRequest::new(
+                    "src/app.txt",
+                    vec![SelfHealingEditReplacement::new("", "invalid")],
+                ),
+            ))
+            .await
+            .unwrap_err();
+
+        let emitted = std::iter::from_fn(|| product_events.try_recv().unwrap()).collect::<Vec<_>>();
+        for expected in ["self_healing_edit_completed", "self_healing_edit_failed"] {
+            assert!(emitted.iter().any(|event| {
+                typed_event_kind(event.event()) == expected
+                    && event.terminal_operation().is_some_and(|terminal| {
+                        terminal.kind
+                            == crate::events::CodingAgentProductEventTerminalOperationKind::SelfHealingEdit
+                    })
+            }));
+        }
+        let event_log = fs::read_to_string(sessions.join(session_id).join("events.jsonl")).unwrap();
+        assert_eq!(event_log.matches("operation.terminal.recorded").count(), 2);
+        let outbox = fs::read_to_string(sessions.join(session_id).join("outbox.jsonl")).unwrap();
+        assert!(outbox.contains("self_healing_edit_completed"));
+        assert!(outbox.contains("self_healing_edit_failed"));
+        assert!(outbox.contains("\"operation_kind\":\"self_healing_edit\""));
+
+        session.shutdown().await.unwrap();
+        drop(session);
+        let reopened = CodingAgentSession::open(
+            CodingAgentSessionOptions::new()
+                .with_session_id(session_id)
+                .with_session_log_root(&sessions),
+        )
+        .await
+        .unwrap();
+        let connection = reopened
+            .connect(public_projection::CodingAgentClientId::new(
+                "self-healing-replay",
+            ))
+            .unwrap();
+        let public_projection::CodingAgentReconnect::Replayed { events, .. } =
+            connection.reconnect(0).unwrap()
+        else {
+            panic!("self-healing terminals must be retained for restart redelivery")
+        };
+        for expected in ["self_healing_edit_completed", "self_healing_edit_failed"] {
+            assert!(events.iter().any(|event| {
+                typed_event_kind(event.event()) == expected
+                    && event.terminal_operation().is_some_and(|terminal| {
+                        terminal.kind
+                            == crate::events::CodingAgentProductEventTerminalOperationKind::SelfHealingEdit
+                    })
+            }));
+        }
+    }
+
+    #[tokio::test]
     async fn run_operation_branch_summary_uses_branch_summary_guard_and_preserves_persistence_error()
      {
         let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())

@@ -137,8 +137,10 @@
   Operation-terminal outbox records carry an optional operation-kind recovery
   hint so shared payloads retain their admitted family. PluginLoad
   success/failure/abort now use the same coordinator path and restart as typed
-  PluginLoad terminals. Remaining operation families still need the same
-  terminal draft migration.
+  PluginLoad terminals. SelfHealingEdit success/failure/abort now follow the
+  same commit-before-publication and typed restart path; cancellation arriving
+  after Flow success no longer drops its session transaction. Remaining
+  operation families still need the same terminal draft migration.
 
 ### Release Status
 

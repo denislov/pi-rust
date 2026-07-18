@@ -110,9 +110,9 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   client projection, print/JSON, RPC, and interactive adapters exist.
 - A durable ProductEvent outbox now shares the bounded writer commit point with
   its source SessionEvents. Session-write, startup-recovery, and the first
-  Prompt, Compact, and PluginLoad `OperationTerminal` records are implemented;
-  remaining supervisor-owned operation-terminal records remain open under
-  `RIF-002`.
+  Prompt, Compact, PluginLoad, and SelfHealingEdit `OperationTerminal` records
+  are implemented; remaining supervisor-owned operation-terminal records remain
+  open under `RIF-002`.
 - The retained broadcast window is live delivery/replay state, not durable
   evidence. `RIF-009-001` must define an outbox record and semantic identity
   before a writer batch can claim session/outbox atomicity. The record contract
@@ -125,9 +125,10 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   `Recovery` outbox records atomically with `OperationRecovered` facts, while
   broader restart reconciliation remains open under `RIF-009-004`.
   Prompt terminal publication now occurs only after the terminal fact/outbox
-  commit succeeds. Compact success/failure and PluginLoad success/failure/abort
-  now use the same ordering and an outbox operation-kind hint for correct
-  restart redelivery; remaining operation-terminal families remain open.
+  commit succeeds. Compact success/failure, PluginLoad success/failure/abort,
+  and SelfHealingEdit success/failure/abort now use the same ordering and an
+  outbox operation-kind hint for correct restart redelivery; remaining
+  operation-terminal families remain open.
   `RIF-009-004` now owns the next
   restart/reconnect/redelivery consistency slice. The completed cursor work:
   outbox schema v2 stores `committed_through_session_sequence`, while only the
@@ -158,6 +159,9 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
 - PluginLoad uses the admitted snapshot operation ID and typed
   Completed/Failed/Aborted root terminal evidence. Its terminal draft now
   persists through the coordinator outbox and publishes only after commit.
+- SelfHealingEdit terminal drafts persist through the same coordinator path;
+  cancellation observed after Flow success now records a failed/aborted
+  transaction instead of losing the operation transaction.
 - Workbench semantic views, extension state/facts, package update coordination,
   and background extension services do not exist.
 - `tools/architecture-prototypes/runtime-contracts.mjs` is decision evidence for

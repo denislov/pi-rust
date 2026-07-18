@@ -652,6 +652,7 @@ impl CodingAgentSession {
             crate::runtime::control::OperationKind::Prompt
                 | crate::runtime::control::OperationKind::Compact
                 | crate::runtime::control::OperationKind::PluginLoad
+                | crate::runtime::control::OperationKind::SelfHealingEdit
         ) || !matches!(
             commit_result,
             super::finalization::FinalizationCommitResult::Committed
@@ -699,6 +700,17 @@ impl CodingAgentSession {
                     None,
                 )
             }
+            crate::runtime::control::OperationKind::SelfHealingEdit => {
+                let Some(draft) = self
+                    .runtime_host
+                    .event_hub
+                    .service
+                    .take_deferred_terminal_draft(&decision.operation_id)
+                else {
+                    return Ok(());
+                };
+                (draft, None)
+            }
             _ => return Ok(()),
         };
         let compact_terminal_is_session_event = matches!(
@@ -716,6 +728,7 @@ impl CodingAgentSession {
                     decision.operation_kind,
                     crate::runtime::control::OperationKind::Compact
                         | crate::runtime::control::OperationKind::PluginLoad
+                        | crate::runtime::control::OperationKind::SelfHealingEdit
                 ) {
                     self.runtime_host
                         .event_hub

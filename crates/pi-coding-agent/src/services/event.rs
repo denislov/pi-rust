@@ -677,6 +677,21 @@ impl EventService {
             CodingAgentProductEventKind::Workflow(
                 crate::events::CodingAgentWorkflowProductEvent::PluginLoadAborted { .. },
             ) => Some(crate::runtime::outcome::OperationRootTerminalEvidence::PluginLoadAborted),
+            CodingAgentProductEventKind::Workflow(
+                crate::events::CodingAgentWorkflowProductEvent::SelfHealingEditCompleted { .. },
+            ) => Some(
+                crate::runtime::outcome::OperationRootTerminalEvidence::SelfHealingEditCompleted,
+            ),
+            CodingAgentProductEventKind::Workflow(
+                crate::events::CodingAgentWorkflowProductEvent::SelfHealingEditFailed { .. },
+            ) => {
+                Some(crate::runtime::outcome::OperationRootTerminalEvidence::SelfHealingEditFailed)
+            }
+            CodingAgentProductEventKind::Workflow(
+                crate::events::CodingAgentWorkflowProductEvent::SelfHealingEditAborted { .. },
+            ) => {
+                Some(crate::runtime::outcome::OperationRootTerminalEvidence::SelfHealingEditAborted)
+            }
             _ => None,
         };
         self.publish(
@@ -1287,6 +1302,42 @@ impl EventService {
         });
     }
 
+    pub(crate) fn self_healing_edit_completed_draft(
+        operation_id: impl Into<String>,
+        outcome: &SelfHealingEditOutcome,
+    ) -> ProductEventDraft {
+        SelfHealingEditEvent::Completed {
+            operation_id: operation_id.into(),
+            path: outcome.path.clone(),
+            attempts: outcome.attempts,
+            first_changed_line: outcome.first_changed_line,
+            check_output: outcome.check_output.clone(),
+        }
+        .into_product_draft()
+    }
+
+    pub(crate) fn self_healing_edit_error_draft(
+        operation_id: impl Into<String>,
+        path: impl Into<String>,
+        error: &CodingSessionError,
+    ) -> ProductEventDraft {
+        if error == &CodingSessionError::Cancelled {
+            SelfHealingEditEvent::Aborted {
+                operation_id: operation_id.into(),
+                path: path.into(),
+                reason: error.to_string(),
+            }
+        } else {
+            SelfHealingEditEvent::Failed {
+                operation_id: operation_id.into(),
+                path: path.into(),
+                error: error.clone(),
+            }
+        }
+        .into_product_draft()
+    }
+
+    #[cfg(test)]
     pub(crate) fn emit_self_healing_edit_completed(
         &self,
         operation_id: impl Into<String>,
@@ -1301,6 +1352,7 @@ impl EventService {
         });
     }
 
+    #[cfg(test)]
     pub(crate) fn emit_self_healing_edit_failed(
         &self,
         operation_id: impl Into<String>,
@@ -1314,6 +1366,7 @@ impl EventService {
         });
     }
 
+    #[cfg(test)]
     pub(crate) fn emit_self_healing_edit_aborted(
         &self,
         operation_id: impl Into<String>,
