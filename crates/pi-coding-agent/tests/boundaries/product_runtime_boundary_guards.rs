@@ -201,6 +201,7 @@ fn final_receiver_aware_compatibility_absence_and_retained_api_guard() {
             "plugin_ui_dialogs",
             "plugin_keybindings",
             "install_submission_lease",
+            "resolve_recovery_with_authority",
         ],
     );
     add_expectations(
