@@ -3347,4 +3347,62 @@ mod tests {
         assert!(service.emit_durable_outbox_record(&record).is_none());
         assert_eq!(service.current_product_sequence().get(), 1);
     }
+
+    #[test]
+    fn durable_outbox_redelivery_matrix_preserves_order_and_gap_recovery() {
+        let service = EventService::with_event_capacity_for_tests(2);
+        let records = (1..=3)
+            .map(|index| {
+                let operation_id = format!("op_matrix_{index}");
+                let session_id = "session_matrix";
+                let draft =
+                    EventService::session_write_committed_event(operation_id.clone(), session_id)
+                        .into_product_draft();
+                crate::events::outbox::DurableOutboxRecord::new(
+                    format!("{session_id}/{operation_id}/session_write_committed"),
+                    session_id,
+                    Some(operation_id),
+                    vec![format!("evt_matrix_{index}")],
+                    crate::events::outbox::DurableOutboxRecordKind::SessionWrite,
+                    draft,
+                    index,
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
+
+        for record in &records {
+            assert!(service.emit_durable_outbox_record(record).is_some());
+        }
+        assert!(service.emit_durable_outbox_record(&records[0]).is_none());
+        assert_eq!(service.current_product_sequence().get(), 3);
+
+        let ProductEventRecovery::Ready(boundary) =
+            service.recovery_boundary_after(ProductEventSequence::default())
+        else {
+            panic!("initial cursor should replay retained events");
+        };
+        assert_eq!(boundary.replayed_through.get(), 3);
+        assert_eq!(
+            boundary
+                .replay
+                .iter()
+                .map(ProductEvent::sequence)
+                .collect::<Vec<_>>(),
+            vec![2, 3]
+        );
+        assert!(matches!(
+            service.recovery_boundary_after(ProductEventSequence::new(1)),
+            ProductEventRecovery::RetainedGap {
+                requested_after,
+                oldest_available
+            } if requested_after.get() == 1 && oldest_available.get() == 2
+        ));
+        let ProductEventRecovery::Ready(boundary) =
+            service.recovery_boundary_after(ProductEventSequence::new(3))
+        else {
+            panic!("current cursor should reconnect without replay");
+        };
+        assert!(boundary.replay.is_empty());
+    }
 }

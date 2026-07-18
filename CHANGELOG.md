@@ -108,6 +108,8 @@
 - Added runtime-local idempotent outbox redelivery: startup records are emitted
   through EventService after `SessionOpened`, and duplicate record IDs are
   suppressed within the runtime.
+- Added the first `RIF-009-004` matrix test covering duplicate suppression,
+  retained-gap recovery, replay-through ordering, and current-cursor reconnect.
 
 ### Release Status
 
