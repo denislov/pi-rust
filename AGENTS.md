@@ -34,11 +34,11 @@ The architectural layers run from `pi-ai` through `pi-agent-core` to `pi-coding-
 ## Development Workflow
 
 - Run commands from the workspace root unless a task explicitly requires another directory.
-- Use stable Rust with Rust 2024 edition support (Rust 1.85 or newer). There is no checked-in toolchain override.
+- Use stable Rust with Rust 2024 edition support (Rust 1.94 or newer, required by the pinned Wasmtime 46.0.1 extension runtime). There is no checked-in toolchain override.
 - Prefer the stable embedding facade under `pi_coding_agent::api`. Root-level exports in `pi-coding-agent` are compatibility exports and many are deprecated.
 - Keep changes scoped to the crate that owns the behavior. When changing a public type or cross-crate contract, inspect downstream call paths with CodeGraph and update boundary/public-API tests.
-- Follow existing module organization and error types. Do not add a new abstraction when an existing Flow, service, adapter, provider, or component boundary already owns the concern.
-- Keep Flow nodes focused on orchestration and operation-local state; durable side effects belong behind services. Rust-native `SessionEvent` records remain the durable source of session facts, while product adapters consume product events rather than raw Flow or agent events.
+- Follow existing module organization and error types. Do not add a new abstraction when an existing typed runner, service, adapter, provider, or component boundary already owns the concern.
+- Generic Flow and string-action workflow compatibility code is retired after the 0.4.1 typed-runner convergence. Do not introduce new Flow nodes or retain obsolete graph wrappers. Durable side effects belong behind services. Rust-native `SessionEvent` records remain the durable source of session facts, while product adapters consume product events rather than raw workflow or agent events.
 - Preserve async cancellation, streaming, and operation association semantics when modifying runtime paths. Avoid blocking I/O in async code.
 - Never commit credentials or hard-code provider tokens. Provider tests use fake credentials and local/mocked transports; ordinary test runs should not require live provider access.
 

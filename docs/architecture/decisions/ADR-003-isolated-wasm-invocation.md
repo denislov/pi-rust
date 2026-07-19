@@ -6,6 +6,7 @@
 - Planned implementation: `0.4.2` `EKR-004`
 - Evidence: `tools/architecture-prototypes/runtime-contracts.mjs`
 - Real-engine fixture: `tools/architecture-prototypes/wasmtime-harness/`
+- Minimum production implementation: `crates/pi-coding-agent/src/extensions/runtime.rs`
 - TypeScript/WIT fixture: `tools/architecture-prototypes/typescript-component/`
 
 ## Decision
@@ -48,6 +49,7 @@ Run the acceptance evidence from the repository root:
 ```bash
 node tools/architecture-prototypes/runtime-contracts.mjs
 bash tools/architecture-prototypes/run-wasmtime.sh
+bash scripts/extension-runtime.sh
 bash tools/architecture-prototypes/run-typescript-component.sh
 ```
 

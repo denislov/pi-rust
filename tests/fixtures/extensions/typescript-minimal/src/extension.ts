@@ -3,6 +3,7 @@ import {
   jsonOutput,
   type Invocation,
 } from "../../../../../sdk/typescript/src/index.js";
+import { interact } from "pi:extension/host-ui@0.1.0";
 
 const extension = defineExtension({
   activate() {
@@ -18,9 +19,11 @@ const extension = defineExtension({
     ];
   },
   invoke(request: Invocation) {
+    const hostEcho = interact("fixture.echo", request.input);
     return jsonOutput({
       handlerId: request.handlerId,
       inputBytes: request.input.byteLength,
+      hostEcho: new TextDecoder().decode(hostEcho),
     });
   },
 });

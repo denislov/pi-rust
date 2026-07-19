@@ -8,6 +8,8 @@ mod lock;
 mod manifest;
 mod package;
 mod platform;
+#[allow(dead_code)]
+mod runtime;
 mod store;
 
 pub use api::{

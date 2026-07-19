@@ -68,6 +68,7 @@ build_fixture() {
     --format=esm \
     --platform=neutral \
     --target=es2022 \
+    --external:pi:extension/* \
     --metafile="$BUILD/esbuild-meta.json" \
     --outfile="$BUILD/extension.js" >/dev/null
 
@@ -92,7 +93,10 @@ validate_fixture() {
   test -s "$GENERATED/lock-v1.d.ts"
   test -s "$GENERATED/grant-v1.d.ts"
   test -s "$GENERATED/activation-v1.d.ts"
-  jq -e '[.outputs[].imports[]] | length == 0' "$BUILD/esbuild-meta.json" >/dev/null
+  jq -e '[.outputs[].imports[] | select(.external == true) | .path]
+    == ["pi:extension/host-ui@0.1.0"]' "$BUILD/esbuild-meta.json" >/dev/null
+  jq -e '[.outputs[].imports[] | select(.external != true)] | length == 0' \
+    "$BUILD/esbuild-meta.json" >/dev/null
   grep -F 'import pi:extension/host-diagnostics@0.1.0;' "$BUILD/embedded.wit" >/dev/null
   grep -F 'import pi:extension/host-workspace@0.1.0;' "$BUILD/embedded.wit" >/dev/null
   grep -F 'import pi:extension/host-model@0.1.0;' "$BUILD/embedded.wit" >/dev/null

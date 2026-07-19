@@ -32,6 +32,15 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "process
 tokio-util = "0.7"
 toml = "0.8"
 unicode-normalization = "0.1"
+wasmtime = { version = "=46.0.1", default-features = false, features = [
+    "anyhow",
+    "async",
+    "component-model",
+    "component-model-async",
+    "cranelift",
+    "runtime",
+    "std",
+] }
 
 [dev-dependencies]
 async-stream = "0.3"

@@ -546,11 +546,10 @@ impl ExtensionInstanceGrant {
 }
 
 impl OperationCapabilityLease {
-    pub(crate) fn authorize(
+    pub(super) fn validate_operation(
         &self,
         operation_id: &str,
         scope: &ExtensionOperationScope,
-        permission: ExtensionPermission,
     ) -> Result<(), ExtensionGrantError> {
         self.validate_liveness()?;
         if operation_id != self.operation_id {
@@ -559,6 +558,16 @@ impl OperationCapabilityLease {
         if scope != &self.scope {
             return Err(ExtensionGrantError::ScopeDenied);
         }
+        Ok(())
+    }
+
+    pub(crate) fn authorize(
+        &self,
+        operation_id: &str,
+        scope: &ExtensionOperationScope,
+        permission: ExtensionPermission,
+    ) -> Result<(), ExtensionGrantError> {
+        self.validate_operation(operation_id, scope)?;
         if !self.permissions.contains(&permission) {
             return Err(ExtensionGrantError::PermissionDenied);
         }

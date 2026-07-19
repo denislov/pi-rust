@@ -104,6 +104,14 @@ struct ExtensionLimits {
     output_bytes: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct ExtensionRuntimeLimits {
+    pub(super) memory_bytes: u64,
+    pub(super) fuel: u64,
+    pub(super) deadline_ms: u64,
+    pub(super) output_bytes: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub(crate) enum ExtensionManifestError {
     #[error("invalid extension manifest JSON: {0}")]
@@ -146,6 +154,15 @@ impl ExtensionManifestV2 {
 
     pub(super) fn contract_world(&self) -> &str {
         &self.component.world
+    }
+
+    pub(super) fn runtime_limits(&self) -> ExtensionRuntimeLimits {
+        ExtensionRuntimeLimits {
+            memory_bytes: self.limits.memory_bytes,
+            fuel: self.limits.fuel,
+            deadline_ms: self.limits.deadline_ms,
+            output_bytes: self.limits.output_bytes,
+        }
     }
 
     pub(super) fn contribution_handlers(

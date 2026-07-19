@@ -38,8 +38,17 @@
   distinguish product-owned `CoreHandlerRef` values from immutable,
   package-bound `ExtensionHandlerRef` values. Manifest activation can only
   produce extension targets, fails closed on malformed projection, and exposes
-  neither core-handler addressing nor raw Rust authority; `EKR-004` and
-  `EKR-005` consume the fixed boundary.
+  neither core-handler addressing nor raw Rust authority. `EKR-004` consumes
+  the extension branch; full `EKR-005` contribution parity is Skipped.
+- Completed the reduced-scope `EKR-004` minimum Wasm framework with pinned
+  Wasmtime `46.0.1`, authoritative WIT-generated async bindings, pre-admission
+  package-digest Component preparation, fresh per-invocation Store/Instance,
+  epoch/fuel/memory/deadline/output enforcement, and a real TypeScript fixture
+  calling the lease-backed UI Host boundary. This raises the MSRV to Rust 1.94.
+- Reduced later Extension scope: contribution parity, advanced services/state,
+  extension-driven Workbench, full Extension DX, and full runtime baselines are
+  explicitly Skipped. Lua/native extension infrastructure removal and obsolete
+  generic Flow cleanup remain required 0.4.2 convergence work.
 - Workspace packages remain at `0.4.1` until all 0.4.2 implementation, debt,
   conformance, and release gates close.
 

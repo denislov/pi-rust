@@ -7,6 +7,7 @@ use thiserror::Error;
 
 use super::lock::ExtensionLockV1;
 use super::manifest::ExtensionManifestV2;
+use super::manifest::ExtensionRuntimeLimits;
 use crate::contributions::{ExtensionHandlerRef, HandlerTarget, HandlerTargetError};
 
 const MANIFEST_PATH: &str = "extension.json";
@@ -123,6 +124,14 @@ impl ValidatedPackageDirectory {
 
     pub(super) fn contract_world(&self) -> &str {
         self.manifest.contract_world()
+    }
+
+    pub(super) fn component_path(&self) -> PathBuf {
+        self.root.join(COMPONENT_PATH)
+    }
+
+    pub(super) fn runtime_limits(&self) -> ExtensionRuntimeLimits {
+        self.manifest.runtime_limits()
     }
 
     pub(super) fn handler_refs(&self) -> Result<Vec<HandlerTarget>, ExtensionPackageError> {

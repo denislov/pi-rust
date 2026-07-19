@@ -10,6 +10,10 @@
 - Added the ADR-012 core/extension handler target boundary. Validated extension
   inventories now project package-bound data-only handler references and cannot
   deserialize or address built-in Rust handlers.
+- Added the minimum Wasmtime `46.0.1` Component runtime: pre-admission immutable
+  compilation cache, isolated invocation stores, WIT-generated async Host/guest
+  bindings, lease checks, epoch/fuel/memory/deadline/output limits, and an offline
+  TypeScript-to-Wasm invocation gate. The crate now requires Rust 1.94.
 
 ## 0.4.0 - Unreleased
 

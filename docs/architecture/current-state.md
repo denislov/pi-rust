@@ -212,8 +212,10 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   traits and Lua through `mlua`. The replacement path now has candidate
   Manifest/WIT/schema contracts, immutable packages, grant-backed activation,
   lease-only Host handles, an offline TypeScript Component harness, and the
-  accepted core/extension handler target boundary; production Wasm invocation
-  and contribution migration remain `0.4.2` work.
+  accepted core/extension handler target boundary, and a minimum production
+  Wasmtime Component invocation path with a real lease-backed Host call.
+  Contribution productization is Skipped; Lua/native legacy removal remains
+  `0.4.2` convergence work.
 - PluginLoad uses the admitted snapshot operation ID and typed
   Completed/Failed/Aborted root terminal evidence. Its terminal draft now
   persists through the coordinator outbox and publishes only after commit.
