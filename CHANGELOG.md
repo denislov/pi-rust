@@ -36,6 +36,11 @@
   production paths now use explicit profile/child-prompt/execution/finalization
   steps, including cancellation-aware execution, and nested PromptTurn uses its
   typed runner. The generic graph remains compatibility-only.
+- Added the AgentTeam typed pipeline vertical slice: team production paths now
+  use explicit planning, member execution, result collection, merge, and
+  finalization steps, with typed PromptTurn children. Existing sequential member
+  ordering is preserved; bounded structured concurrency remains tracked as a
+  separate AWC-003 task.
 
 ## 0.4.0 - 2026-07-19
 

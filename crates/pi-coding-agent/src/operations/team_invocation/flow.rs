@@ -166,8 +166,19 @@ enum AgentTeamNodeKind {
     FinalizeTeam,
 }
 
+#[allow(dead_code)]
 pub(crate) struct AgentTeamFlow {
     flow: Flow<AgentTeamContext>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AgentTeamStep {
+    Start,
+    PlanSubtasks,
+    RunMemberAgents,
+    CollectMemberResult,
+    MergeOrRejectResult,
+    Finalize,
 }
 
 impl AgentTeamFlow {
@@ -183,6 +194,7 @@ impl AgentTeamFlow {
         Ok(Self { flow })
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn run(
         &self,
         ctx: &mut AgentTeamContext,
@@ -190,6 +202,7 @@ impl AgentTeamFlow {
         self.flow.run(ctx).await.map_err(flow_error)
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn run_with_cancellation(
         &self,
         ctx: &mut AgentTeamContext,
@@ -210,6 +223,45 @@ impl AgentTeamFlow {
             ctx.fail(error.clone());
         }
         result
+    }
+
+    pub(crate) async fn run_typed(
+        &self,
+        ctx: &mut AgentTeamContext,
+        cancellation: Option<CancellationToken>,
+    ) -> Result<(), CodingSessionError> {
+        let mut step = AgentTeamStep::Start;
+        loop {
+            if cancellation
+                .as_ref()
+                .is_some_and(|token| token.is_cancelled())
+            {
+                let error = CodingSessionError::Cancelled;
+                ctx.fail(error.clone());
+                return Err(error);
+            }
+            let result = match step {
+                AgentTeamStep::Start => ctx.start_team(),
+                AgentTeamStep::PlanSubtasks => ctx.plan_subtasks(),
+                AgentTeamStep::RunMemberAgents => ctx.run_member_agents().await,
+                AgentTeamStep::CollectMemberResult => ctx.collect_member_result(),
+                AgentTeamStep::MergeOrRejectResult => ctx.merge_or_reject_result().await,
+                AgentTeamStep::Finalize => ctx.finalize_team(),
+            };
+            if let Err(error) = result {
+                return Err(CodingSessionError::Flow {
+                    message: ctx.fail(error),
+                });
+            }
+            step = match step {
+                AgentTeamStep::Start => AgentTeamStep::PlanSubtasks,
+                AgentTeamStep::PlanSubtasks => AgentTeamStep::RunMemberAgents,
+                AgentTeamStep::RunMemberAgents => AgentTeamStep::CollectMemberResult,
+                AgentTeamStep::CollectMemberResult => AgentTeamStep::MergeOrRejectResult,
+                AgentTeamStep::MergeOrRejectResult => AgentTeamStep::Finalize,
+                AgentTeamStep::Finalize => return Ok(()),
+            };
+        }
     }
 }
 
@@ -541,7 +593,7 @@ impl AgentTeamContext {
 
         let mut finished_outcome = None;
         let child_delegations = match FlowService::new()
-            .run_prompt_subflow_for_agent_team_member(&mut child_context)
+            .run_prompt_subflow_typed_for_agent_team_member(&mut child_context)
             .await
         {
             Ok(_) => Some((
@@ -715,7 +767,7 @@ impl AgentTeamContext {
         prompt_options: PromptTurnOptions,
         child_delegation_depth: usize,
     ) -> Result<(), CodingSessionError> {
-        let outcome = crate::operations::delegation::execution::execute_team(
+        let outcome = Box::pin(crate::operations::delegation::execution::execute_team(
             &FlowService::new(),
             self.registry.clone(),
             self.plugin_service.clone(),
@@ -726,7 +778,7 @@ impl AgentTeamContext {
             child_delegation_depth,
             delegation_lineage_for_request(self.options.delegation_lineage(), request),
             self.child_capability_snapshot.clone(),
-        )
+        ))
         .await;
         self.pending_delegation_confirmations
             .extend(outcome.pending_confirmations);

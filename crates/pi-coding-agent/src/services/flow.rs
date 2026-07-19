@@ -158,6 +158,7 @@ impl FlowService {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn run_agent_team_graph(
         &self,
         ctx: &mut AgentTeamContext,
@@ -169,7 +170,7 @@ impl FlowService {
         &self,
         ctx: &mut AgentTeamContext,
     ) -> Result<AgentTeamOutcome, CodingSessionError> {
-        match self.run_agent_team_graph(ctx).await {
+        match self.agent_team_flow()?.run_typed(ctx, None).await {
             Ok(_) => ctx.finish_success(),
             Err(error) => Err(ctx.take_failure_error().unwrap_or(error)),
         }
@@ -182,7 +183,7 @@ impl FlowService {
     ) -> Result<AgentTeamOutcome, CodingSessionError> {
         match self
             .agent_team_flow()?
-            .run_with_cancellation(ctx, cancellation)
+            .run_typed(ctx, Some(cancellation))
             .await
         {
             Ok(_) => ctx.finish_success(),
@@ -205,11 +206,19 @@ impl FlowService {
         self.prompt_turn_flow()?.run_typed(ctx).await
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn run_prompt_subflow_for_agent_team_member(
         &self,
         ctx: &mut PromptTurnContext,
     ) -> Result<FlowOutcome, CodingSessionError> {
         self.run_prompt_turn_graph(ctx).await
+    }
+
+    pub(crate) async fn run_prompt_subflow_typed_for_agent_team_member(
+        &self,
+        ctx: &mut PromptTurnContext,
+    ) -> Result<(), CodingSessionError> {
+        self.prompt_turn_flow()?.run_typed(ctx).await
     }
 
     pub(crate) async fn run_plugin_load_graph(
