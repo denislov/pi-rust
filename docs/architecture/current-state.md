@@ -5,7 +5,7 @@
 Baseline version: `0.3.1`, released as annotated tag `v0.3.1`.
 
 Source baseline: commit `870d4bb`; dated release record: `180f219`; post-baseline
-`0.4.0` and `0.4.1` convergence commits are recorded below. Last refreshed:
+`0.4.0` through `0.4.2` convergence evidence is recorded below. Last refreshed:
 2026-07-20.
 
 This file records implementation facts, not desired behavior. Cargo manifests,
@@ -18,7 +18,7 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   `pi-coding-agent -> {pi-agent-core, pi-ai, pi-tui}`.
 - `pi-ai` and `pi-tui` have no workspace dependencies.
 - `pi-mom`, `pi-pods`, and `pi-web-ui` are placeholder crates.
-- All workspace packages inherit version `0.4.1` from the root manifest.
+- All workspace packages inherit version `0.4.2` from the root manifest.
 - `pi-rust` is a placeholder binary; `pi-coding-agent` is user-facing.
 
 ## Runtime And Operations

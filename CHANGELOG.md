@@ -1,6 +1,6 @@
 # Changes
 
-## 0.4.2 - Unreleased
+## 0.4.2 - 2026-07-20
 
 ### Extension Kernel Replacement
 
@@ -62,8 +62,9 @@
   keybinding/dialog/form paths, adapter-only contribution DTOs, and empty
   `PluginCapabilities` carrier. `PluginLoad` remains the minimum Wasm activation
   reload owner; contribution productization remains Skipped.
-- Workspace packages remain at `0.4.1` until all 0.4.2 implementation, debt,
-  conformance, and release gates close.
+- Advanced every workspace package to `0.4.2`; focused Extension conformance,
+  architecture/API boundaries, the frozen 0.4.2 API snapshot, strict Clippy,
+  full workspace tests, and TUI smoke passed on 2026-07-20.
 
 ## 0.4.1 - 2026-07-19
 

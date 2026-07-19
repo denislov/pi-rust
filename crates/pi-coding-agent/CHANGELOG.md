@@ -1,6 +1,6 @@
 # Changes
 
-## 0.4.2 - Unreleased
+## 0.4.2 - 2026-07-20
 
 ### Extension Kernel Replacement
 
@@ -19,6 +19,9 @@
   PluginService, prompt-hook forwarding, or plugin capability set remains.
 - Removed generic Flow wrappers from product operations and renamed their owner
   to `WorkflowService`; fixed operations now expose only typed runners.
+- Removed the unreachable `PluginCommand` operation/outcome, RPC and TUI
+  presentation paths, adapter-only contribution DTOs, and empty plugin
+  capability carrier. `PluginLoad` remains the minimum Wasm activation owner.
 
 ## 0.4.0 - Unreleased
 

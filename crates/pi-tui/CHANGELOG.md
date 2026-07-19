@@ -1,5 +1,13 @@
 # Changes
 
+## 0.4.2 - 2026-07-20
+
+### Changed
+
+- Advanced to the workspace `0.4.2` version. Product Extension command and UI
+  compatibility paths were removed from `pi-coding-agent`; this crate retains
+  only generic terminal, input, rendering, and component behavior.
+
 ## 0.3.0 - 2026-07-17
 
 ### Added

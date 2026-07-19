@@ -1,5 +1,16 @@
 # Changes
 
+## 0.4.2 - 2026-07-20
+
+### Changed
+
+- Advanced to the workspace `0.4.2` version.
+
+### Status
+
+- This crate remains a placeholder with no isolated runtime hosting,
+  deployment behavior, or stable protocol contract.
+
 ## 0.3.0 - 2026-07-17
 
 ### Changed

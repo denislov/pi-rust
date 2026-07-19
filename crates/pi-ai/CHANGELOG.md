@@ -1,5 +1,12 @@
 # Changes
 
+## 0.4.2 - 2026-07-20
+
+### Changed
+
+- Advanced to the workspace `0.4.2` version; provider contracts and behavior
+  remain independent of the coding-agent Extension runtime.
+
 ## 0.3.1 - Unreleased
 
 ### Added
