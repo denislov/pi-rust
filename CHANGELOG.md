@@ -15,6 +15,10 @@
   dependencies are matched by exact package digest and identity, complete package
   bytes are content-addressed, and installation atomically publishes read-only,
   idempotently reloadable package trees.
+- Completed `EKR-001` and corrected its downstream ownership: grant-backed
+  permission/activation checks are owned by `EKR-003`, while Wasm Component
+  import/export validation is owned by `EKR-004`; the accepted ADR-007
+  fail-closed pipeline remains unchanged across those owners.
 - Workspace packages remain at `0.4.1` until all 0.4.2 implementation, debt,
   conformance, and release gates close.
 

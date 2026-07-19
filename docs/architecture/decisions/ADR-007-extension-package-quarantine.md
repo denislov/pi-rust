@@ -3,7 +3,9 @@
 - Status: Accepted 2026-07-19
 - Date: 2026-07-19
 - Owner: `0.4.2` `EKR-001`
-- Implementation: `EKR-001`, package-update completion in `0.4.3` `ESS-006`
+- Implementation: `EKR-001` package integrity, `EKR-003` grant-backed activation,
+  `EKR-004` Component boundary validation; package-update completion in `0.4.3`
+  `ESS-006`
 
 ## Context
 
@@ -46,8 +48,9 @@ self-declared by the manifest. One workspace activates at most one version of an
 extension ID. Dependencies are separately installed and admitted under their own
 grants; their permissions never transfer to dependents.
 
-`0.4.2` implements quarantine, immutable storage, lock validation, and explicit
-activation. Coordinated update/rollback across package and extension state is a
+`0.4.2` implements quarantine and immutable storage in `EKR-001`, permission and
+explicit activation checks in `EKR-003`, and Component boundary checks in
+`EKR-004`. Coordinated update/rollback across package and extension state is a
 durable phase machine owned by `0.4.3`; this ADR fixes that direction now but does
 not pretend a cross-store transaction exists in `0.4.2`.
 
