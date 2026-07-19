@@ -11,7 +11,7 @@ fn prompt() -> PromptTurnOptions {
     PromptTurnOptions::new(PromptInvocation::Text("fixture".into()))
 }
 
-fn operations() -> [CodingAgentOperation; 16] {
+fn operations() -> [CodingAgentOperation; 15] {
     [
         CodingAgentOperation::Prompt(prompt()),
         CodingAgentOperation::Compact(prompt()),
@@ -29,10 +29,6 @@ fn operations() -> [CodingAgentOperation; 16] {
         CodingAgentOperation::InvokeAgent(AgentInvocationOptions::new("agent", "task", prompt())),
         CodingAgentOperation::InvokeTeam(AgentTeamOptions::new("team", "task", prompt())),
         CodingAgentOperation::PluginLoad,
-        CodingAgentOperation::PluginCommand {
-            command_id: "plugin.command".into(),
-            args: Default::default(),
-        },
         CodingAgentOperation::SetDefaultAgentProfile {
             profile_id: ProfileId::from("agent"),
         },
@@ -66,7 +62,6 @@ fn outcomes(outcome: CodingAgentOperationOutcome) {
         CodingAgentOperationOutcome::AgentInvocation(value) => touch(value),
         CodingAgentOperationOutcome::AgentTeam(value) => touch(value),
         CodingAgentOperationOutcome::PluginLoad(value) => touch(value),
-        CodingAgentOperationOutcome::PluginCommand(value) => touch(value),
         CodingAgentOperationOutcome::DefaultAgentProfileChanged
         | CodingAgentOperationOutcome::DelegationApproved
         | CodingAgentOperationOutcome::DelegationRejected

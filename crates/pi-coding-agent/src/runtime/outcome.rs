@@ -62,10 +62,6 @@ pub enum CodingAgentOperation {
     InvokeAgent(AgentInvocationOptions),
     InvokeTeam(AgentTeamOptions),
     PluginLoad,
-    PluginCommand {
-        command_id: String,
-        args: serde_json::Value,
-    },
     SetDefaultAgentProfile {
         profile_id: ProfileId,
     },
@@ -104,7 +100,6 @@ pub enum CodingAgentOperationOutcome {
     AgentInvocation(AgentInvocationOutcome),
     AgentTeam(AgentTeamOutcome),
     PluginLoad(CodingAgentPluginLoadOutcome),
-    PluginCommand(String),
     DefaultAgentProfileChanged,
     DelegationApproved,
     DelegationRejected,
@@ -136,7 +131,6 @@ pub(crate) enum OperationOutcomeFamily {
     AgentInvocation,
     AgentTeam,
     PluginLoad,
-    PluginCommand,
     DefaultAgentProfileChanged,
     DelegationApproved,
     DelegationRejected,
@@ -433,8 +427,7 @@ pub(crate) fn product_terminal_operation(
         OperationKind::AgentInvocation => AGENT_INVOCATION_ROOT_EVIDENCE,
         OperationKind::AgentTeam => AGENT_TEAM_ROOT_EVIDENCE,
         OperationKind::PluginLoad => PLUGIN_LOAD_ROOT_EVIDENCE,
-        OperationKind::PluginCommand
-        | OperationKind::BranchSummary
+        OperationKind::BranchSummary
         | OperationKind::DelegationConfirmation
         | OperationKind::ForkSession
         | OperationKind::SwitchActiveLeaf
@@ -456,8 +449,7 @@ pub(crate) fn product_terminal_operation(
         }
         OperationKind::AgentTeam => CodingAgentProductEventTerminalOperationKind::AgentTeam,
         OperationKind::PluginLoad => CodingAgentProductEventTerminalOperationKind::PluginLoad,
-        OperationKind::PluginCommand
-        | OperationKind::BranchSummary
+        OperationKind::BranchSummary
         | OperationKind::DelegationConfirmation
         | OperationKind::ForkSession
         | OperationKind::SwitchActiveLeaf
@@ -482,8 +474,7 @@ pub(crate) fn terminal_operation_kind(
         }
         OperationKind::AgentTeam => Some(CodingAgentProductEventTerminalOperationKind::AgentTeam),
         OperationKind::PluginLoad => Some(CodingAgentProductEventTerminalOperationKind::PluginLoad),
-        OperationKind::PluginCommand
-        | OperationKind::BranchSummary
+        OperationKind::BranchSummary
         | OperationKind::DelegationConfirmation
         | OperationKind::ForkSession
         | OperationKind::SwitchActiveLeaf
@@ -534,7 +525,6 @@ fn recovery_terminal_operation_kind(
         OperationKind::Export => CodingAgentProductEventTerminalOperationKind::Export,
         OperationKind::AgentInvocation
         | OperationKind::AgentTeam
-        | OperationKind::PluginCommand
         | OperationKind::DelegationConfirmation
         | OperationKind::ForkSession
         | OperationKind::SwitchActiveLeaf
@@ -556,7 +546,6 @@ enum OperationContract {
     InvokeAgent,
     InvokeTeam,
     PluginLoad,
-    PluginCommand,
     SetDefaultAgentProfile,
     ApproveDelegation,
     RejectDelegation,
@@ -572,7 +561,6 @@ pub(crate) fn descriptor_for_internal_operation(operation: &Operation) -> Operat
         Operation::Prompt(_) => OperationContract::Prompt,
         Operation::ManualCompaction(_) => OperationContract::Compact,
         Operation::PluginLoad(_) => OperationContract::PluginLoad,
-        Operation::PluginCommand { .. } => OperationContract::PluginCommand,
         Operation::ApproveDelegationConfirmation { .. } => OperationContract::ApproveDelegation,
         Operation::RejectDelegationConfirmation { .. } => OperationContract::RejectDelegation,
         Operation::BranchSummary { .. } => OperationContract::BranchSummary,
@@ -596,7 +584,6 @@ pub(crate) fn descriptor_for_child_kind(kind: OperationKind) -> Option<Operation
         OperationKind::AgentTeam => OperationContract::InvokeTeam,
         OperationKind::Compact
         | OperationKind::PluginLoad
-        | OperationKind::PluginCommand
         | OperationKind::BranchSummary
         | OperationKind::SelfHealingEdit
         | OperationKind::DelegationConfirmation
@@ -702,14 +689,6 @@ impl OperationContract {
                 OperationOutcomeFamily::PluginLoad,
                 OperationTerminalPolicy::ProductEvent,
                 PLUGIN_LOAD_ROOT_EVIDENCE,
-            ),
-            Self::PluginCommand => (
-                OperationKind::PluginCommand,
-                OperationClass::NonSessionRoot,
-                OperationDispatchMode::Async,
-                OperationOutcomeFamily::PluginCommand,
-                OperationTerminalPolicy::OutcomeAcknowledgement,
-                &[][..],
             ),
             Self::SetDefaultAgentProfile => (
                 OperationKind::SetDefaultAgentProfile,
@@ -853,7 +832,6 @@ impl CodingAgentOperation {
             Self::InvokeAgent(_) => OperationContract::InvokeAgent,
             Self::InvokeTeam(_) => OperationContract::InvokeTeam,
             Self::PluginLoad => OperationContract::PluginLoad,
-            Self::PluginCommand { .. } => OperationContract::PluginCommand,
             Self::SetDefaultAgentProfile { .. } => OperationContract::SetDefaultAgentProfile,
             Self::ApproveDelegation { .. } => OperationContract::ApproveDelegation,
             Self::RejectDelegation { .. } => OperationContract::RejectDelegation,
@@ -907,9 +885,6 @@ impl CodingAgentOperation {
             Self::InvokeAgent(options) => Operation::AgentInvocation(options),
             Self::InvokeTeam(options) => Operation::AgentTeam(options),
             Self::PluginLoad => Operation::PluginLoad(plugin_load),
-            Self::PluginCommand { command_id, args } => {
-                Operation::PluginCommand { command_id, args }
-            }
             Self::SetDefaultAgentProfile { profile_id } => {
                 Operation::SetDefaultAgentProfile { profile_id }
             }
@@ -999,7 +974,6 @@ mod tests {
     use crate::app::bootstrap::PromptInvocation;
     use crate::operations::export::runner::ExportOutcome;
     use crate::operations::plugin_load::runner::PluginDiagnostic;
-    use crate::plugins::PluginCapabilities;
     use crate::runtime::control::OperationKind;
     use crate::runtime::facade::context::CodingAgentSessionSummary;
     use crate::runtime::operation::OperationDispatchMode;
@@ -1014,7 +988,6 @@ mod tests {
         AgentInvocation,
         AgentTeam,
         PluginLoad,
-        PluginCommand,
         SetDefaultAgentProfile,
         ApproveDelegationConfirmation,
         RejectDelegationConfirmation,
@@ -1034,7 +1007,6 @@ mod tests {
         AgentInvocation,
         AgentTeam,
         PluginLoad,
-        PluginCommand,
         DefaultAgentProfileChanged,
         DelegationApproved,
         DelegationRejected,
@@ -1066,7 +1038,7 @@ mod tests {
         PromptTurnOptions::new(PromptInvocation::Text("contract".into()))
     }
 
-    fn operation_contract_cases() -> [OperationContractCase; 16] {
+    fn operation_contract_cases() -> [OperationContractCase; 15] {
         [
             OperationContractCase {
                 public_variant: "Prompt",
@@ -1183,19 +1155,6 @@ mod tests {
                     OperationRootTerminalEvidence::PluginLoadFailed,
                     OperationRootTerminalEvidence::PluginLoadAborted,
                 ],
-            },
-            OperationContractCase {
-                public_variant: "PluginCommand",
-                build_operation: || CodingAgentOperation::PluginCommand {
-                    command_id: "plugin.command".into(),
-                    args: serde_json::json!({"contract": true}),
-                },
-                expected_internal: ExpectedInternalOperationVariant::PluginCommand,
-                expected_dispatch: OperationDispatchMode::Async,
-                expected_outcome: ExpectedPublicOutcomeFamily::PluginCommand,
-                expected_submitted_kind: OperationKind::PluginCommand,
-                expected_terminal_policy: OperationTerminalPolicy::OutcomeAcknowledgement,
-                expected_root_evidence: &[],
             },
             OperationContractCase {
                 public_variant: "SetDefaultAgentProfile",
@@ -1348,7 +1307,6 @@ mod tests {
         PluginLoadOutcome {
             loaded_plugin_ids: vec!["plugin.contract".into()],
             diagnostics: Vec::new(),
-            capabilities: PluginCapabilities::new(),
             capability_changed: true,
         }
     }
@@ -1469,7 +1427,6 @@ mod tests {
             Operation::Prompt(_) => ExpectedInternalOperationVariant::Prompt,
             Operation::ManualCompaction(_) => ExpectedInternalOperationVariant::ManualCompaction,
             Operation::PluginLoad(_) => ExpectedInternalOperationVariant::PluginLoad,
-            Operation::PluginCommand { .. } => ExpectedInternalOperationVariant::PluginCommand,
             Operation::ApproveDelegationConfirmation { .. } => {
                 ExpectedInternalOperationVariant::ApproveDelegationConfirmation
             }
@@ -1517,9 +1474,6 @@ mod tests {
             }
             CodingAgentOperationOutcome::AgentTeam(_) => ExpectedPublicOutcomeFamily::AgentTeam,
             CodingAgentOperationOutcome::PluginLoad(_) => ExpectedPublicOutcomeFamily::PluginLoad,
-            CodingAgentOperationOutcome::PluginCommand(_) => {
-                ExpectedPublicOutcomeFamily::PluginCommand
-            }
             CodingAgentOperationOutcome::DefaultAgentProfileChanged => {
                 ExpectedPublicOutcomeFamily::DefaultAgentProfileChanged
             }
@@ -1552,7 +1506,6 @@ mod tests {
             ExpectedPublicOutcomeFamily::AgentInvocation => OperationOutcomeFamily::AgentInvocation,
             ExpectedPublicOutcomeFamily::AgentTeam => OperationOutcomeFamily::AgentTeam,
             ExpectedPublicOutcomeFamily::PluginLoad => OperationOutcomeFamily::PluginLoad,
-            ExpectedPublicOutcomeFamily::PluginCommand => OperationOutcomeFamily::PluginCommand,
             ExpectedPublicOutcomeFamily::DefaultAgentProfileChanged => {
                 OperationOutcomeFamily::DefaultAgentProfileChanged
             }
@@ -1604,14 +1557,14 @@ mod tests {
     fn operation_contract_covers_all_public_variants() {
         let cases = operation_contract_cases();
 
-        assert_eq!(cases.len(), 16);
+        assert_eq!(cases.len(), 15);
         assert_eq!(
             cases
                 .iter()
                 .map(|case| case.expected_outcome)
                 .collect::<HashSet<_>>()
                 .len(),
-            16
+            15
         );
         for case in &cases {
             let operation = (case.build_operation)().into_internal(PluginLoadOptions::new());
@@ -1675,10 +1628,10 @@ mod tests {
             }
         }
 
-        assert_eq!(cases.len(), 16);
-        assert_eq!(public_variants.len(), 16);
+        assert_eq!(cases.len(), 15);
+        assert_eq!(public_variants.len(), 15);
         assert_eq!(terminal_associated, 6);
-        assert_eq!(outcome_only, 10);
+        assert_eq!(outcome_only, 9);
     }
 
     #[test]
@@ -1688,7 +1641,7 @@ mod tests {
             .map(|case| (case.build_operation)().descriptor())
             .collect::<Vec<_>>();
 
-        assert_eq!(descriptors.len(), 16);
+        assert_eq!(descriptors.len(), 15);
         assert!(
             descriptors
                 .iter()
@@ -1717,7 +1670,7 @@ mod tests {
                     descriptor.admission_class() == OperationClass::NonSessionRoot
                 })
                 .count(),
-            3
+            2
         );
         assert_eq!(
             descriptors
@@ -1752,7 +1705,7 @@ mod tests {
                 .iter()
                 .filter(|descriptor| descriptor.cancellation == OperationCancellation::Cancellable)
                 .count(),
-            9
+            8
         );
         assert_eq!(
             descriptors
@@ -1921,10 +1874,6 @@ mod tests {
                 CodingAgentProductEventTerminalStatus::Recovered
             );
         }
-        assert_eq!(
-            recovered_product_terminal_operation(OperationKind::PluginCommand),
-            None
-        );
     }
 
     #[test]
@@ -1958,7 +1907,7 @@ mod tests {
     #[test]
     fn operation_outcome_projection_covers_all_families() {
         let cases = operation_outcome_projection_cases();
-        let mut contract_outcomes = operation_contract_cases()
+        let contract_outcomes = operation_contract_cases()
             .iter()
             .map(|case| case.expected_outcome)
             .collect::<HashSet<_>>();
@@ -1967,7 +1916,6 @@ mod tests {
             .map(|case| case.expected_outcome)
             .collect::<HashSet<_>>();
 
-        contract_outcomes.remove(&ExpectedPublicOutcomeFamily::PluginCommand);
         assert_eq!(cases.len(), 15);
         assert_eq!(projection_outcomes, contract_outcomes);
         for case in cases {
@@ -1989,7 +1937,6 @@ mod tests {
                 plugin_id: Some("plugin.diagnostic".into()),
                 message: "plugin diagnostic message".into(),
             }],
-            capabilities: PluginCapabilities::new(),
             capability_changed: true,
         });
 

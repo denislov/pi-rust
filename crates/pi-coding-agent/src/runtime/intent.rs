@@ -378,27 +378,6 @@ mod tests {
     }
 
     #[test]
-    fn async_admission_keeps_plugin_command_guarded() {
-        let operation = Operation::PluginCommand {
-            command_id: "plugin.echo".into(),
-            args: serde_json::json!({}),
-        };
-        let admission = IntentRouter::static_admission(&operation).unwrap();
-        let control = OperationControl::new();
-
-        let permit = OperationScheduler::admit(&control, &admission, OperationDispatchMode::Async)
-            .map_err(|rejection| rejection.into_error())
-            .unwrap();
-
-        assert_eq!(permit.kind(), OperationKind::PluginCommand);
-        assert_eq!(permit.class(), OperationClass::NonSessionRoot);
-        assert!(permit.is_guarded());
-        assert_eq!(control.active(), Some(OperationKind::PluginCommand));
-        drop(permit);
-        assert_eq!(control.active(), None);
-    }
-
-    #[test]
     fn delegation_rejection_session_write_admission_is_busy_while_root_is_active() {
         let operation = Operation::RejectDelegationConfirmation {
             operation_id: "op_parent".into(),
@@ -483,7 +462,7 @@ mod tests {
 
         let control = OperationControl::new();
         let descriptor = crate::runtime::outcome::descriptor_for_test_admission(
-            OperationKind::PluginCommand,
+            OperationKind::AgentInvocation,
             OperationClass::NonSessionRoot,
             OperationDispatchMode::Async,
         );
@@ -501,7 +480,7 @@ mod tests {
             ui: None,
         };
         let admission = OperationExecution::root(
-            OperationKind::PluginCommand,
+            OperationKind::AgentInvocation,
             descriptor,
             OperationOrigin::ClientRoot,
             None,

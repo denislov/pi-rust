@@ -36,7 +36,6 @@ impl CodingAgentSession {
                 &self.runtime_host.workflow_service,
             )
             .map(OperationOutcome::Export),
-            Operation::PluginCommand { .. } => Err(IntentRouter::unsupported_dispatch(&admission)),
             Operation::RejectDelegationConfirmation { .. } => {
                 Err(IntentRouter::unsupported_dispatch(&admission))
             }
@@ -266,9 +265,7 @@ impl CodingAgentSession {
                     .emit_capability_changed(installed);
                 Ok(OperationOutcome::SetDefaultAgentProfile)
             }
-            Operation::Export(_) | Operation::PluginCommand { .. } => {
-                Err(IntentRouter::unsupported_dispatch(&admission))
-            }
+            Operation::Export(_) => Err(IntentRouter::unsupported_dispatch(&admission)),
             Operation::Prompt(_)
             | Operation::ManualCompaction(_)
             | Operation::PluginLoad(_)
@@ -591,7 +588,6 @@ impl CodingAgentSession {
                     .await
                     .map(OperationOutcome::AgentTeam),
                     Operation::Export(_)
-                    | Operation::PluginCommand { .. }
                     | Operation::RejectDelegationConfirmation { .. }
                     | Operation::ForkSession { .. }
                     | Operation::SwitchActiveLeaf { .. }

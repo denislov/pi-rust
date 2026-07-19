@@ -57,9 +57,11 @@
   public facade, replaced the remaining agent action with `AgentTurnDecision`,
   renamed product operation modules to typed runners, and converged
   `FlowService` to `WorkflowService` with absence guards.
-- Added required `CLC-042-002` cleanup for the now-unreachable PluginCommand,
-  RPC, interactive keybinding/dialog, and contribution presentation surface;
-  this is deletion work, not resumed Extension productization.
+- Completed `CLC-042-002`: deleted the unreachable `PluginCommand` public and
+  internal operation/outcome, RPC wire command, interactive slash/task/action,
+  keybinding/dialog/form paths, adapter-only contribution DTOs, and empty
+  `PluginCapabilities` carrier. `PluginLoad` remains the minimum Wasm activation
+  reload owner; contribution productization remains Skipped.
 - Workspace packages remain at `0.4.1` until all 0.4.2 implementation, debt,
   conformance, and release gates close.
 

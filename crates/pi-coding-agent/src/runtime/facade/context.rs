@@ -5,7 +5,6 @@ use pi_agent_core::api::transcript::SessionTreeNode;
 use pi_ai::api::client::AiClient;
 
 use crate::authorization::ToolAuthorizationMode;
-use crate::plugins::PluginCapabilities;
 use crate::profiles::{ProfileId, ProfileKind};
 use crate::runtime::control::{OperationActivity, OperationKind};
 
@@ -338,14 +337,12 @@ impl CodingAgentCapabilities {
     ) -> Self {
         Self::from_runtime_state(
             &OperationActivity::from_session_write(operation),
-            &PluginCapabilities::new(),
             persistent_session,
         )
     }
 
     pub(crate) fn from_runtime_state(
         activity: &OperationActivity,
-        _plugin_capabilities: &PluginCapabilities,
         persistent_session: bool,
     ) -> Self {
         let session_write_capability = match activity.session_write_blocker() {

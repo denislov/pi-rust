@@ -19,7 +19,6 @@ pub(crate) fn operation_control_for_adapter(session: &CodingAgentSession) -> Ope
 pub(crate) enum OperationKind {
     Prompt,
     Compact,
-    PluginCommand,
     PluginLoad,
     DelegationConfirmation,
     BranchSummary,
@@ -39,7 +38,6 @@ impl OperationKind {
         match self {
             Self::Prompt => "prompt",
             Self::Compact => "compact",
-            Self::PluginCommand => "plugin_command",
             Self::PluginLoad => "plugin_load",
             Self::DelegationConfirmation => "delegation_confirmation",
             Self::BranchSummary => "branch_summary",
@@ -58,7 +56,6 @@ impl OperationKind {
         Some(match value {
             "prompt" => Self::Prompt,
             "compact" => Self::Compact,
-            "plugin_command" => Self::PluginCommand,
             "plugin_load" => Self::PluginLoad,
             "delegation_confirmation" => Self::DelegationConfirmation,
             "branch_summary" => Self::BranchSummary,
@@ -85,8 +82,7 @@ impl OperationKind {
             | Self::SetSessionTreeLabel
             | Self::SelfHealingEdit => OperationClass::SessionWriteRoot,
             Self::PluginLoad | Self::SetDefaultAgentProfile => OperationClass::RuntimeWrite,
-            Self::PluginCommand
-            | Self::DelegationConfirmation
+            Self::DelegationConfirmation
             | Self::AgentInvocation
             | Self::AgentTeam
             | Self::Export => OperationClass::NonSessionRoot,
@@ -1148,18 +1144,6 @@ impl OperationControl {
             .map_err(OperationIdentityRejection::into_error)
     }
 
-    pub(crate) fn cancel_operation(
-        &self,
-        operation_id: impl Into<String>,
-    ) -> Result<OperationCancellationOutcome, CodingSessionError> {
-        OperationCancellationHandle {
-            shared: Arc::clone(&self.state.shared),
-            operation_id: operation_id.into(),
-        }
-        .request()
-        .map_err(OperationIdentityRejection::into_error)
-    }
-
     #[cfg(test)]
     pub(crate) fn begin_root(
         &self,
@@ -1984,7 +1968,7 @@ mod tests {
         let current_root = control
             .begin_root_with_capability_generation(
                 OperationClass::NonSessionRoot,
-                OperationKind::PluginCommand,
+                OperationKind::AgentInvocation,
                 "op_current".into(),
                 generation,
             )

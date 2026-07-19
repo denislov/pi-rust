@@ -116,13 +116,6 @@ pub(super) fn handle_root_input(root: &mut InteractiveRoot, event: &InputEvent) 
     }
 
     if root.status == InteractiveStatus::Idle
-        && root.has_active_plugin_ui_dialog()
-        && root.handle_plugin_dialog_form_input(event)
-    {
-        return;
-    }
-
-    if root.status == InteractiveStatus::Idle
         && root.has_active_delegation_confirmation_menu()
         && root.handle_delegation_confirmation_menu_input(event)
     {
@@ -289,9 +282,6 @@ pub(super) fn handle_root_input(root: &mut InteractiveRoot, event: &InputEvent) 
         }
         if root.selecting_settings {
             root.handle_settings_input(event);
-            return;
-        }
-        if root.handle_plugin_keybinding_input(event) {
             return;
         }
         root.editor.handle_input(event);

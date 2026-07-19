@@ -1,4 +1,3 @@
-use crate::plugins::PluginCapabilities;
 use crate::runtime::control::OperationActivity;
 use crate::runtime::facade::CodingAgentCapabilities;
 
@@ -13,21 +12,15 @@ impl CapabilityService {
     pub(crate) fn capabilities(
         &self,
         activity: &OperationActivity,
-        plugin_capabilities: &PluginCapabilities,
         persistent_session: bool,
     ) -> CodingAgentCapabilities {
-        CodingAgentCapabilities::from_runtime_state(
-            activity,
-            plugin_capabilities,
-            persistent_session,
-        )
+        CodingAgentCapabilities::from_runtime_state(activity, persistent_session)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugins::PluginCapabilities;
     use crate::runtime::control::{OperationActivity, OperationKind};
     use crate::runtime::facade::CapabilityStatus;
 
@@ -37,9 +30,7 @@ mod tests {
 
     #[test]
     fn capabilities_report_prompt_available_when_idle() {
-        let plugin_capabilities = PluginCapabilities::new();
-        let capabilities =
-            CapabilityService::new().capabilities(&idle(), &plugin_capabilities, true);
+        let capabilities = CapabilityService::new().capabilities(&idle(), true);
 
         assert_eq!(capabilities.prompt, CapabilityStatus::Available);
         assert_eq!(capabilities.branch_summary, CapabilityStatus::Available);
@@ -54,10 +45,8 @@ mod tests {
 
     #[test]
     fn capabilities_report_prompt_busy_for_active_operation() {
-        let plugin_capabilities = PluginCapabilities::new();
         let capabilities = CapabilityService::new().capabilities(
             &OperationActivity::for_tests(Some(OperationKind::Prompt), Vec::new(), None, 4),
-            &plugin_capabilities,
             true,
         );
 
@@ -71,9 +60,7 @@ mod tests {
 
     #[test]
     fn capabilities_disable_prompt_controls_when_no_prompt_is_running() {
-        let plugin_capabilities = PluginCapabilities::new();
-        let capabilities =
-            CapabilityService::new().capabilities(&idle(), &plugin_capabilities, true);
+        let capabilities = CapabilityService::new().capabilities(&idle(), true);
 
         assert_eq!(
             capabilities.abort,
@@ -93,10 +80,8 @@ mod tests {
 
     #[test]
     fn capabilities_enable_prompt_controls_only_for_running_prompt() {
-        let plugin_capabilities = PluginCapabilities::new();
         let prompt_capabilities = CapabilityService::new().capabilities(
             &OperationActivity::for_tests(Some(OperationKind::Prompt), Vec::new(), None, 4),
-            &plugin_capabilities,
             true,
         );
 
@@ -106,7 +91,6 @@ mod tests {
 
         let plugin_load_capabilities = CapabilityService::new().capabilities(
             &OperationActivity::for_tests(None, Vec::new(), Some(OperationKind::PluginLoad), 4),
-            &plugin_capabilities,
             true,
         );
 
@@ -126,10 +110,8 @@ mod tests {
 
     #[test]
     fn capabilities_follow_operation_class_concurrency_rules() {
-        let plugin_capabilities = PluginCapabilities::new();
         let capabilities = CapabilityService::new().capabilities(
             &OperationActivity::for_tests(Some(OperationKind::BranchSummary), Vec::new(), None, 4),
-            &plugin_capabilities,
             true,
         );
 
@@ -160,18 +142,14 @@ mod tests {
 
     #[test]
     fn capabilities_report_plugins_available_when_kernel_exists() {
-        let plugin_capabilities = PluginCapabilities::new();
-        let capabilities =
-            CapabilityService::new().capabilities(&idle(), &plugin_capabilities, true);
+        let capabilities = CapabilityService::new().capabilities(&idle(), true);
 
         assert_eq!(capabilities.plugins, CapabilityStatus::Available);
     }
 
     #[test]
     fn capabilities_disable_persistent_session_operations_without_persistence() {
-        let plugin_capabilities = PluginCapabilities::new();
-        let capabilities =
-            CapabilityService::new().capabilities(&idle(), &plugin_capabilities, false);
+        let capabilities = CapabilityService::new().capabilities(&idle(), false);
 
         assert_eq!(
             capabilities.export,

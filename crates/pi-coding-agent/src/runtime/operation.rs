@@ -17,10 +17,6 @@ pub(crate) enum Operation {
     Prompt(PromptTurnOptions),
     ManualCompaction(PromptTurnOptions),
     PluginLoad(PluginLoadOptions),
-    PluginCommand {
-        command_id: String,
-        args: serde_json::Value,
-    },
     ApproveDelegationConfirmation {
         operation_id: String,
         tool_call_id: String,
@@ -68,7 +64,6 @@ impl Operation {
                 .model_repair()
                 .and_then(|repair| repair.prompt_options().runtime()),
             Self::PluginLoad(_)
-            | Self::PluginCommand { .. }
             | Self::ApproveDelegationConfirmation { .. }
             | Self::RejectDelegationConfirmation { .. }
             | Self::ForkSession { .. }
@@ -99,7 +94,6 @@ impl Operation {
             Self::AgentInvocation(options) => Some(options.prompt_options_mut()),
             Self::AgentTeam(options) => Some(options.prompt_options_mut()),
             Self::PluginLoad(_)
-            | Self::PluginCommand { .. }
             | Self::ApproveDelegationConfirmation { .. }
             | Self::RejectDelegationConfirmation { .. }
             | Self::ForkSession { .. }
@@ -324,9 +318,7 @@ impl OperationIdempotencyKey {
 
 #[cfg(test)]
 mod tests {
-    use super::super::control::OperationControl;
     use super::super::intent::IntentRouter;
-    use super::super::scheduler::OperationScheduler;
     use super::*;
     use crate::app::bootstrap::PromptInvocation;
     use crate::operations::plugin_load::runner::PluginLoadOptions;
@@ -416,18 +408,6 @@ mod tests {
     }
 
     #[test]
-    fn plugin_command_operation_declares_root_non_session_metadata() {
-        let operation = Operation::PluginCommand {
-            command_id: "plugin.echo".into(),
-            args: serde_json::Value::Null,
-        };
-
-        assert_eq!(operation.kind(), OperationKind::PluginCommand);
-        assert_eq!(operation.origin(), OperationOrigin::ClientRoot);
-        assert_eq!(operation.class(), OperationClass::NonSessionRoot);
-    }
-
-    #[test]
     fn delegation_approval_operation_declares_dynamic_session_write_metadata() {
         let operation = Operation::ApproveDelegationConfirmation {
             operation_id: "op_parent".into(),
@@ -503,14 +483,6 @@ mod tests {
         assert_eq!(
             Operation::PluginLoad(PluginLoadOptions::new()).session_access(),
             SessionCapabilityAccess::Write
-        );
-        assert_eq!(
-            Operation::PluginCommand {
-                command_id: "plugin.echo".into(),
-                args: serde_json::Value::Null,
-            }
-            .session_access(),
-            SessionCapabilityAccess::None
         );
         assert_eq!(
             Operation::Export(ExportOptions::view()).session_access(),
@@ -624,55 +596,6 @@ mod tests {
                 capability: "dynamic operation requires async dispatcher".into(),
             }
         );
-    }
-
-    #[test]
-    fn intent_router_validates_dispatch_mode_before_beginning_operation() {
-        let operation = Operation::PluginCommand {
-            command_id: "plugin.echo".into(),
-            args: serde_json::json!({}),
-        };
-        let admission = IntentRouter::static_admission(&operation).unwrap();
-        let control = OperationControl::new();
-
-        let error =
-            OperationScheduler::admit(&control, &admission, OperationDispatchMode::SyncReadOnly)
-                .unwrap_err()
-                .into_error();
-
-        assert_eq!(
-            error,
-            CodingSessionError::UnsupportedCapability {
-                capability: "plugin_command operation was sent to the wrong dispatcher (requires read-only sync, received async)".into(),
-            }
-        );
-        assert_eq!(control.active(), None);
-    }
-
-    #[test]
-    fn intent_router_begins_admitted_operation_and_uses_busy_guard() {
-        let operation = Operation::PluginCommand {
-            command_id: "plugin.echo".into(),
-            args: serde_json::json!({}),
-        };
-        let admission = IntentRouter::static_admission(&operation).unwrap();
-        let control = OperationControl::new();
-
-        let guard =
-            OperationScheduler::admit(&control, &admission, OperationDispatchMode::Async).unwrap();
-
-        assert_eq!(control.active(), Some(OperationKind::PluginCommand));
-        assert_eq!(
-            OperationScheduler::admit(&control, &admission, OperationDispatchMode::Async)
-                .unwrap_err()
-                .into_error(),
-            CodingSessionError::Busy {
-                operation: "plugin_command".into(),
-            }
-        );
-
-        drop(guard);
-        assert_eq!(control.active(), None);
     }
 
     #[test]

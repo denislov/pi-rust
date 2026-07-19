@@ -265,10 +265,6 @@ fn stable_api_signature_closure_is_importable() {
         )),
         CodingAgentOperation::InvokeTeam(AgentTeamOptions::new("review", "review", prompt())),
         CodingAgentOperation::PluginLoad,
-        CodingAgentOperation::PluginCommand {
-            command_id: "plugin.command".into(),
-            args: serde_json::Value::Null,
-        },
         CodingAgentOperation::SetDefaultAgentProfile {
             profile_id: ProfileId::from("reviewer"),
         },
@@ -290,7 +286,7 @@ fn stable_api_signature_closure_is_importable() {
         CodingAgentOperation::ExportCurrent,
         CodingAgentOperation::ExportCurrentHtml("session.html".into()),
     ];
-    assert_eq!(operations.len(), 15);
+    assert_eq!(operations.len(), 14);
 
     for type_name in [
         name::<CodingAgentOperationOutcome>(),
@@ -359,7 +355,7 @@ fn stable_api_signature_closure_is_importable() {
     let _canonical_dispatch = CodingAgentSession::run;
 }
 
-fn submission_association_operations() -> [CodingAgentOperation; 15] {
+fn submission_association_operations() -> [CodingAgentOperation; 14] {
     let prompt = || PromptTurnOptions::new(PromptInvocation::Text("test".into()));
     [
         CodingAgentOperation::Prompt(prompt()),
@@ -382,10 +378,6 @@ fn submission_association_operations() -> [CodingAgentOperation; 15] {
         )),
         CodingAgentOperation::InvokeTeam(AgentTeamOptions::new("review", "review", prompt())),
         CodingAgentOperation::PluginLoad,
-        CodingAgentOperation::PluginCommand {
-            command_id: "plugin.command".into(),
-            args: serde_json::Value::Null,
-        },
         CodingAgentOperation::SetDefaultAgentProfile {
             profile_id: ProfileId::from("reviewer"),
         },
@@ -591,10 +583,6 @@ fn canonical_operation_runtime_variants_are_public() {
     let _ = branch_summary(BranchSummaryReusePolicy::AlwaysCreate);
     let _ = branch_summary(BranchSummaryReusePolicy::ReuseExisting);
     let _ = CodingAgentOperation::PluginLoad;
-    let _ = CodingAgentOperation::PluginCommand {
-        command_id: "plugin.command".into(),
-        args: serde_json::json!({"value": 1}),
-    };
     let _ = CodingAgentOperation::SetDefaultAgentProfile {
         profile_id: ProfileId::from("reviewer"),
     };
@@ -626,7 +614,6 @@ fn canonical_operation_runtime_variants_are_public() {
         capability_changed: true,
     };
     let _ = CodingAgentOperationOutcome::PluginLoad(plugin_load);
-    let _ = CodingAgentOperationOutcome::PluginCommand("ok".into());
     let _ = CodingAgentOperationOutcome::DefaultAgentProfileChanged;
     let _ = CodingAgentOperationOutcome::DelegationApproved;
     let _ = CodingAgentOperationOutcome::DelegationRejected;
@@ -692,15 +679,6 @@ async fn coding_session_run_dispatches_public_runtime_operations() {
         session.snapshot().session.default_agent_profile_id,
         ProfileId::from("reviewer")
     );
-
-    let plugin_command_error = session
-        .run(CodingAgentOperation::PluginCommand {
-            command_id: "missing.command".into(),
-            args: serde_json::json!({}),
-        })
-        .await
-        .unwrap_err();
-    assert_eq!(plugin_command_error.code(), "unsupported_capability");
 
     let fork_error = session
         .run(CodingAgentOperation::ForkSession {

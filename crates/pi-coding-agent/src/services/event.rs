@@ -2927,7 +2927,6 @@ mod tests {
                 plugin_id: Some("example.extension".into()),
                 message: "loaded with warning".into(),
             }],
-            capabilities: crate::plugins::PluginCapabilities::new(),
             capability_changed: true,
         };
 

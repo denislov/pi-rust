@@ -17,17 +17,15 @@ use crate::adapters::interactive::prompt_task::{
     PromptTask, PromptTaskCompletion, PromptTaskEvent, PromptTaskFailure, PromptTaskResult,
 };
 use crate::adapters::interactive::root::{
-    ActivePluginUiDialog, InteractiveAction, InteractiveRoot, InteractiveStatus,
-    PendingAgentInvocationRequest, PendingAgentTeamRequest, PendingBranchSummaryRequest,
-    PendingDelegationConfirmationCommand, PendingDelegationConfirmationSelection,
-    PendingForkRequest, PendingPluginCommandRequest, PendingPluginUiDialog,
-    PendingSelfHealingEditRequest, PluginUiDialogField,
+    InteractiveAction, InteractiveRoot, InteractiveStatus, PendingAgentInvocationRequest,
+    PendingAgentTeamRequest, PendingBranchSummaryRequest, PendingDelegationConfirmationCommand,
+    PendingDelegationConfirmationSelection, PendingForkRequest, PendingSelfHealingEditRequest,
 };
 use crate::adapters::interactive::session_actions::{
     SessionChoiceKind, hydrate_existing_session_target, hydrated_session_from_rust_native,
 };
 use crate::adapters::interactive::{TranscriptItem, UiEvent};
-use crate::api::operation::{CodingAgentOperation, CodingAgentPluginLoadOutcome};
+use crate::api::operation::CodingAgentPluginLoadOutcome;
 use crate::app::bootstrap::CliRunOptions;
 use crate::app::bootstrap::PromptInvocation;
 use crate::app::cli::args::CliArgs;
@@ -883,8 +881,6 @@ fn handle_input_event<T: Terminal>(
         delegation_confirmation_command,
         tool_authorization_decision,
         self_healing_edit_request,
-        plugin_command_request,
-        plugin_ui_dialog,
         fork_request,
         render_request,
     ) = {
@@ -941,16 +937,6 @@ fn handle_input_event<T: Terminal>(
         } else {
             None
         };
-        let plugin_command_request = if action == InteractiveAction::PluginCommand {
-            root.take_pending_plugin_command_request()
-        } else {
-            None
-        };
-        let plugin_ui_dialog = if action == InteractiveAction::PluginUiDialog {
-            root.take_pending_plugin_ui_dialog()
-        } else {
-            None
-        };
         let fork_request = if action == InteractiveAction::Fork {
             root.take_pending_fork_request()
         } else {
@@ -974,8 +960,6 @@ fn handle_input_event<T: Terminal>(
             delegation_confirmation_command,
             tool_authorization_decision,
             self_healing_edit_request,
-            plugin_command_request,
-            plugin_ui_dialog,
             fork_request,
             RenderRequest::changed(before != after),
         )
@@ -1362,29 +1346,6 @@ fn handle_input_event<T: Terminal>(
             )?);
             Ok(LoopControl::Continue(RenderRequest::FORCE))
         }
-        InteractiveAction::PluginCommand => {
-            if running.is_some() {
-                return Ok(LoopControl::Continue(render_request));
-            }
-            let Some(request) = plugin_command_request else {
-                return Ok(LoopControl::Continue(render_request));
-            };
-            *running = Some(start_plugin_command_task(
-                tui,
-                root_id,
-                request,
-                prompt_context,
-                coding_session,
-            )?);
-            Ok(LoopControl::Continue(RenderRequest::FORCE))
-        }
-        InteractiveAction::PluginUiDialog => {
-            let Some(dialog) = plugin_ui_dialog else {
-                return Ok(LoopControl::Continue(render_request));
-            };
-            dispatch_plugin_ui_dialog(tui, root_id, dialog)?;
-            Ok(LoopControl::Continue(RenderRequest::FORCE))
-        }
         InteractiveAction::Fork => {
             if running.is_some() {
                 return Ok(LoopControl::Continue(render_request));
@@ -1403,29 +1364,6 @@ fn handle_input_event<T: Terminal>(
             Ok(LoopControl::Continue(RenderRequest::FORCE))
         }
     }
-}
-
-fn dispatch_plugin_ui_dialog<T: Terminal>(
-    tui: &mut Tui<T>,
-    root_id: usize,
-    dialog: PendingPluginUiDialog,
-) -> Result<(), CliError> {
-    let root = root_mut(tui, root_id)?;
-    let description = if dialog.description.trim().is_empty() {
-        String::new()
-    } else {
-        format!(" - {}", dialog.description)
-    };
-    root.active_plugin_ui_dialog = Some(ActivePluginUiDialog::new(dialog.clone()));
-    root.transcript.push(TranscriptItem::system(format!(
-        "Plugin UI dialog {}: {}{}",
-        dialog.dialog_id, dialog.title, description
-    )));
-    for field in &dialog.fields {
-        root.transcript
-            .push(TranscriptItem::system(plugin_dialog_field_line(field)));
-    }
-    Ok(())
 }
 
 fn handle_delegation_confirmation_command<T: Terminal>(
@@ -1681,14 +1619,6 @@ fn resolve_pending_delegation_confirmation(
             "Multiple pending delegation confirmations match tool_call_id={}; include the operation id.",
             selection.tool_call_id
         )),
-    }
-}
-
-fn plugin_dialog_field_line(field: &PluginUiDialogField) -> String {
-    if field.description.trim().is_empty() {
-        field.label.clone()
-    } else {
-        format!("{}: {}", field.label, field.description)
     }
 }
 
@@ -1981,69 +1911,6 @@ fn start_self_healing_edit_task<T: Terminal>(
         options,
         coding_session.take(),
         edit_request,
-        prompt_context.default_agent_profile_id.clone(),
-    )?;
-    if prompt_context.settings.terminal.show_progress {
-        set_terminal_progress(tui, true)?;
-    }
-    Ok(task)
-}
-
-fn start_plugin_command_task<T: Terminal>(
-    tui: &mut Tui<T>,
-    root_id: usize,
-    request: PendingPluginCommandRequest,
-    prompt_context: &PromptContext,
-    coding_session: &mut Option<CodingAgentSession>,
-) -> Result<PromptTask, CliError> {
-    {
-        let root = root_mut(tui, root_id)?;
-        root.transcript.push(TranscriptItem::system(format!(
-            "Running plugin command: {}",
-            request.command_id
-        )));
-        root.set_status(InteractiveStatus::Running);
-    }
-
-    if let Some(session) = coding_session.as_mut() {
-        let task = session
-            .submit(CodingAgentOperation::PluginCommand {
-                command_id: request.command_id.clone(),
-                args: request.args,
-            })
-            .map_err(CliError::from)?;
-        let task = PromptTask::spawn_submitted_plugin_command(session, task, request.command_id);
-        if prompt_context.settings.terminal.show_progress {
-            set_terminal_progress(tui, true)?;
-        }
-        return Ok(task);
-    }
-
-    let options = PromptRunOptions {
-        prompt: String::new(),
-        model: prompt_context.model.clone(),
-        api_key: prompt_context.api_key.clone(),
-        auth_diagnostics: prompt_context.auth_diagnostics.clone(),
-        system_prompt: prompt_context.system_prompt.clone(),
-        max_turns: prompt_context.max_turns,
-        tools: prompt_context.tools.clone(),
-        register_builtins: prompt_context.register_builtins,
-        ai_client: prompt_context.ai_client.clone(),
-        session: prompt_context.session.clone(),
-        session_target: prompt_context.session_target.clone(),
-        session_name: prompt_context.session_name.clone(),
-        thinking_level: prompt_context.thinking_level,
-        tool_execution: prompt_context.tool_execution,
-        resources: prompt_context.resources.clone(),
-        settings: Some(prompt_context.settings.clone()),
-        invocation: PromptInvocation::Text(String::new()),
-    };
-
-    let task = PromptTask::spawn_plugin_command(
-        options,
-        coding_session.take(),
-        request.command_id,
-        request.args,
         prompt_context.default_agent_profile_id.clone(),
     )?;
     if prompt_context.settings.terminal.show_progress {
@@ -2511,28 +2378,7 @@ fn finish_prompt<T: Terminal>(
             for notice in plugin_reload_notice_lines(&result.outcome) {
                 root.transcript.push(TranscriptItem::system(notice));
             }
-            root.set_plugin_commands(result.plugin_commands.clone());
-            root.set_plugin_ui_extensions(
-                result.plugin_ui_actions.clone(),
-                result.plugin_keybindings.clone(),
-                result.plugin_ui_dialogs.clone(),
-            );
             *coding_session = Some(result.session);
-        }
-        PromptTaskCompletion::Completed(PromptTaskResult::PluginCommand(result)) => {
-            root.transcript.push(TranscriptItem::system(format!(
-                "Plugin command {}: {}",
-                result.command_id, result.output
-            )));
-            root.set_plugin_commands(result.plugin_commands.clone());
-            root.set_plugin_ui_extensions(
-                result.plugin_ui_actions.clone(),
-                result.plugin_keybindings.clone(),
-                result.plugin_ui_dialogs.clone(),
-            );
-            if let Some(session) = result.session {
-                *coding_session = Some(session);
-            }
         }
         PromptTaskCompletion::Completed(PromptTaskResult::ForkSession(result)) => {
             *session_target = Some(result.session_target.clone());

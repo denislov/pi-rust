@@ -127,10 +127,6 @@ pub(super) fn builtin_slash_commands() -> Vec<BuiltinSlashCommand> {
             description: "Reload keybindings and resources".into(),
         },
         BuiltinSlashCommand {
-            name: "plugin-command".into(),
-            description: "Run a loaded plugin command".into(),
-        },
-        BuiltinSlashCommand {
             name: "quit".into(),
             description: "Quit pi".into(),
         },

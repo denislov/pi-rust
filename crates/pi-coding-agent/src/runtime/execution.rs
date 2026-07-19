@@ -57,9 +57,7 @@ impl CodingAgentSession {
             || descriptor.dispatch_mode != OperationDispatchMode::Async
             || !matches!(
                 operation,
-                Operation::PluginCommand { .. }
-                    | Operation::AgentInvocation(_)
-                    | Operation::AgentTeam(_)
+                Operation::AgentInvocation(_) | Operation::AgentTeam(_)
             )
         {
             return Err(CodingSessionError::UnsupportedCapability {
@@ -94,7 +92,6 @@ impl CodingAgentSession {
         let cancellation_handle = operation_permit
             .cancellation_handle()
             .expect("runtime-owned roots must have cancellation authority");
-        let execution_cancellation_handle = cancellation_handle.clone();
         if let (Some(submission), Some(cancellation)) =
             (submission.as_ref(), Some(cancellation_handle.clone()))
         {
@@ -128,28 +125,6 @@ impl CodingAgentSession {
 
         let task = runtime.spawn(async move {
             let result = match operation {
-                Operation::PluginCommand { command_id, args } => {
-                    drop(args);
-                    if operation_cancellation
-                        .as_ref()
-                        .is_some_and(tokio_util::sync::CancellationToken::is_cancelled)
-                    {
-                        Err(CodingSessionError::Cancelled)
-                    } else {
-                        execution_cancellation_handle.close()?;
-                        let result = Err(CodingSessionError::UnsupportedCapability {
-                            capability: format!("extension command is unavailable: {command_id}"),
-                        });
-                        if operation_cancellation
-                            .as_ref()
-                            .is_some_and(tokio_util::sync::CancellationToken::is_cancelled)
-                        {
-                            Err(CodingSessionError::Cancelled)
-                        } else {
-                            result
-                        }
-                    }
-                }
                 Operation::AgentInvocation(options) => {
                     let result = crate::operations::agent_invocation::run(
                         options,

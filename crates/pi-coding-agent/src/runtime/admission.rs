@@ -38,7 +38,6 @@ impl CodingAgentSession {
                 }
             }
             Operation::PluginLoad(_)
-            | Operation::PluginCommand { .. }
             | Operation::ApproveDelegationConfirmation { .. }
             | Operation::RejectDelegationConfirmation { .. }
             | Operation::AgentInvocation(_)

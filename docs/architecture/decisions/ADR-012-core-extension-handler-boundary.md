@@ -78,10 +78,12 @@ owning product error path and cannot be reclassified as extension failures.
 ## Compatibility
 
 This is an intentional replacement boundary. Legacy Rust provider traits and
-Lua-backed contribution providers are migrated to owned DTOs in `EKR-005` and
-removed in `EKR-007`; they are not compatibility implementations of either new
-target. Built-in `pi-ai` provider registration remains product infrastructure
-and is outside the extension target model.
+Lua-backed contribution providers were removed in `EKR-007`; contribution
+productization in `EKR-005` was Skipped. `CLC-042-002` also removed the
+unreachable PluginCommand and adapter presentation compatibility surface rather
+than treating it as an implementation of either new target. Built-in `pi-ai`
+provider registration remains product infrastructure and is outside the
+extension target model.
 
 ## Verification
 
@@ -91,4 +93,5 @@ dispatch is exhaustive, serialized projections contain no executable authority,
 and malformed identity/digest/revision data fails closed. Boundary tests reject
 deserialization authority, raw Rust traits/services, and core-handler fields in
 extension contracts. `EKR-004` consumes extension refs through real WIT
-admission; `EKR-005` proves all six contribution families use this target model.
+admission. Full contribution-family dispatch was Skipped with `EKR-005` and
+must be replanned before this boundary is extended into product adapters.

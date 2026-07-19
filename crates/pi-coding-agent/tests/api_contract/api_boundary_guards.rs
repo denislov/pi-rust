@@ -668,21 +668,15 @@ fn implementation_modules_stay_private_and_retired_roots_stay_absent() {
         );
     }
 
-    let plugins_source = fs::read_to_string(crate_root.join("src/plugins/mod.rs"))
-        .expect("plugins module should be readable");
     assert!(
-        plugins_source.contains("mod contributions;"),
-        "plugin contribution DTO owner must remain declared"
+        !fs::read_to_string(crate_root.join("src/lib.rs"))
+            .expect("read crate root")
+            .contains("mod plugins;")
+            && !crate_root.join("src/plugins/mod.rs").exists()
+            && !crate_root.join("src/plugins/capability.rs").exists()
+            && !crate_root.join("src/plugins/contributions/mod.rs").exists(),
+        "retired plugin capability/contribution module must stay absent"
     );
-    for retired in ["command", "hook", "keybind", "tool", "ui"] {
-        assert!(
-            !plugins_source.contains(&format!("mod {retired};"))
-                && !crate_root
-                    .join(format!("src/plugins/{retired}.rs"))
-                    .exists(),
-            "retired flat plugin contribution `{retired}` must stay absent"
-        );
-    }
 }
 
 #[test]
@@ -753,7 +747,6 @@ fn coding_session_run_is_the_canonical_operation_dispatcher() {
         "CodingAgentOperationOutcome::AgentInvocation(",
         "CodingAgentOperationOutcome::AgentTeam(",
         "CodingAgentOperationOutcome::PluginLoad(",
-        "CodingAgentOperationOutcome::PluginCommand(",
         "CodingAgentOperationOutcome::DefaultAgentProfileChanged",
         "CodingAgentOperationOutcome::DelegationApproved",
         "CodingAgentOperationOutcome::DelegationRejected",

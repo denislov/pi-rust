@@ -82,8 +82,6 @@ pub(super) enum InteractiveAction {
     CompactSession,
     BranchSummary,
     SelfHealingEdit,
-    PluginCommand,
-    PluginUiDialog,
     DelegationConfirmation,
     ToolAuthorization,
     AgentProfileUse,
@@ -273,12 +271,6 @@ pub(super) struct PendingSelfHealingEditRequest {
     pub(super) model_repair: Option<PendingSelfHealingEditModelRepair>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub(super) struct PendingPluginCommandRequest {
-    pub(super) command_id: String,
-    pub(super) args: serde_json::Value,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct PendingDelegationConfirmationSelection {
     pub(super) operation_id: Option<String>,
@@ -302,377 +294,6 @@ struct PendingDelegationRejectionReason {
     selection: PendingDelegationConfirmationSelection,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct PluginUiDialogField {
-    pub(super) id: String,
-    pub(super) label: String,
-    pub(super) description: String,
-    pub(super) kind: String,
-    pub(super) default_value: serde_json::Value,
-    pub(super) required: bool,
-    pub(super) options: Vec<String>,
-}
-
-impl PluginUiDialogField {
-    pub(super) fn new(
-        id: impl Into<String>,
-        label: impl Into<String>,
-        description: impl Into<String>,
-        kind: impl Into<String>,
-        default_value: serde_json::Value,
-        required: bool,
-    ) -> Self {
-        Self {
-            id: id.into(),
-            label: label.into(),
-            description: description.into(),
-            kind: kind.into(),
-            default_value,
-            required,
-            options: Vec::new(),
-        }
-    }
-
-    pub(super) fn with_options(mut self, options: Vec<String>) -> Self {
-        self.options = options;
-        self
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct PendingPluginUiDialog {
-    pub(super) dialog_id: String,
-    pub(super) title: String,
-    pub(super) description: String,
-    pub(super) action_id: String,
-    pub(super) fields: Vec<PluginUiDialogField>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct PluginDialogFormError {
-    pub(super) field_id: String,
-    pub(super) message: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct ActivePluginUiDialog {
-    pub(super) dialog: PendingPluginUiDialog,
-    pub(super) values: Vec<String>,
-    pub(super) selected_field: usize,
-    pub(super) validation_error: Option<PluginDialogFormError>,
-}
-
-impl ActivePluginUiDialog {
-    pub(super) fn new(dialog: PendingPluginUiDialog) -> Self {
-        let values = dialog
-            .fields
-            .iter()
-            .map(plugin_dialog_initial_field_text)
-            .collect();
-        Self {
-            dialog,
-            values,
-            selected_field: 0,
-            validation_error: None,
-        }
-    }
-
-    fn selected_field_mut(&mut self) -> Option<(&PluginUiDialogField, &mut String)> {
-        let field = self.dialog.fields.get(self.selected_field)?;
-        let value = self.values.get_mut(self.selected_field)?;
-        Some((field, value))
-    }
-
-    fn selected_field_id(&self) -> Option<String> {
-        self.dialog
-            .fields
-            .get(self.selected_field)
-            .map(|field| field.id.clone())
-    }
-
-    fn clear_validation_error_for_selected_field(&mut self) {
-        let Some(field_id) = self.selected_field_id() else {
-            return;
-        };
-        if self
-            .validation_error
-            .as_ref()
-            .is_some_and(|error| error.field_id == field_id)
-        {
-            self.validation_error = None;
-        }
-    }
-
-    fn move_selection(&mut self, delta: isize) {
-        let len = self.dialog.fields.len();
-        if len == 0 {
-            self.selected_field = 0;
-            return;
-        }
-        let current = self.selected_field.min(len - 1) as isize;
-        let next = (current + delta).rem_euclid(len as isize) as usize;
-        self.selected_field = next;
-    }
-
-    fn args_json(&self) -> serde_json::Value {
-        let mut args = serde_json::Map::new();
-        for (index, field) in self.dialog.fields.iter().enumerate() {
-            let raw = self
-                .values
-                .get(index)
-                .map(String::as_str)
-                .unwrap_or_default();
-            args.insert(field.id.clone(), plugin_dialog_form_value(field, raw));
-        }
-        serde_json::Value::Object(args)
-    }
-}
-
-fn plugin_dialog_initial_field_text(field: &PluginUiDialogField) -> String {
-    let value = match &field.default_value {
-        serde_json::Value::Null => String::new(),
-        serde_json::Value::String(value) => value.clone(),
-        other => other.to_string(),
-    };
-    if value.is_empty() && plugin_dialog_field_is_choice(field) {
-        field.options.first().cloned().unwrap_or(value)
-    } else {
-        value
-    }
-}
-
-fn plugin_dialog_form_value(field: &PluginUiDialogField, raw: &str) -> serde_json::Value {
-    if !field.default_value.is_null() && raw == plugin_dialog_initial_field_text(field) {
-        return field.default_value.clone();
-    }
-
-    let kind = normalized_dialog_field_kind(&field.kind);
-    match kind.as_str() {
-        "text" | "string" | "select" | "choice" | "enum" => {
-            serde_json::Value::String(raw.to_string())
-        }
-        "boolean" | "bool" => plugin_dialog_bool_value(raw)
-            .map(serde_json::Value::Bool)
-            .unwrap_or_else(|| serde_json::Value::String(raw.to_string())),
-        "integer" => plugin_dialog_integer_value(raw)
-            .map(serde_json::Value::Number)
-            .unwrap_or_else(|| serde_json::Value::String(raw.to_string())),
-        "number" => plugin_dialog_number_value(raw)
-            .map(serde_json::Value::Number)
-            .unwrap_or_else(|| serde_json::Value::String(raw.to_string())),
-        _ => {
-            serde_json::from_str(raw).unwrap_or_else(|_| serde_json::Value::String(raw.to_string()))
-        }
-    }
-}
-
-fn plugin_dialog_field_is_bool(field: &PluginUiDialogField) -> bool {
-    matches!(
-        normalized_dialog_field_kind(&field.kind).as_str(),
-        "boolean" | "bool"
-    )
-}
-
-fn plugin_dialog_field_is_choice(field: &PluginUiDialogField) -> bool {
-    matches!(
-        normalized_dialog_field_kind(&field.kind).as_str(),
-        "select" | "choice" | "enum"
-    )
-}
-
-fn plugin_dialog_next_choice_value(field: &PluginUiDialogField, current: &str) -> Option<String> {
-    if !plugin_dialog_field_is_choice(field) || field.options.is_empty() {
-        return None;
-    }
-    let current = current.trim();
-    let next_index = field
-        .options
-        .iter()
-        .position(|option| option == current)
-        .map(|index| (index + 1) % field.options.len())
-        .unwrap_or(0);
-    field.options.get(next_index).cloned()
-}
-
-fn plugin_dialog_filtered_insert(field: &PluginUiDialogField, current: &str, text: &str) -> String {
-    match normalized_dialog_field_kind(&field.kind).as_str() {
-        "integer" => plugin_dialog_numeric_filtered_insert(current, text, false),
-        "number" => plugin_dialog_numeric_filtered_insert(current, text, true),
-        "select" | "choice" | "enum" => String::new(),
-        _ => text.to_string(),
-    }
-}
-
-fn plugin_dialog_numeric_filtered_insert(current: &str, text: &str, allow_float: bool) -> String {
-    let mut candidate = current.to_string();
-    let mut accepted = String::new();
-    for ch in text.chars() {
-        if plugin_dialog_numeric_char_allowed(&candidate, ch, allow_float) {
-            candidate.push(ch);
-            accepted.push(ch);
-        }
-    }
-    accepted
-}
-
-fn plugin_dialog_numeric_char_allowed(current: &str, ch: char, allow_float: bool) -> bool {
-    if ch.is_ascii_digit() {
-        return true;
-    }
-    match ch {
-        '+' | '-' => {
-            current.is_empty()
-                || (allow_float && (current.ends_with('e') || current.ends_with('E')))
-        }
-        '.' => {
-            allow_float
-                && !current.contains('.')
-                && !current.contains('e')
-                && !current.contains('E')
-        }
-        'e' | 'E' => {
-            allow_float
-                && !current.contains('e')
-                && !current.contains('E')
-                && current.chars().any(|existing| existing.is_ascii_digit())
-        }
-        _ => false,
-    }
-}
-
-fn plugin_dialog_bool_value(raw: &str) -> Option<bool> {
-    match raw.trim().to_ascii_lowercase().as_str() {
-        "true" | "1" | "yes" | "on" => Some(true),
-        "false" | "0" | "no" | "off" => Some(false),
-        _ => None,
-    }
-}
-
-fn plugin_dialog_integer_value(raw: &str) -> Option<serde_json::Number> {
-    let trimmed = raw.trim();
-    if let Ok(value) = trimmed.parse::<i64>() {
-        return Some(value.into());
-    }
-    trimmed.parse::<u64>().ok().map(Into::into)
-}
-
-fn plugin_dialog_number_value(raw: &str) -> Option<serde_json::Number> {
-    let trimmed = raw.trim();
-    if let Some(integer) = plugin_dialog_integer_value(trimmed) {
-        return Some(integer);
-    }
-    trimmed
-        .parse::<f64>()
-        .ok()
-        .and_then(serde_json::Number::from_f64)
-}
-
-fn plugin_dialog_field_kind_label(field: &PluginUiDialogField) -> String {
-    if plugin_dialog_field_is_choice(field) && !field.options.is_empty() {
-        format!("{}: {}", field.kind, field.options.join("/"))
-    } else {
-        field.kind.clone()
-    }
-}
-
-fn normalized_dialog_field_kind(kind: &str) -> String {
-    kind.trim().replace('-', "_").to_ascii_lowercase()
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct PluginUiAction {
-    pub(super) id: String,
-    pub(super) label: String,
-    pub(super) description: String,
-    pub(super) action_id: String,
-}
-
-impl PluginUiAction {
-    pub(super) fn new(
-        id: impl Into<String>,
-        label: impl Into<String>,
-        description: impl Into<String>,
-        action_id: impl Into<String>,
-    ) -> Self {
-        Self {
-            id: id.into(),
-            label: label.into(),
-            description: description.into(),
-            action_id: action_id.into(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct PluginUiDialog {
-    pub(super) id: String,
-    pub(super) title: String,
-    pub(super) description: String,
-    pub(super) action_id: String,
-    pub(super) fields: Vec<PluginUiDialogField>,
-}
-
-impl PluginUiDialog {
-    pub(super) fn new(
-        id: impl Into<String>,
-        title: impl Into<String>,
-        description: impl Into<String>,
-        action_id: impl Into<String>,
-    ) -> Self {
-        Self {
-            id: id.into(),
-            title: title.into(),
-            description: description.into(),
-            action_id: action_id.into(),
-            fields: Vec::new(),
-        }
-    }
-
-    pub(super) fn with_fields(mut self, fields: Vec<PluginUiDialogField>) -> Self {
-        self.fields = fields;
-        self
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct PluginKeybinding {
-    pub(super) id: String,
-    pub(super) key: String,
-    pub(super) description: String,
-    pub(super) action_id: String,
-}
-
-impl PluginKeybinding {
-    pub(super) fn new(
-        id: impl Into<String>,
-        key: impl Into<String>,
-        description: impl Into<String>,
-        action_id: impl Into<String>,
-    ) -> Self {
-        Self {
-            id: id.into(),
-            key: key.into(),
-            description: description.into(),
-            action_id: action_id.into(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct PluginSlashCommand {
-    pub(super) command_id: String,
-    pub(super) description: String,
-}
-
-impl PluginSlashCommand {
-    pub(super) fn new(command_id: impl Into<String>, description: impl Into<String>) -> Self {
-        Self {
-            command_id: command_id.into(),
-            description: description.into(),
-        }
-    }
-}
-
 pub(super) struct InteractiveRoot {
     pub(super) selecting_tree: bool,
     pub(super) tree_selector: Option<TreeSelectorState>,
@@ -692,7 +313,6 @@ pub(super) struct InteractiveRoot {
     pub(super) pending_agent_invocation_request: Option<PendingAgentInvocationRequest>,
     pub(super) pending_agent_team_request: Option<PendingAgentTeamRequest>,
     pub(super) pending_self_healing_edit_request: Option<PendingSelfHealingEditRequest>,
-    pub(super) pending_plugin_command_request: Option<PendingPluginCommandRequest>,
     pub(super) pending_delegation_confirmation_command:
         Option<PendingDelegationConfirmationCommand>,
     delegation_confirmation_menu: Option<DelegationConfirmationMenuState>,
@@ -701,8 +321,6 @@ pub(super) struct InteractiveRoot {
     tool_authorization_selected: usize,
     pending_tool_authorization_decision:
         Option<(ToolAuthorizationRequest, ToolAuthorizationDecision)>,
-    pub(super) pending_plugin_ui_dialog: Option<PendingPluginUiDialog>,
-    pub(super) active_plugin_ui_dialog: Option<ActivePluginUiDialog>,
     profile_menu: Option<ProfileMenuState>,
     pending_profile_task: Option<PendingProfileTask>,
     pub(super) selected_agent_profile_id: Option<ProfileId>,
@@ -773,10 +391,6 @@ pub(super) struct InteractiveRoot {
     pub(super) skills: Vec<pi_agent_core::api::resources::Skill>,
     pub(super) profile_registry: ProfileRegistry,
     pub(super) default_agent_profile_id: ProfileId,
-    plugin_commands: Vec<PluginSlashCommand>,
-    plugin_ui_actions: Vec<PluginUiAction>,
-    plugin_ui_dialogs: Vec<PluginUiDialog>,
-    plugin_keybindings: Vec<PluginKeybinding>,
     pub(super) clipboard: Arc<dyn ClipboardSink>,
 }
 
@@ -815,7 +429,6 @@ pub(super) struct InteractiveRenderState {
     model_selection_selected: usize,
     selecting_session: bool,
     session_selection_selected: usize,
-    active_plugin_ui_dialog: Option<ActivePluginUiDialog>,
     delegation_confirmation_menu_state: Option<DelegationConfirmationMenuRenderState>,
     pending_delegation_rejection_reason: Option<PendingDelegationRejectionReason>,
     tool_authorization_ids: Vec<String>,
@@ -924,15 +537,12 @@ impl InteractiveRoot {
             pending_agent_invocation_request: None,
             pending_agent_team_request: None,
             pending_self_healing_edit_request: None,
-            pending_plugin_command_request: None,
             pending_delegation_confirmation_command: None,
             delegation_confirmation_menu: None,
             pending_delegation_rejection_reason: None,
             tool_authorizations: VecDeque::new(),
             tool_authorization_selected: 0,
             pending_tool_authorization_decision: None,
-            pending_plugin_ui_dialog: None,
-            active_plugin_ui_dialog: None,
             profile_menu: None,
             pending_profile_task: None,
             selected_agent_profile_id: None,
@@ -1004,10 +614,6 @@ impl InteractiveRoot {
             skills: Vec::new(),
             profile_registry,
             default_agent_profile_id: ProfileId::from("default"),
-            plugin_commands: Vec::new(),
-            plugin_ui_actions: Vec::new(),
-            plugin_ui_dialogs: Vec::new(),
-            plugin_keybindings: Vec::new(),
             clipboard: Arc::new(SystemClipboard),
         }
     }
@@ -1360,206 +966,14 @@ impl InteractiveRoot {
         self.pending_self_healing_edit_request.take()
     }
 
-    pub(super) fn take_pending_plugin_command_request(
-        &mut self,
-    ) -> Option<PendingPluginCommandRequest> {
-        self.pending_plugin_command_request.take()
-    }
-
     pub(super) fn take_pending_delegation_confirmation_command(
         &mut self,
     ) -> Option<PendingDelegationConfirmationCommand> {
         self.pending_delegation_confirmation_command.take()
     }
 
-    pub(super) fn take_pending_plugin_ui_dialog(&mut self) -> Option<PendingPluginUiDialog> {
-        self.pending_plugin_ui_dialog.take()
-    }
-
     pub(super) fn take_scroll_command(&mut self) -> Option<TranscriptScrollCommand> {
         self.scroll_command.lock().unwrap().take()
-    }
-
-    pub(super) fn has_active_plugin_ui_dialog(&self) -> bool {
-        self.active_plugin_ui_dialog.is_some()
-    }
-
-    pub(super) fn focus_active_plugin_dialog_field(&mut self, field_id: &str) {
-        if let Some(active_dialog) = self.active_plugin_ui_dialog.as_mut()
-            && let Some(index) = active_dialog
-                .dialog
-                .fields
-                .iter()
-                .position(|field| field.id == field_id)
-        {
-            active_dialog.selected_field = index;
-        }
-    }
-
-    pub(super) fn set_active_plugin_dialog_field_error(
-        &mut self,
-        field_id: impl Into<String>,
-        message: impl Into<String>,
-    ) {
-        let field_id = field_id.into();
-        self.focus_active_plugin_dialog_field(&field_id);
-        if let Some(active_dialog) = self.active_plugin_ui_dialog.as_mut() {
-            active_dialog.validation_error = Some(PluginDialogFormError {
-                field_id,
-                message: message.into(),
-            });
-        }
-    }
-
-    pub(super) fn handle_plugin_dialog_form_input(&mut self, event: &InputEvent) -> bool {
-        if self.active_plugin_ui_dialog.is_none() {
-            return false;
-        }
-        let InputEvent::Key(key_event) = event else {
-            return true;
-        };
-        if key_event.kind == KeyEventKind::Release {
-            return true;
-        }
-
-        if matches_key(event, "escape") || matches_key(event, "ctrl+c") {
-            self.active_plugin_ui_dialog = None;
-            self.editor.set_text("");
-            self.transcript
-                .push(TranscriptItem::system("Plugin dialog canceled"));
-            return true;
-        }
-        if matches_key(event, "enter") {
-            self.submit_active_plugin_dialog_form();
-            return true;
-        }
-
-        let Some(active_dialog) = self.active_plugin_ui_dialog.as_mut() else {
-            return true;
-        };
-        if active_dialog.dialog.fields.is_empty() {
-            return true;
-        }
-
-        match &key_event.key {
-            Key::Tab => {
-                if key_event.modifiers.contains(KeyModifiers::SHIFT) {
-                    active_dialog.move_selection(-1);
-                } else {
-                    active_dialog.move_selection(1);
-                }
-            }
-            Key::Down => active_dialog.move_selection(1),
-            Key::Up => active_dialog.move_selection(-1),
-            Key::Backspace => {
-                if let Some((_, value)) = active_dialog.selected_field_mut() {
-                    value.pop();
-                    active_dialog.clear_validation_error_for_selected_field();
-                }
-            }
-            Key::Delete => {
-                if let Some((_, value)) = active_dialog.selected_field_mut() {
-                    value.clear();
-                    active_dialog.clear_validation_error_for_selected_field();
-                }
-            }
-            Key::Space
-                if !key_event
-                    .modifiers
-                    .intersects(KeyModifiers::CTRL | KeyModifiers::ALT | KeyModifiers::SUPER) =>
-            {
-                let mut field_changed = false;
-                if let Some((field, value)) = active_dialog.selected_field_mut() {
-                    if plugin_dialog_field_is_bool(field) {
-                        *value = if value.trim().eq_ignore_ascii_case("true") {
-                            "false".to_string()
-                        } else {
-                            "true".to_string()
-                        };
-                        field_changed = true;
-                    } else if let Some(next_value) = plugin_dialog_next_choice_value(field, value) {
-                        *value = next_value;
-                        field_changed = true;
-                    } else {
-                        let inserted = plugin_dialog_filtered_insert(field, value, " ");
-                        if !inserted.is_empty() {
-                            value.push_str(&inserted);
-                            field_changed = true;
-                        }
-                    }
-                }
-                if field_changed {
-                    active_dialog.clear_validation_error_for_selected_field();
-                }
-            }
-            Key::Char(text)
-                if !key_event
-                    .modifiers
-                    .intersects(KeyModifiers::CTRL | KeyModifiers::ALT | KeyModifiers::SUPER) =>
-            {
-                let mut field_changed = false;
-                if let Some((field, value)) = active_dialog.selected_field_mut() {
-                    let inserted = plugin_dialog_filtered_insert(field, value, text);
-                    if !inserted.is_empty() {
-                        value.push_str(&inserted);
-                        field_changed = true;
-                    }
-                }
-                if field_changed {
-                    active_dialog.clear_validation_error_for_selected_field();
-                }
-            }
-            _ => {}
-        }
-        true
-    }
-
-    fn submit_active_plugin_dialog_form(&mut self) {
-        let Some(active_dialog) = self.active_plugin_ui_dialog.as_ref() else {
-            return;
-        };
-        let action_id = active_dialog.dialog.action_id.clone();
-        let args = active_dialog.args_json();
-        let raw_args = serde_json::to_string(&args).unwrap_or_else(|_| "{}".to_string());
-        commands::queue_plugin_command(self, &action_id, &raw_args);
-    }
-
-    pub(super) fn render_plugin_dialog_form(&self, width: usize) -> Vec<String> {
-        let Some(active_dialog) = &self.active_plugin_ui_dialog else {
-            return Vec::new();
-        };
-        let mut lines = Vec::new();
-        if active_dialog.dialog.fields.is_empty() {
-            lines.push(fit_line("Plugin dialog has no fields", width));
-            return lines;
-        }
-        for (index, field) in active_dialog.dialog.fields.iter().enumerate() {
-            let prefix = if index == active_dialog.selected_field {
-                ">"
-            } else {
-                " "
-            };
-            let required = if field.required { " *" } else { "" };
-            let value = active_dialog
-                .values
-                .get(index)
-                .map(|value| value.replace('\n', "\\n"))
-                .unwrap_or_default();
-            let kind = plugin_dialog_field_kind_label(field);
-            lines.push(fit_line(
-                &format!("{prefix} {}{} [{kind}]: {value}", field.label, required),
-                width,
-            ));
-            if active_dialog
-                .validation_error
-                .as_ref()
-                .is_some_and(|error| error.field_id == field.id)
-                && let Some(error) = active_dialog.validation_error.as_ref()
-            {
-                lines.push(fit_line(&format!("  error: {}", error.message), width));
-            }
-        }
-        lines
     }
 
     pub(super) fn open_delegation_confirmation_menu(
@@ -2038,115 +1452,6 @@ impl InteractiveRoot {
         )
     }
 
-    pub(super) fn set_plugin_commands(&mut self, mut commands: Vec<PluginSlashCommand>) {
-        commands.sort_by(|left, right| left.command_id.cmp(&right.command_id));
-        commands.dedup_by(|left, right| left.command_id == right.command_id);
-        self.plugin_commands = commands;
-        self.slash_suggestion_selected = 0;
-        self.slash_suggestions_dismissed_for = None;
-    }
-
-    pub(super) fn has_plugin_command(&self, command_id: &str) -> bool {
-        self.plugin_commands
-            .iter()
-            .any(|command| command.command_id == command_id)
-    }
-
-    pub(super) fn set_plugin_ui_extensions(
-        &mut self,
-        mut actions: Vec<PluginUiAction>,
-        mut keybindings: Vec<PluginKeybinding>,
-        mut dialogs: Vec<PluginUiDialog>,
-    ) {
-        actions.sort_by(|left, right| left.id.cmp(&right.id));
-        actions.dedup_by(|left, right| left.id == right.id);
-        keybindings.sort_by(|left, right| left.id.cmp(&right.id));
-        keybindings.dedup_by(|left, right| left.id == right.id);
-        dialogs.sort_by(|left, right| left.id.cmp(&right.id));
-        dialogs.dedup_by(|left, right| left.id == right.id);
-        self.plugin_ui_actions = actions;
-        self.plugin_keybindings = keybindings;
-        self.plugin_ui_dialogs = dialogs;
-    }
-
-    pub(super) fn handle_plugin_keybinding_input(&mut self, event: &InputEvent) -> bool {
-        if self.status != InteractiveStatus::Idle
-            || self.selecting_model
-            || self.selecting_session
-            || self.selecting_settings
-            || self.selecting_tree
-            || self.delegation_confirmation_menu.is_some()
-            || self.pending_delegation_rejection_reason.is_some()
-            || self.profile_menu.is_some()
-            || self.pending_profile_task.is_some()
-            || self.context_detail.is_some()
-        {
-            return false;
-        }
-        let Some(keybinding) = self
-            .plugin_keybindings
-            .iter()
-            .find(|keybinding| matches_key(event, &keybinding.key))
-        else {
-            return false;
-        };
-        let Some(action) = self
-            .plugin_ui_actions
-            .iter()
-            .find(|action| action.action_id == keybinding.action_id)
-            .cloned()
-        else {
-            self.transcript.push(TranscriptItem::system(format!(
-                "Plugin keybinding {} has no registered UI action",
-                keybinding.id
-            )));
-            return true;
-        };
-        self.activate_plugin_ui_action(&action.id)
-    }
-
-    pub(super) fn activate_plugin_ui_action(&mut self, action_id: &str) -> bool {
-        let Some(action) = self
-            .plugin_ui_actions
-            .iter()
-            .find(|action| action.id == action_id)
-            .cloned()
-        else {
-            self.transcript.push(TranscriptItem::system(format!(
-                "Plugin UI action not found: {action_id}"
-            )));
-            return true;
-        };
-        if self.has_plugin_command(&action.action_id) {
-            self.pending_plugin_command_request = Some(PendingPluginCommandRequest {
-                command_id: action.action_id.clone(),
-                args: serde_json::json!({}),
-            });
-            self.action = InteractiveAction::PluginCommand;
-            return true;
-        }
-        if let Some(dialog) = self
-            .plugin_ui_dialogs
-            .iter()
-            .find(|dialog| dialog.id == action.action_id)
-        {
-            self.pending_plugin_ui_dialog = Some(PendingPluginUiDialog {
-                dialog_id: dialog.id.clone(),
-                title: dialog.title.clone(),
-                description: dialog.description.clone(),
-                action_id: dialog.action_id.clone(),
-                fields: dialog.fields.clone(),
-            });
-            self.action = InteractiveAction::PluginUiDialog;
-            return true;
-        }
-        self.transcript.push(TranscriptItem::system(format!(
-            "Plugin UI action {} has unavailable target {}",
-            action.id, action.action_id
-        )));
-        true
-    }
-
     pub(super) fn all_slash_commands(&self) -> Vec<slash::BuiltinSlashCommand> {
         let mut commands = slash::builtin_slash_commands();
         for t in &self.prompt_templates {
@@ -2162,12 +1467,6 @@ impl InteractiveRoot {
                     description: s.description.clone(),
                 });
             }
-        }
-        for command in &self.plugin_commands {
-            commands.push(slash::BuiltinSlashCommand {
-                name: command.command_id.clone(),
-                description: command.description.clone(),
-            });
         }
         commands
     }
@@ -2648,7 +1947,6 @@ impl InteractiveRoot {
             model_selection_selected: self.model_selection_selected,
             selecting_session: self.selecting_session,
             session_selection_selected: self.session_selection_selected,
-            active_plugin_ui_dialog: self.active_plugin_ui_dialog.clone(),
             delegation_confirmation_menu_state: self
                 .delegation_confirmation_menu
                 .as_ref()
@@ -4139,8 +3437,6 @@ impl InteractiveRoot {
             }
         } else if !self.tool_authorizations.is_empty() {
             lines.extend(self.render_tool_authorization(width));
-        } else if self.active_plugin_ui_dialog.is_some() {
-            lines.extend(self.render_plugin_dialog_form(width));
         } else if self.delegation_confirmation_menu.is_some() {
             lines.extend(self.render_delegation_confirmation_menu(width));
         } else if self.profile_menu.is_some() {

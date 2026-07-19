@@ -10,9 +10,8 @@ use crate::adapters::interactive::render::{abbreviate_cwd, format_tokens};
 use crate::adapters::interactive::root::{
     InteractiveAction, InteractiveRoot, InteractiveStatus, PendingAgentInvocationRequest,
     PendingAgentTeamRequest, PendingBranchSummaryRequest, PendingDelegationConfirmationCommand,
-    PendingDelegationConfirmationSelection, PendingForkRequest, PendingPluginCommandRequest,
-    PendingPluginUiDialog, PendingSelfHealingEditModelRepair, PendingSelfHealingEditRequest,
-    PluginUiDialogField,
+    PendingDelegationConfirmationSelection, PendingForkRequest, PendingSelfHealingEditModelRepair,
+    PendingSelfHealingEditRequest,
 };
 use crate::adapters::interactive::session_actions::{
     SessionChoiceKind, clone_rust_native_choice, export_rust_native_choice,
@@ -125,12 +124,8 @@ pub(super) fn handle_slash_command(root: &mut InteractiveRoot, command: ParsedSl
         "compact" => handle_compact_command(root, &command.args),
         "branch-summary" => handle_branch_summary_command(root, &command.args),
         "self-healing-edit" => handle_self_healing_edit_command(root, &command.args),
-        "plugin-command" => handle_plugin_command(root, &command.args),
         "tree" => handle_tree_command(root),
         "scoped-models" | "share" => handle_pending_slash_command(root, &command),
-        _ if root.has_plugin_command(&command.name) => {
-            handle_plugin_slash_command(root, &command.name, &command.args)
-        }
         _ => {
             let expanded = root.expand_prompt_text(&command.original);
             if expanded != command.original {
@@ -581,160 +576,6 @@ fn parse_self_healing_edit_model_repair_suffix(
         max_attempts: max_attempts.unwrap_or(1),
     });
     Ok((value, policy))
-}
-
-fn handle_plugin_command(root: &mut InteractiveRoot, args: &str) {
-    let mut parts = args.splitn(2, char::is_whitespace);
-    let command_id = parts.next().unwrap_or_default().trim();
-    if command_id.is_empty() {
-        root.transcript.push(TranscriptItem::system(
-            "Usage: /plugin-command <command-id> [json-args]",
-        ));
-        return;
-    }
-    let raw_args = parts.next().unwrap_or_default().trim();
-    queue_plugin_command(root, command_id, raw_args);
-}
-
-fn handle_plugin_slash_command(root: &mut InteractiveRoot, command_id: &str, args: &str) {
-    queue_plugin_command(root, command_id, args.trim());
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct PluginDialogValidationError {
-    message: String,
-    field_id: Option<String>,
-}
-
-impl PluginDialogValidationError {
-    fn dialog(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            field_id: None,
-        }
-    }
-
-    fn field(field: &PluginUiDialogField, message: String) -> Self {
-        Self {
-            message,
-            field_id: Some(field.id.clone()),
-        }
-    }
-}
-
-pub(super) fn queue_plugin_command(root: &mut InteractiveRoot, command_id: &str, raw_args: &str) {
-    if root.status == InteractiveStatus::Running {
-        root.transcript.push(TranscriptItem::system(
-            "Wait for the current run to finish before running a plugin command.",
-        ));
-        return;
-    }
-
-    let parsed_args = if raw_args.is_empty() {
-        serde_json::json!({})
-    } else {
-        match serde_json::from_str(raw_args) {
-            Ok(args) => args,
-            Err(error) => {
-                root.transcript.push(TranscriptItem::system(format!(
-                    "Invalid plugin command args: {error}"
-                )));
-                return;
-            }
-        }
-    };
-
-    if let Some(active_dialog) = root.active_plugin_ui_dialog.clone() {
-        let dialog = active_dialog.dialog;
-        if dialog.action_id == command_id {
-            if let Err(error) = validate_plugin_dialog_args(&dialog, &parsed_args) {
-                if let Some(field_id) = error.field_id.as_deref() {
-                    root.set_active_plugin_dialog_field_error(field_id, error.message.clone());
-                }
-                root.transcript.push(TranscriptItem::system(error.message));
-                return;
-            }
-            root.active_plugin_ui_dialog = None;
-        } else {
-            root.active_plugin_ui_dialog = None;
-        }
-    }
-
-    root.pending_plugin_command_request = Some(PendingPluginCommandRequest {
-        command_id: command_id.to_string(),
-        args: parsed_args,
-    });
-    root.action = InteractiveAction::PluginCommand;
-}
-
-fn validate_plugin_dialog_args(
-    dialog: &PendingPluginUiDialog,
-    args: &serde_json::Value,
-) -> Result<(), PluginDialogValidationError> {
-    let Some(object) = args.as_object() else {
-        return Err(PluginDialogValidationError::dialog(
-            "Plugin dialog args must be a JSON object",
-        ));
-    };
-    for field in &dialog.fields {
-        let value = object.get(&field.id).unwrap_or(&serde_json::Value::Null);
-        validate_plugin_dialog_field(field, value)
-            .map_err(|message| PluginDialogValidationError::field(field, message))?;
-    }
-    Ok(())
-}
-
-fn validate_plugin_dialog_field(
-    field: &PluginUiDialogField,
-    value: &serde_json::Value,
-) -> Result<(), String> {
-    if field.required && dialog_field_value_missing(value) {
-        return Err(format!("Plugin dialog field {} is required", field.label));
-    }
-    if value.is_null() || dialog_field_value_missing(value) {
-        return Ok(());
-    }
-    let kind = normalized_dialog_field_kind(&field.kind);
-    let valid_type = match kind.as_str() {
-        "text" | "string" => value.is_string(),
-        "boolean" | "bool" => value.is_boolean(),
-        "number" => value.is_number(),
-        "integer" => value.as_i64().is_some() || value.as_u64().is_some(),
-        "select" | "choice" | "enum" => {
-            let Some(selected) = value.as_str() else {
-                return Err(format!(
-                    "Plugin dialog field {} must be {}",
-                    field.label, field.kind
-                ));
-            };
-            if !field.options.is_empty() && !field.options.iter().any(|option| option == selected) {
-                return Err(format!(
-                    "Plugin dialog field {} must be one of: {}",
-                    field.label,
-                    field.options.join(", ")
-                ));
-            }
-            true
-        }
-        _ => true,
-    };
-    if valid_type {
-        Ok(())
-    } else {
-        Err(format!(
-            "Plugin dialog field {} must be {}",
-            field.label, field.kind
-        ))
-    }
-}
-
-fn dialog_field_value_missing(value: &serde_json::Value) -> bool {
-    matches!(value, serde_json::Value::Null)
-        || value.as_str().is_some_and(|value| value.trim().is_empty())
-}
-
-fn normalized_dialog_field_kind(kind: &str) -> String {
-    kind.trim().replace('-', "_").to_ascii_lowercase()
 }
 
 fn handle_export_command(root: &mut InteractiveRoot, args: &str) {

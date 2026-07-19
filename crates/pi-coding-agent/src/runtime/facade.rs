@@ -127,9 +127,6 @@ pub(in crate::runtime) use control::PromptControlCleanupGuard;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use crate::plugins::{
-    CommandDefinition, KeybindDefinition, UiActionDefinition, UiDialogDefinition,
-};
 #[derive(Debug)]
 pub struct CodingAgentSession {
     pub(super) runtime_host: RuntimeHost,

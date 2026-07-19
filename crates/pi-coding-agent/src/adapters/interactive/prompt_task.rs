@@ -1,7 +1,4 @@
 use crate::adapters::interactive::event_bridge::CodingEventBridge;
-use crate::adapters::interactive::root::{
-    PluginKeybinding, PluginSlashCommand, PluginUiAction, PluginUiDialog, PluginUiDialogField,
-};
 use crate::api::operation::{
     BranchSummaryReusePolicy, CodingAgentOperation, CodingAgentOperationOutcome,
     CodingAgentPluginLoadOutcome,
@@ -11,9 +8,9 @@ use crate::app::cli::prompt_options::PromptRunOptions;
 use crate::app::session::{ResolvedSessionTarget, open_interactive_session};
 use crate::runtime::control::{OperationControl, OperationKind, operation_control_for_adapter};
 use crate::runtime::facade::{
-    AgentInvocationOptions, AgentTeamOptions, AgentTeamOutcome, CodingAgentOperationTask,
-    CodingAgentSession, CodingSessionError, ProductEvent, ProfileId, PromptTurnOptions,
-    PromptTurnOutcome, SelfHealingEditOutcome, SelfHealingEditRequest, UiSnapshot,
+    AgentInvocationOptions, AgentTeamOptions, AgentTeamOutcome, CodingAgentSession,
+    CodingSessionError, ProductEvent, ProfileId, PromptTurnOptions, PromptTurnOutcome,
+    SelfHealingEditOutcome, SelfHealingEditRequest, UiSnapshot,
 };
 use tokio::sync::{mpsc, oneshot};
 
@@ -29,7 +26,6 @@ pub(super) enum PromptTaskResult {
     DelegationApproval(DelegationApprovalTaskResult),
     SelfHealingEdit(SelfHealingEditTaskResult),
     PluginReload(PluginReloadTaskResult),
-    PluginCommand(PluginCommandTaskResult),
     SetDefaultAgentProfile(SetDefaultAgentProfileTaskResult),
     SessionTreeLabel(SessionTreeLabelTaskResult),
     DelegationRejection(DelegationRejectionTaskResult),
@@ -99,20 +95,6 @@ pub(super) struct SelfHealingEditTaskResult {
 pub(super) struct PluginReloadTaskResult {
     pub(super) session: CodingAgentSession,
     pub(super) outcome: CodingAgentPluginLoadOutcome,
-    pub(super) plugin_commands: Vec<PluginSlashCommand>,
-    pub(super) plugin_ui_actions: Vec<PluginUiAction>,
-    pub(super) plugin_keybindings: Vec<PluginKeybinding>,
-    pub(super) plugin_ui_dialogs: Vec<PluginUiDialog>,
-}
-
-pub(super) struct PluginCommandTaskResult {
-    pub(super) session: Option<CodingAgentSession>,
-    pub(super) command_id: String,
-    pub(super) output: String,
-    pub(super) plugin_commands: Vec<PluginSlashCommand>,
-    pub(super) plugin_ui_actions: Vec<PluginUiAction>,
-    pub(super) plugin_keybindings: Vec<PluginKeybinding>,
-    pub(super) plugin_ui_dialogs: Vec<PluginUiDialog>,
 }
 
 enum PromptTaskControlHandle {
@@ -269,86 +251,6 @@ impl PromptTask {
             request,
             default_agent_profile_id,
         ))
-    }
-
-    pub(super) fn spawn_plugin_command(
-        options: PromptRunOptions,
-        existing_session: Option<CodingAgentSession>,
-        command_id: String,
-        args: serde_json::Value,
-        default_agent_profile_id: ProfileId,
-    ) -> Result<Self, CliError> {
-        Ok(Self::spawn_coding_plugin_command(
-            options,
-            existing_session,
-            command_id,
-            args,
-            default_agent_profile_id,
-        ))
-    }
-
-    pub(super) fn spawn_submitted_plugin_command(
-        session: &CodingAgentSession,
-        task: CodingAgentOperationTask,
-        command_id: String,
-    ) -> Self {
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
-        let (done_tx, done_rx) = oneshot::channel();
-        let (abort_tx, mut abort_rx) = oneshot::channel();
-        send_ui_snapshot(&event_tx, session);
-        let plugin_commands = plugin_slash_commands(session);
-        let plugin_ui_actions = plugin_ui_actions(session);
-        let plugin_keybindings = plugin_keybindings(session);
-        let plugin_ui_dialogs = plugin_ui_dialogs(session);
-        let operation_control = operation_control_for_adapter(session);
-        let operation_id = task.operation_id().to_owned();
-
-        tokio::spawn(async move {
-            let mut join = Box::pin(task.join());
-            let mut abort_requested = false;
-            let result = loop {
-                tokio::select! {
-                    _ = &mut abort_rx, if !abort_requested => {
-                        abort_requested = true;
-                        if let Err(error) = request_interactive_operation_abort(
-                            &operation_control,
-                            operation_id.clone(),
-                        ) {
-                            break Err(error);
-                        }
-                    }
-                    result = &mut join => break result.map_err(CliError::from),
-                }
-            };
-            let completion = match result {
-                Ok(CodingAgentOperationOutcome::PluginCommand(output)) => {
-                    PromptTaskCompletion::Completed(PromptTaskResult::PluginCommand(
-                        PluginCommandTaskResult {
-                            session: None,
-                            command_id,
-                            output,
-                            plugin_commands,
-                            plugin_ui_actions,
-                            plugin_keybindings,
-                            plugin_ui_dialogs,
-                        },
-                    ))
-                }
-                Ok(_) => {
-                    unreachable!("plugin command operation returned a different public outcome")
-                }
-                Err(error) => PromptTaskCompletion::SetupFailed(error),
-            };
-            let _ = done_tx.send(completion);
-        });
-
-        Self {
-            control: PromptTaskControlHandle::AbortOnly(Some(abort_tx)),
-            events: event_rx,
-            done: done_rx,
-            abort_requested: false,
-            events_closed: false,
-        }
     }
 
     pub(super) fn spawn_branch_summary(
@@ -766,40 +668,6 @@ impl PromptTask {
         }
     }
 
-    fn spawn_coding_plugin_command(
-        options: PromptRunOptions,
-        existing_session: Option<CodingAgentSession>,
-        command_id: String,
-        args: serde_json::Value,
-        default_agent_profile_id: ProfileId,
-    ) -> Self {
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
-        let (done_tx, done_rx) = oneshot::channel();
-        let (abort_tx, abort_rx) = oneshot::channel();
-
-        tokio::spawn(async move {
-            let result = run_coding_plugin_command_task(
-                options,
-                existing_session,
-                command_id,
-                args,
-                default_agent_profile_id,
-                event_tx,
-                abort_rx,
-            )
-            .await;
-            let _ = done_tx.send(result);
-        });
-
-        Self {
-            control: PromptTaskControlHandle::AbortOnly(Some(abort_tx)),
-            events: event_rx,
-            done: done_rx,
-            abort_requested: false,
-            events_closed: false,
-        }
-    }
-
     fn spawn_coding_branch_summary(
         options: PromptRunOptions,
         existing_session: Option<CodingAgentSession>,
@@ -928,13 +796,6 @@ fn request_interactive_abort(
     kind: OperationKind,
 ) -> Result<(), CliError> {
     normalize_interactive_abort_result(control.cancel_active(kind))
-}
-
-fn request_interactive_operation_abort(
-    control: &OperationControl,
-    operation_id: impl Into<String>,
-) -> Result<(), CliError> {
-    normalize_interactive_abort_result(control.cancel_operation(operation_id))
 }
 
 fn normalize_interactive_abort_result(
@@ -1682,199 +1543,8 @@ async fn run_coding_plugin_reload_task(
     .await;
 
     complete_owned_task(session, result, |session, outcome| {
-        let plugin_commands = plugin_slash_commands(&session);
-        let plugin_ui_actions = plugin_ui_actions(&session);
-        let plugin_keybindings = plugin_keybindings(&session);
-        let plugin_ui_dialogs = plugin_ui_dialogs(&session);
-        PromptTaskResult::PluginReload(PluginReloadTaskResult {
-            session,
-            outcome,
-            plugin_commands,
-            plugin_ui_actions,
-            plugin_keybindings,
-            plugin_ui_dialogs,
-        })
+        PromptTaskResult::PluginReload(PluginReloadTaskResult { session, outcome })
     })
-}
-
-async fn run_coding_plugin_command_task(
-    options: PromptRunOptions,
-    existing_session: Option<CodingAgentSession>,
-    command_id: String,
-    args: serde_json::Value,
-    default_agent_profile_id: ProfileId,
-    event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
-    mut abort_rx: oneshot::Receiver<()>,
-) -> PromptTaskCompletion {
-    let should_load_plugins = existing_session.is_none();
-    let mut session = match existing_session {
-        Some(session) => session,
-        None => {
-            match open_interactive_session(
-                options.session.as_ref(),
-                options.session_target.as_ref(),
-                default_agent_profile_id,
-            )
-            .await
-            {
-                Ok(session) => session,
-                Err(error) => return PromptTaskCompletion::SetupFailed(error),
-            }
-        }
-    };
-    let result = async {
-        let mut receiver = session.subscribe_product_events();
-        let operation_control = operation_control_for_adapter(&session);
-        send_ui_snapshot(&event_tx, &session);
-
-        let mut abort_requested = false;
-        if should_load_plugins {
-            let mut reload = Box::pin(session.run(CodingAgentOperation::PluginLoad));
-            loop {
-                tokio::select! {
-                    _ = &mut abort_rx, if !abort_requested => {
-                        abort_requested = true;
-                        request_interactive_abort(
-                            &operation_control,
-                            OperationKind::PluginLoad,
-                        )?;
-                    }
-                    event = receiver.recv() => {
-                        if let Ok(event) = event {
-                            let _ = event_tx.send(PromptTaskEvent::Coding(event));
-                        }
-                    }
-                    outcome = &mut reload => {
-                        outcome
-                            .map_err(CliError::from)
-                            .map(|operation_outcome| match operation_outcome {
-                                CodingAgentOperationOutcome::PluginLoad(_) => (),
-                                _ => unreachable!("plugin load operation returned a different public outcome"),
-                            })?;
-                        break;
-                    }
-                }
-            }
-        } else if abort_rx.try_recv().is_ok() {
-            return Err(CliError::from(CodingSessionError::Cancelled));
-        }
-
-        let task = session
-            .submit(CodingAgentOperation::PluginCommand {
-                command_id: command_id.clone(),
-                args,
-            })
-            .map_err(CliError::from)?;
-        let operation_id = task.operation_id().to_owned();
-        let mut join = Box::pin(task.join());
-        let output = loop {
-            tokio::select! {
-                _ = &mut abort_rx, if !abort_requested => {
-                    abort_requested = true;
-                    request_interactive_operation_abort(
-                        &operation_control,
-                        operation_id.clone(),
-                    )?;
-                }
-                result = &mut join => break result.map_err(CliError::from),
-            }
-        }
-            .map(|operation_outcome| match operation_outcome {
-                CodingAgentOperationOutcome::PluginCommand(output) => output,
-                _ => unreachable!("plugin command operation returned a different public outcome"),
-            })?;
-
-        while let Ok(Some(event)) = receiver.try_recv() {
-            let _ = event_tx.send(PromptTaskEvent::Coding(event));
-        }
-        Ok(output)
-    }
-    .await;
-
-    complete_owned_task(session, result, |session, output| {
-        let plugin_commands = plugin_slash_commands(&session);
-        let plugin_ui_actions = plugin_ui_actions(&session);
-        let plugin_keybindings = plugin_keybindings(&session);
-        let plugin_ui_dialogs = plugin_ui_dialogs(&session);
-        PromptTaskResult::PluginCommand(PluginCommandTaskResult {
-            session: Some(session),
-            command_id,
-            output,
-            plugin_commands,
-            plugin_ui_actions,
-            plugin_keybindings,
-            plugin_ui_dialogs,
-        })
-    })
-}
-
-fn plugin_slash_commands(session: &CodingAgentSession) -> Vec<PluginSlashCommand> {
-    session
-        .plugin_commands()
-        .into_iter()
-        .map(|command| PluginSlashCommand::new(command.id, command.description))
-        .collect()
-}
-
-fn plugin_ui_actions(session: &CodingAgentSession) -> Vec<PluginUiAction> {
-    session
-        .plugin_ui_actions()
-        .into_iter()
-        .map(|action| {
-            PluginUiAction::new(
-                action.id,
-                action.label,
-                action.description,
-                action.action_id,
-            )
-        })
-        .collect()
-}
-
-fn plugin_keybindings(session: &CodingAgentSession) -> Vec<PluginKeybinding> {
-    session
-        .plugin_keybindings()
-        .into_iter()
-        .map(|keybinding| {
-            PluginKeybinding::new(
-                keybinding.id,
-                keybinding.key,
-                keybinding.description,
-                keybinding.action_id,
-            )
-        })
-        .collect()
-}
-
-fn plugin_ui_dialogs(session: &CodingAgentSession) -> Vec<PluginUiDialog> {
-    session
-        .plugin_ui_dialogs()
-        .into_iter()
-        .map(|dialog| {
-            let fields = dialog
-                .fields
-                .into_iter()
-                .map(|field| {
-                    PluginUiDialogField::new(
-                        field.id,
-                        field.label,
-                        field.description,
-                        field.kind,
-                        field.default_value,
-                        field.required,
-                    )
-                    .with_options(field.options)
-                })
-                .collect();
-            PluginUiDialog::new(
-                dialog.id,
-                dialog.title,
-                dialog.description,
-                dialog.action_id,
-            )
-            .with_fields(fields)
-        })
-        .collect()
 }
 
 async fn run_coding_branch_summary_task(
@@ -2346,7 +2016,6 @@ mod tests {
             "run_coding_compact_task",
             "run_coding_self_healing_edit_task",
             "run_coding_plugin_reload_task",
-            "run_coding_plugin_command_task",
             "run_coding_branch_summary_task",
             "run_coding_branch_summary_navigation_task",
             "run_coding_fork_session_task",

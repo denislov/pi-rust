@@ -165,7 +165,6 @@ terminal events as applicable.
 | `InvokeAgent` | `AgentInvocation` |
 | `InvokeTeam` | `AgentTeam` |
 | `PluginLoad` | `PluginLoad` |
-| `PluginCommand` | `PluginCommand` |
 | `SetDefaultAgentProfile` | `DefaultAgentProfileChanged` |
 | `ApproveDelegation` | `DelegationApproved` |
 | `RejectDelegation` | `DelegationRejected` |

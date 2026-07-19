@@ -6,7 +6,7 @@ Baseline version: `0.3.1`, released as annotated tag `v0.3.1`.
 
 Source baseline: commit `870d4bb`; dated release record: `180f219`; post-baseline
 `0.4.0` and `0.4.1` convergence commits are recorded below. Last refreshed:
-2026-07-19.
+2026-07-20.
 
 This file records implementation facts, not desired behavior. Cargo manifests,
 compiled source, tests, and CodeGraph call paths outrank this summary when they
@@ -92,8 +92,10 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   complete.
 - SessionWriteRoot, NonSessionRoot, RuntimeWrite, Query, ReadOnly, Child, and
   Control admission classes exist; the scheduler has no general work queue.
-- PluginCommand, AgentInvocation, and AgentTeam have runtime-owned submitted task
-  paths. Other operations still rely on the session facade as execution owner.
+- AgentInvocation and AgentTeam have runtime-owned submitted task paths. The
+  unreachable legacy PluginCommand operation and protocol/presentation surface
+  are absent; other operations still rely on the session facade as execution
+  owner.
 - `OperationSupervisor` now freezes immutable typed finalization decisions from
   the admitted execution and typed outcome across all four dispatch paths.
   Submission projection validates that decision instead of independently
@@ -214,8 +216,9 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   lease-only Host handles, an offline TypeScript Component harness, and the
   accepted core/extension handler target boundary, and a minimum production
   Wasmtime Component invocation path with a real lease-backed Host call.
-  Contribution productization is Skipped; no Lua/native compatibility runtime
-  or automated migration layer is retained.
+  Contribution productization is Skipped; no PluginCommand/UI compatibility
+  surface, Lua/native compatibility runtime, or automated migration layer is
+  retained.
 - PluginLoad uses the admitted snapshot operation ID and typed
   Completed/Failed/Aborted root terminal evidence. Its terminal draft now
   persists through the coordinator outbox and publishes only after commit.

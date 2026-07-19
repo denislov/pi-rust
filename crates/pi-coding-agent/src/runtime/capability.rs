@@ -427,8 +427,7 @@ mod tests {
                 | OperationKind::SetSessionTreeLabel
                 | OperationKind::SetDefaultAgentProfile
                 | OperationKind::SelfHealingEdit => SessionCapabilityAccess::Write,
-                OperationKind::PluginCommand
-                | OperationKind::PluginLoad
+                OperationKind::PluginLoad
                 | OperationKind::DelegationConfirmation
                 | OperationKind::AgentInvocation
                 | OperationKind::AgentTeam => SessionCapabilityAccess::None,

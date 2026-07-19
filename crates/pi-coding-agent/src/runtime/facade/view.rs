@@ -35,14 +35,12 @@ impl CodingAgentSession {
             &self.runtime_host.operation_supervisor.control,
             QueryIntent::Capabilities,
         );
-        let plugin_capabilities = crate::plugins::PluginCapabilities::new();
         let persistent = matches!(
             self.runtime_host.session_coordinator.persistence,
             SessionPersistence::Persistent(_)
         );
         self.runtime_host.capability_service.capabilities(
             &self.runtime_host.operation_supervisor.control.activity(),
-            &plugin_capabilities,
             persistent,
         )
     }
@@ -137,21 +135,5 @@ impl CodingAgentSession {
                 .pending_delegation_confirmations,
             &now,
         )
-    }
-
-    pub(crate) fn plugin_commands(&self) -> Vec<CommandDefinition> {
-        Vec::new()
-    }
-
-    pub(crate) fn plugin_ui_actions(&self) -> Vec<UiActionDefinition> {
-        Vec::new()
-    }
-
-    pub(crate) fn plugin_ui_dialogs(&self) -> Vec<UiDialogDefinition> {
-        Vec::new()
-    }
-
-    pub(crate) fn plugin_keybindings(&self) -> Vec<KeybindDefinition> {
-        Vec::new()
     }
 }

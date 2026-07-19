@@ -1,6 +1,5 @@
 use tokio_util::sync::CancellationToken;
 
-use crate::plugins::PluginCapabilities;
 use crate::runtime::facade::CodingSessionError;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,7 +21,6 @@ impl PluginLoadOptions {
 pub(crate) struct PluginLoadOutcome {
     pub(crate) loaded_plugin_ids: Vec<String>,
     pub(crate) diagnostics: Vec<PluginDiagnostic>,
-    pub(crate) capabilities: PluginCapabilities,
     pub(crate) capability_changed: bool,
 }
 
@@ -74,7 +72,6 @@ impl PluginLoadRunner {
         ctx.outcome = Some(PluginLoadOutcome {
             loaded_plugin_ids: Vec::new(),
             diagnostics: Vec::new(),
-            capabilities: PluginCapabilities::new(),
             capability_changed: false,
         });
         Ok(())

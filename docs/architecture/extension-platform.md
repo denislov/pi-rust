@@ -65,6 +65,12 @@ resource tables, secrets, session handles, or client state.
 
 ## Contributions And Dispatch
 
+The current minimum framework validates and projects handler targets but does
+not expose contribution commands, UI actions, dialogs, keybindings, or matching
+RPC/TUI dispatch. Those product surfaces are explicitly Skipped and require a
+new version plan before implementation; no legacy `PluginCommand` compatibility
+route is retained.
+
 Manifest and schema-owned DTOs describe contributions. Shared projections use an
 explicit `CoreHandlerRef` or `ExtensionHandlerRef`:
 

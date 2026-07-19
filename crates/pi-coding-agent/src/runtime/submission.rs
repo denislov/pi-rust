@@ -242,9 +242,6 @@ impl CodingAgentSession {
             .client_projection
             .coordinator
             .ensure_runtime_running()?;
-        if matches!(operation, CodingAgentOperation::PluginCommand { .. }) {
-            return self.submit(operation)?.join().await;
-        }
         let descriptor = operation.descriptor();
         let fingerprint = operation.submission_fingerprint();
         let submission = self.consume_submission_lease(descriptor, fingerprint.as_ref());

@@ -56,7 +56,6 @@ pub(super) fn is_supported_m5_command(command: &str) -> bool {
             | "new_session"
             | "get_state"
             | "reload"
-            | "plugin_command"
             | "self_healing_edit"
             | "list_agent_profiles"
             | "list_tool_authorizations"

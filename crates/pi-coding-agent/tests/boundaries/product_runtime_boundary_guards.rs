@@ -378,10 +378,6 @@ fn final_receiver_aware_compatibility_absence_and_retained_api_guard() {
             "product_events_after",
             "prompt_control_handle",
             "tool_authorization_control",
-            "plugin_commands",
-            "plugin_ui_actions",
-            "plugin_ui_dialogs",
-            "plugin_keybindings",
             "install_submission_lease",
             "resolve_recovery_with_authority",
         ],
@@ -796,25 +792,11 @@ fn production_rpc_uses_canonical_operations() {
     assert!(!prompt.contains("session.run(CodingAgentOperation::InvokeAgent"));
     assert!(!prompt.contains("session.run(CodingAgentOperation::InvokeTeam"));
 
-    let rpc_commands = fs::read_to_string(scan.crate_root.join("src/adapters/rpc/commands.rs"))
-        .expect("read RPC command owner");
-    let rpc_commands = sanitize_rust_source(&rpc_commands);
-    assert!(rpc_commands.contains("session.submit(CodingAgentOperation::PluginCommand"));
-    assert!(!rpc_commands.contains("session.run(CodingAgentOperation::PluginCommand"));
-
-    let interactive_loop =
-        fs::read_to_string(scan.crate_root.join("src/adapters/interactive/loop.rs"))
-            .expect("read interactive operation owner");
-    let interactive_loop = sanitize_rust_source(&interactive_loop);
-    assert!(interactive_loop.contains(".submit(CodingAgentOperation::PluginCommand"));
-
-    let interactive_task = fs::read_to_string(
-        scan.crate_root
-            .join("src/adapters/interactive/prompt_task.rs"),
-    )
-    .expect("read interactive task owner");
-    let interactive_task = sanitize_rust_source(&interactive_task);
-    assert!(!interactive_task.contains(".run(CodingAgentOperation::PluginCommand"));
+    for path in rust_files_under(&scan.crate_root.join("src")) {
+        let source = fs::read_to_string(&path).expect("read production source");
+        assert!(!source.contains("PluginCommand"));
+        assert!(!source.contains("plugin_command"));
+    }
 }
 
 #[test]

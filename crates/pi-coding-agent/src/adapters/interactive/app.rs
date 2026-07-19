@@ -39,8 +39,7 @@ use crate::adapters::interactive::render::{
 #[cfg(test)]
 use crate::adapters::interactive::root::{
     FooterStats, InteractiveAction, InteractiveRoot, InteractiveStatus,
-    PendingDelegationConfirmationCommand, PendingSelfHealingEditRequest, PluginKeybinding,
-    PluginSlashCommand, PluginUiAction, PluginUiDialog,
+    PendingDelegationConfirmationCommand, PendingSelfHealingEditRequest,
 };
 #[cfg(test)]
 use crate::adapters::interactive::session_actions::SessionChoiceKind;
@@ -1157,7 +1156,6 @@ mod tests {
                 "self-healing-edit",
                 "resume",
                 "reload",
-                "plugin-command",
                 "quit",
             ]
             .map(String::from)
@@ -1180,7 +1178,7 @@ mod tests {
         assert!(rendered.contains("/settings"), "{rendered}");
         assert!(rendered.contains("Open settings menu"), "{rendered}");
         assert!(rendered.contains("/model"), "{rendered}");
-        assert!(rendered.contains("(1/30)"), "{rendered}");
+        assert!(rendered.contains("(1/29)"), "{rendered}");
     }
 
     #[test]
@@ -1833,14 +1831,14 @@ mod tests {
         root.handle_input(&key_event("\x1b[B"));
         root.handle_input(&key_event("\x1b[B"));
         let moved = root.render(80).join("\n");
-        assert!(moved.contains("(3/30)"), "{moved}");
+        assert!(moved.contains("(3/29)"), "{moved}");
 
         root.handle_input(&key_event("\t"));
 
         assert_eq!(root.editor.text(), "/model ");
         assert_eq!(root.take_action(), InteractiveAction::None);
         let rendered = root.render(80).join("\n");
-        assert!(!rendered.contains("(2/30)"), "{rendered}");
+        assert!(!rendered.contains("(2/29)"), "{rendered}");
     }
 
     #[test]
@@ -3747,234 +3745,6 @@ members = ["coder"]
         let commands = root.all_slash_commands();
         assert!(commands.iter().any(|c| c.name == "review"));
         assert!(commands.iter().any(|c| c.name == "skill:rust"));
-    }
-
-    #[test]
-    fn all_slash_commands_includes_loaded_plugin_commands() {
-        let mut root = InteractiveRoot::new(
-            PathBuf::from("."),
-            "faux-model".to_string(),
-            "no-session".to_string(),
-        );
-        root.set_plugin_commands(vec![PluginSlashCommand::new(
-            "extension.say_hello",
-            "greets from extension command",
-        )]);
-
-        let commands = root.all_slash_commands();
-
-        assert!(commands.iter().any(|c| c.name == "extension.say_hello"));
-        assert!(
-            commands
-                .iter()
-                .any(|c| c.description == "greets from extension command")
-        );
-    }
-
-    #[test]
-    fn plugin_slash_command_sets_pending_plugin_command_request() {
-        let mut root = InteractiveRoot::new(
-            PathBuf::from("."),
-            "faux-model".to_string(),
-            "no-session".to_string(),
-        );
-        root.set_plugin_commands(vec![PluginSlashCommand::new(
-            "extension.say_hello",
-            "greets from extension command",
-        )]);
-
-        root.handle_slash_command(ParsedSlashCommand {
-            name: "extension.say_hello".to_string(),
-            args: r#"{"name":"tui"}"#.to_string(),
-            original: r#"/extension.say_hello {"name":"tui"}"#.to_string(),
-        });
-
-        assert_eq!(root.take_action(), InteractiveAction::PluginCommand);
-        let request = root
-            .take_pending_plugin_command_request()
-            .expect("plugin command request should be queued");
-        assert_eq!(request.command_id, "extension.say_hello");
-        assert_eq!(request.args, serde_json::json!({"name": "tui"}));
-    }
-
-    #[test]
-    fn builtin_slash_command_wins_over_same_named_plugin_alias() {
-        let env = crate::test_support::EnvGuard::new(&["PI_RUST_DIR"]);
-        let temp = tempfile::tempdir().unwrap();
-        let cwd = temp.path().join("workspace");
-        let global = temp.path().join("global");
-        std::fs::create_dir_all(&global).unwrap();
-        write_profile_file(
-            cwd.join(".pi-rust/agents/coder.toml"),
-            r#"
-schema_version = 1
-id = "coder"
-display_name = "Coder"
-"#,
-        );
-        env.set_pi_rust_dir(&global);
-        let mut root =
-            InteractiveRoot::new(cwd, "faux-model".to_string(), "no-session".to_string());
-        root.set_plugin_commands(vec![PluginSlashCommand::new(
-            "agent",
-            "conflicting plugin alias",
-        )]);
-
-        root.handle_slash_command(ParsedSlashCommand {
-            name: "agent".to_string(),
-            args: String::new(),
-            original: "/agent".to_string(),
-        });
-
-        assert_eq!(root.take_action(), InteractiveAction::None);
-        assert!(root.take_pending_plugin_command_request().is_none());
-        assert!(root.take_pending_agent_invocation_request().is_none());
-    }
-
-    #[test]
-    fn plugin_keybinding_with_unavailable_target_reports_failure_without_success_action() {
-        let mut root = InteractiveRoot::new(
-            PathBuf::from("."),
-            "faux-model".to_string(),
-            "no-session".to_string(),
-        );
-        root.set_plugin_ui_extensions(
-            vec![PluginUiAction::new(
-                "ui.open_panel",
-                "Open panel",
-                "opens a Extension panel",
-                "extension.open_panel",
-            )],
-            vec![PluginKeybinding::new(
-                "keybind.open_panel",
-                "ctrl+g",
-                "opens the Extension panel",
-                "extension.open_panel",
-            )],
-            Vec::new(),
-        );
-
-        root.handle_input(&key_event("\x07"));
-
-        assert_eq!(root.take_action(), InteractiveAction::None);
-        assert!(root.transcript.items().iter().any(|item| matches!(
-            item,
-            TranscriptItem::System { text }
-                if text == "Plugin UI action ui.open_panel has unavailable target extension.open_panel"
-        )));
-        assert_eq!(root.editor.text(), "");
-    }
-
-    #[test]
-    fn plugin_keybinding_for_registered_command_queues_plugin_command_runner() {
-        let mut root = InteractiveRoot::new(
-            PathBuf::from("."),
-            "faux-model".to_string(),
-            "no-session".to_string(),
-        );
-        root.set_plugin_commands(vec![PluginSlashCommand::new(
-            "extension.open_panel",
-            "opens a Extension panel",
-        )]);
-        root.set_plugin_ui_extensions(
-            vec![PluginUiAction::new(
-                "ui.open_panel",
-                "Open panel",
-                "opens a Extension panel",
-                "extension.open_panel",
-            )],
-            vec![PluginKeybinding::new(
-                "keybind.open_panel",
-                "ctrl+g",
-                "opens the Extension panel",
-                "extension.open_panel",
-            )],
-            Vec::new(),
-        );
-
-        root.handle_input(&key_event("\x07"));
-
-        assert_eq!(root.take_action(), InteractiveAction::PluginCommand);
-        let request = root
-            .take_pending_plugin_command_request()
-            .expect("plugin command runner should be queued");
-        assert_eq!(request.command_id, "extension.open_panel");
-        assert_eq!(request.args, serde_json::json!({}));
-        assert_eq!(root.editor.text(), "");
-    }
-
-    #[test]
-    fn registered_plugin_ui_action_can_activate_command_without_keybinding_transport() {
-        let mut root = InteractiveRoot::new(
-            PathBuf::from("."),
-            "faux-model".to_string(),
-            "no-session".to_string(),
-        );
-        root.set_plugin_commands(vec![PluginSlashCommand::new(
-            "extension.open_panel",
-            "opens a Extension panel",
-        )]);
-        root.set_plugin_ui_extensions(
-            vec![PluginUiAction::new(
-                "ui.open_panel",
-                "Open panel",
-                "opens a Extension panel",
-                "extension.open_panel",
-            )],
-            Vec::new(),
-            Vec::new(),
-        );
-
-        assert!(root.activate_plugin_ui_action("ui.open_panel"));
-
-        assert_eq!(root.take_action(), InteractiveAction::PluginCommand);
-        let request = root
-            .take_pending_plugin_command_request()
-            .expect("plugin UI action should queue its command target");
-        assert_eq!(request.command_id, "extension.open_panel");
-        assert_eq!(request.args, serde_json::json!({}));
-        assert_eq!(root.editor.text(), "");
-    }
-
-    #[test]
-    fn plugin_keybinding_for_registered_dialog_queues_plugin_dialog_runner() {
-        let mut root = InteractiveRoot::new(
-            PathBuf::from("."),
-            "faux-model".to_string(),
-            "no-session".to_string(),
-        );
-        root.set_plugin_ui_extensions(
-            vec![PluginUiAction::new(
-                "ui.open_panel",
-                "Open panel",
-                "opens a Extension panel",
-                "dialog.open_panel",
-            )],
-            vec![PluginKeybinding::new(
-                "keybind.open_panel",
-                "ctrl+g",
-                "opens the Extension panel",
-                "dialog.open_panel",
-            )],
-            vec![PluginUiDialog::new(
-                "dialog.open_panel",
-                "Extension panel",
-                "Panel registered by Extension",
-                "extension.submit_panel",
-            )],
-        );
-
-        root.handle_input(&key_event("\x07"));
-
-        assert_eq!(root.take_action(), InteractiveAction::PluginUiDialog);
-        let dialog = root
-            .take_pending_plugin_ui_dialog()
-            .expect("plugin dialog runner should be queued");
-        assert_eq!(dialog.dialog_id, "dialog.open_panel");
-        assert_eq!(dialog.title, "Extension panel");
-        assert_eq!(dialog.description, "Panel registered by Extension");
-        assert_eq!(dialog.action_id, "extension.submit_panel");
-        assert_eq!(root.editor.text(), "");
     }
 
     #[test]

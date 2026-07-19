@@ -268,7 +268,7 @@ mod tests {
             control
                 .begin_root(
                     OperationClass::NonSessionRoot,
-                    OperationKind::PluginCommand,
+                    OperationKind::AgentInvocation,
                     "root-3".into(),
                 )
                 .unwrap_err(),
@@ -282,7 +282,7 @@ mod tests {
             control
                 .begin_root(
                     OperationClass::NonSessionRoot,
-                    OperationKind::PluginCommand,
+                    OperationKind::AgentInvocation,
                     "root-3".into(),
                 )
                 .is_ok()

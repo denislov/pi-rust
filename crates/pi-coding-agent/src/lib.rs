@@ -9,7 +9,6 @@ mod authorization;
 mod events;
 mod extensions;
 mod operations;
-mod plugins;
 mod profiles;
 mod runtime;
 mod services;

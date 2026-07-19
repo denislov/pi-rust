@@ -430,19 +430,6 @@ impl RpcState {
                 .await
             }
             RpcCommand::Reload { id } => self.handle_reload(id, writer).await,
-            RpcCommand::PluginCommand {
-                id,
-                command_id,
-                args,
-            } => {
-                self.handle_plugin_command(
-                    id,
-                    command_id,
-                    args.unwrap_or_else(|| serde_json::json!({})),
-                    writer,
-                )
-                .await
-            }
             RpcCommand::SelfHealingEdit {
                 id,
                 path,
@@ -1662,109 +1649,6 @@ impl RpcState {
     async fn open_profile_listing_session(&self) -> Result<CodingAgentSession, CliError> {
         let options = SessionRunOptions::disabled(self.options.session.cwd.clone());
         Ok(open_new_runtime_session(&options).await?)
-    }
-
-    async fn handle_plugin_command<W>(
-        &mut self,
-        id: Option<String>,
-        command_id: String,
-        args: serde_json::Value,
-        writer: &mut W,
-    ) -> Result<(), CliError>
-    where
-        W: AsyncWrite + Unpin,
-    {
-        if self.is_streaming() {
-            write_rpc_response(
-                writer,
-                RpcResponse::error(
-                    id,
-                    "plugin_command",
-                    "cannot run plugin command while agent is streaming",
-                ),
-            )
-            .await?;
-            return Ok(());
-        }
-
-        let should_load_plugins = self.coding_session.is_none();
-        if should_load_plugins {
-            let session = match self.open_reload_session().await {
-                Ok(session) => session,
-                Err(error) => {
-                    write_rpc_response(
-                        writer,
-                        RpcResponse::error(id, "plugin_command", error.to_string()),
-                    )
-                    .await?;
-                    return Ok(());
-                }
-            };
-            self.coding_session = Some(session);
-        }
-
-        let session = self
-            .coding_session
-            .as_mut()
-            .expect("plugin command session is initialized");
-
-        if should_load_plugins {
-            if let Err(error) = session
-                .run(CodingAgentOperation::PluginLoad)
-                .await
-                .map(|outcome| match outcome {
-                    CodingAgentOperationOutcome::PluginLoad(_) => (),
-                    _ => unreachable!("plugin load operation returned a different public outcome"),
-                })
-            {
-                write_rpc_response(
-                    writer,
-                    RpcResponse::error(id, "plugin_command", error.to_string()),
-                )
-                .await?;
-                return Ok(());
-            }
-        }
-
-        let task = match session.submit(CodingAgentOperation::PluginCommand {
-            command_id: command_id.clone(),
-            args,
-        }) {
-            Ok(task) => task,
-            Err(error) => {
-                write_rpc_response(
-                    writer,
-                    RpcResponse::error(id, "plugin_command", error.to_string()),
-                )
-                .await?;
-                return Ok(());
-            }
-        };
-
-        match task.join().await {
-            Ok(CodingAgentOperationOutcome::PluginCommand(output)) => {
-                write_rpc_response(
-                    writer,
-                    RpcResponse::success(
-                        id,
-                        "plugin_command",
-                        Some(serde_json::json!({
-                            "commandId": command_id,
-                            "output": output,
-                        })),
-                    ),
-                )
-                .await
-            }
-            Ok(_) => unreachable!("plugin command operation returned a different public outcome"),
-            Err(error) => {
-                write_rpc_response(
-                    writer,
-                    RpcResponse::error(id, "plugin_command", error.to_string()),
-                )
-                .await
-            }
-        }
     }
 
     async fn handle_reload<W>(&mut self, id: Option<String>, writer: &mut W) -> Result<(), CliError>
