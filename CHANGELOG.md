@@ -65,6 +65,9 @@
 - Preserved provider error classification through the typed PromptTurn runner;
   print mode continues to expose provider stop errors as `AgentFailure` rather
   than a generic session failure.
+- Stabilized RPC background-operation tests for cancellation races: a blocked
+  provider may be dropped by targeted abort, so tests now assert the typed RPC
+  cancellation response rather than requiring a provider poll side effect.
 
 ## 0.4.0 - 2026-07-19
 
