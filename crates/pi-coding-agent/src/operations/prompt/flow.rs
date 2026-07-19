@@ -112,6 +112,21 @@ pub(crate) struct PromptTurnFlow {
     flow: Flow<PromptTurnContext>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PromptTurnStep {
+    Start,
+    ResolveRequest,
+    PrepareInput,
+    ResolveRuntime,
+    LoadResources,
+    OpenSession,
+    BuildAgentRuntime,
+    RecordUserInput,
+    RunAgentTurn,
+    FinalizeTurn,
+    EmitCompletion,
+}
+
 impl PromptTurnFlow {
     pub(crate) fn new() -> Result<Self, CodingSessionError> {
         let mut flow = Flow::new(PROMPT_TURN_NODE_IDS[0]).map_err(flow_error)?;
@@ -130,6 +145,48 @@ impl PromptTurnFlow {
         ctx: &mut PromptTurnContext,
     ) -> Result<FlowOutcome, CodingSessionError> {
         self.flow.run(ctx).await.map_err(flow_error)
+    }
+
+    pub(crate) async fn run_typed(
+        &self,
+        ctx: &mut PromptTurnContext,
+    ) -> Result<(), CodingSessionError> {
+        let mut step = PromptTurnStep::Start;
+        loop {
+            let result = match step {
+                PromptTurnStep::Start => default_action(),
+                PromptTurnStep::ResolveRequest => resolve_request(ctx),
+                PromptTurnStep::PrepareInput => prepare_input(ctx),
+                PromptTurnStep::ResolveRuntime => resolve_runtime(ctx),
+                PromptTurnStep::LoadResources => load_resources(ctx),
+                PromptTurnStep::OpenSession => open_session(ctx),
+                PromptTurnStep::BuildAgentRuntime => build_agent_runtime(ctx),
+                PromptTurnStep::RecordUserInput => record_user_input(ctx),
+                PromptTurnStep::RunAgentTurn => run_agent_turn(ctx).await,
+                PromptTurnStep::FinalizeTurn => finalize_turn(ctx),
+                PromptTurnStep::EmitCompletion => {
+                    return emit_completion(ctx)
+                        .map(|_| ())
+                        .map_err(|message| CodingSessionError::Flow { message });
+                }
+            };
+            if let Err(message) = result {
+                return Err(CodingSessionError::Flow { message });
+            }
+            step = match step {
+                PromptTurnStep::Start => PromptTurnStep::ResolveRequest,
+                PromptTurnStep::ResolveRequest => PromptTurnStep::PrepareInput,
+                PromptTurnStep::PrepareInput => PromptTurnStep::ResolveRuntime,
+                PromptTurnStep::ResolveRuntime => PromptTurnStep::LoadResources,
+                PromptTurnStep::LoadResources => PromptTurnStep::OpenSession,
+                PromptTurnStep::OpenSession => PromptTurnStep::BuildAgentRuntime,
+                PromptTurnStep::BuildAgentRuntime => PromptTurnStep::RecordUserInput,
+                PromptTurnStep::RecordUserInput => PromptTurnStep::RunAgentTurn,
+                PromptTurnStep::RunAgentTurn => PromptTurnStep::FinalizeTurn,
+                PromptTurnStep::FinalizeTurn => PromptTurnStep::EmitCompletion,
+                PromptTurnStep::EmitCompletion => unreachable!(),
+            };
+        }
     }
 }
 

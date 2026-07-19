@@ -29,6 +29,9 @@
 - Added the Export typed pipeline vertical slice: production export now uses
   explicit start/replay/view/render/write/completion steps while preserving
   read-only admission and typed invalid-target errors.
+- Added the PromptTurn typed pipeline vertical slice: production prompt turns
+  now execute explicit request/input/runtime/session/Agent/finalization steps,
+  while Agent execution remains delegated to the typed AWC-002 runner.
 
 ## 0.4.0 - 2026-07-19
 

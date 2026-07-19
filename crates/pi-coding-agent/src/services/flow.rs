@@ -305,7 +305,7 @@ impl FlowService {
         &self,
         ctx: &mut PromptTurnContext,
     ) -> Result<PromptTurnOutcome, CodingSessionError> {
-        match self.run_prompt_turn_graph(ctx).await {
+        match self.prompt_turn_flow()?.run_typed(ctx).await {
             Ok(_) => {
                 let session_id = ctx.session_id().map(str::to_owned);
                 ctx.finish_success(session_id, None)
