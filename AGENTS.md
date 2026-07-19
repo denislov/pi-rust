@@ -22,11 +22,11 @@ The root `pi-rust` binary currently only prints `Hello, world!`. The user-facing
 ## Workspace Map
 
 - `crates/pi-ai`: model metadata, provider registry, authentication inputs, HTTP transports, request/response mapping, and streaming. It must remain independent of agent sessions, product events, CLI, RPC, and TUI concerns.
-- `crates/pi-agent-core`: provider-neutral agent loop, Flow primitives, tools, hooks, resources, compaction, transcripts, and execution environment. It may depend on `pi-ai`, but not on coding-agent product policy or adapters.
+- `crates/pi-agent-core`: provider-neutral typed agent loop, tools, hooks, resources, compaction, transcripts, and execution environment. It may depend on `pi-ai`, but not on coding-agent product policy or adapters.
 - `crates/pi-tui`: generic terminal lifecycle, input normalization, rendering, editor, menu, dialog, markdown, and image components. Keep product semantics out of this crate.
-- `crates/pi-coding-agent`: product runtime and `pi-coding-agent` binary. It owns CLI/configuration, `CodingAgentSession`, product Flow orchestration, session persistence, plugins, tools, profiles/teams, print/JSON/RPC/interactive adapters, and product events.
+- `crates/pi-coding-agent`: product runtime and `pi-coding-agent` binary. It owns CLI/configuration, `CodingAgentSession`, typed product workflow runners, session persistence, extensions, tools, profiles/teams, print/JSON/RPC/interactive adapters, and product events.
 - `crates/pi-mom`, `crates/pi-pods`, and `crates/pi-web-ui`: current placeholder crates. Do not assume behavior that is not present in their source.
-- `docs/architecture.md`: reference architecture for convergence toward an operation runtime. Read it before changing runtime ownership, event contracts, persistence, Flow/service boundaries, or adapter behavior.
+- `docs/architecture.md`: reference architecture for convergence toward an operation runtime. Read it before changing runtime ownership, event contracts, persistence, workflow/service boundaries, or adapter behavior.
 - `scripts/tui-smoke.sh`: tmux-based interactive smoke suite; captures output under `target/tui-smoke/`.
 
 The architectural layers run from `pi-ai` through `pi-agent-core` to `pi-coding-agent`. Cargo dependencies point from the product toward the lower layers: `pi-coding-agent -> pi-agent-core -> pi-ai`, and `pi-coding-agent -> pi-tui`. Do not introduce reverse dependencies or product types into lower-level crates.

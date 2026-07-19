@@ -1,5 +1,5 @@
 pub(crate) mod context;
-pub(crate) mod flow;
+pub(crate) mod runner;
 
 use crate::operations::delegation::{
     DelegationAuthorizationDecision, PendingDelegationConfirmationQueue,
@@ -11,9 +11,9 @@ use crate::runtime::control::OperationControl;
 use crate::runtime::facade::CodingSessionError;
 use crate::services::authorization::AuthorizationService;
 use crate::services::event::EventService;
-use crate::services::flow::FlowService;
 use crate::services::plugin::PluginService;
 use crate::services::session::apply_finalized_session_write;
+use crate::services::workflow::WorkflowService;
 use crate::session::event::PersistedDelegationStatus;
 use crate::session::id::{Clock, IdGenerator, SystemClock, SystemIdGenerator};
 use crate::session::service::{FinalizedSessionWrite, SessionPersistence, SessionService};
@@ -28,7 +28,7 @@ struct PromptOperation<'a> {
     profile_registry: &'a ProfileRegistry,
     plugin_service: &'a PluginService,
     event_service: &'a EventService,
-    flow_service: &'a FlowService,
+    workflow_service: &'a WorkflowService,
     pending_delegation_confirmations: &'a mut PendingDelegationConfirmationQueue,
     authorization_service: &'a AuthorizationService,
 }
@@ -40,7 +40,7 @@ pub(crate) async fn run(
     profile_registry: &ProfileRegistry,
     plugin_service: &PluginService,
     event_service: &EventService,
-    flow_service: &FlowService,
+    workflow_service: &WorkflowService,
     pending_delegation_confirmations: &mut PendingDelegationConfirmationQueue,
     authorization_service: &AuthorizationService,
     options: PromptTurnOptions,
@@ -53,7 +53,7 @@ pub(crate) async fn run(
         profile_registry,
         plugin_service,
         event_service,
-        flow_service,
+        workflow_service,
         pending_delegation_confirmations,
         authorization_service,
     }
@@ -113,7 +113,7 @@ impl PromptOperation<'_> {
 
         self.event_service
             .emit_prompt_started(operation_id, turn_id);
-        let mut outcome = match self.flow_service.run_prompt_turn(&mut context).await {
+        let mut outcome = match self.workflow_service.run_prompt_turn(&mut context).await {
             Ok(outcome) => outcome,
             Err(error) => match context.abort_reason() {
                 Some(reason) => {
@@ -179,7 +179,7 @@ impl PromptOperation<'_> {
                     let outcome = match request.target_kind {
                         ProfileKind::Agent => {
                             crate::operations::delegation::execution::execute_agent(
-                                self.flow_service,
+                                self.workflow_service,
                                 self.profile_registry.clone(),
                                 self.plugin_service.clone(),
                                 self.event_service.clone(),
@@ -194,7 +194,7 @@ impl PromptOperation<'_> {
                         }
                         ProfileKind::Team => {
                             crate::operations::delegation::execution::execute_team(
-                                self.flow_service,
+                                self.workflow_service,
                                 self.profile_registry.clone(),
                                 self.plugin_service.clone(),
                                 self.event_service.clone(),

@@ -3126,7 +3126,7 @@ display_name = "Coder"
         assert_eq!(request.profile_id.as_str(), "coder");
         assert_eq!(request.task, "refactor module");
         assert_eq!(root.default_agent_profile_id.as_str(), "default");
-        assert!(!last_system_text(&root).contains("requires AgentInvocationFlow"));
+        assert!(!last_system_text(&root).contains("requires AgentInvocationRunner"));
     }
 
     #[test]
@@ -3287,7 +3287,7 @@ members = ["coder"]
         assert_eq!(request.team_id.as_str(), "implementation");
         assert_eq!(request.task, "refactor module");
         assert_eq!(root.default_agent_profile_id.as_str(), "default");
-        assert!(!last_system_text(&root).contains("requires AgentTeamFlow"));
+        assert!(!last_system_text(&root).contains("requires AgentTeamRunner"));
     }
 
     #[test]
@@ -3757,17 +3757,17 @@ members = ["coder"]
             "no-session".to_string(),
         );
         root.set_plugin_commands(vec![PluginSlashCommand::new(
-            "lua.say_hello",
-            "greets from lua command",
+            "extension.say_hello",
+            "greets from extension command",
         )]);
 
         let commands = root.all_slash_commands();
 
-        assert!(commands.iter().any(|c| c.name == "lua.say_hello"));
+        assert!(commands.iter().any(|c| c.name == "extension.say_hello"));
         assert!(
             commands
                 .iter()
-                .any(|c| c.description == "greets from lua command")
+                .any(|c| c.description == "greets from extension command")
         );
     }
 
@@ -3779,21 +3779,21 @@ members = ["coder"]
             "no-session".to_string(),
         );
         root.set_plugin_commands(vec![PluginSlashCommand::new(
-            "lua.say_hello",
-            "greets from lua command",
+            "extension.say_hello",
+            "greets from extension command",
         )]);
 
         root.handle_slash_command(ParsedSlashCommand {
-            name: "lua.say_hello".to_string(),
+            name: "extension.say_hello".to_string(),
             args: r#"{"name":"tui"}"#.to_string(),
-            original: r#"/lua.say_hello {"name":"tui"}"#.to_string(),
+            original: r#"/extension.say_hello {"name":"tui"}"#.to_string(),
         });
 
         assert_eq!(root.take_action(), InteractiveAction::PluginCommand);
         let request = root
             .take_pending_plugin_command_request()
             .expect("plugin command request should be queued");
-        assert_eq!(request.command_id, "lua.say_hello");
+        assert_eq!(request.command_id, "extension.say_hello");
         assert_eq!(request.args, serde_json::json!({"name": "tui"}));
     }
 
@@ -3842,14 +3842,14 @@ display_name = "Coder"
             vec![PluginUiAction::new(
                 "ui.open_panel",
                 "Open panel",
-                "opens a Lua panel",
-                "lua.open_panel",
+                "opens a Extension panel",
+                "extension.open_panel",
             )],
             vec![PluginKeybinding::new(
                 "keybind.open_panel",
                 "ctrl+g",
-                "opens the Lua panel",
-                "lua.open_panel",
+                "opens the Extension panel",
+                "extension.open_panel",
             )],
             Vec::new(),
         );
@@ -3860,7 +3860,7 @@ display_name = "Coder"
         assert!(root.transcript.items().iter().any(|item| matches!(
             item,
             TranscriptItem::System { text }
-                if text == "Plugin UI action ui.open_panel has unavailable target lua.open_panel"
+                if text == "Plugin UI action ui.open_panel has unavailable target extension.open_panel"
         )));
         assert_eq!(root.editor.text(), "");
     }
@@ -3873,21 +3873,21 @@ display_name = "Coder"
             "no-session".to_string(),
         );
         root.set_plugin_commands(vec![PluginSlashCommand::new(
-            "lua.open_panel",
-            "opens a Lua panel",
+            "extension.open_panel",
+            "opens a Extension panel",
         )]);
         root.set_plugin_ui_extensions(
             vec![PluginUiAction::new(
                 "ui.open_panel",
                 "Open panel",
-                "opens a Lua panel",
-                "lua.open_panel",
+                "opens a Extension panel",
+                "extension.open_panel",
             )],
             vec![PluginKeybinding::new(
                 "keybind.open_panel",
                 "ctrl+g",
-                "opens the Lua panel",
-                "lua.open_panel",
+                "opens the Extension panel",
+                "extension.open_panel",
             )],
             Vec::new(),
         );
@@ -3898,7 +3898,7 @@ display_name = "Coder"
         let request = root
             .take_pending_plugin_command_request()
             .expect("plugin command runner should be queued");
-        assert_eq!(request.command_id, "lua.open_panel");
+        assert_eq!(request.command_id, "extension.open_panel");
         assert_eq!(request.args, serde_json::json!({}));
         assert_eq!(root.editor.text(), "");
     }
@@ -3911,15 +3911,15 @@ display_name = "Coder"
             "no-session".to_string(),
         );
         root.set_plugin_commands(vec![PluginSlashCommand::new(
-            "lua.open_panel",
-            "opens a Lua panel",
+            "extension.open_panel",
+            "opens a Extension panel",
         )]);
         root.set_plugin_ui_extensions(
             vec![PluginUiAction::new(
                 "ui.open_panel",
                 "Open panel",
-                "opens a Lua panel",
-                "lua.open_panel",
+                "opens a Extension panel",
+                "extension.open_panel",
             )],
             Vec::new(),
             Vec::new(),
@@ -3931,7 +3931,7 @@ display_name = "Coder"
         let request = root
             .take_pending_plugin_command_request()
             .expect("plugin UI action should queue its command target");
-        assert_eq!(request.command_id, "lua.open_panel");
+        assert_eq!(request.command_id, "extension.open_panel");
         assert_eq!(request.args, serde_json::json!({}));
         assert_eq!(root.editor.text(), "");
     }
@@ -3947,20 +3947,20 @@ display_name = "Coder"
             vec![PluginUiAction::new(
                 "ui.open_panel",
                 "Open panel",
-                "opens a Lua panel",
+                "opens a Extension panel",
                 "dialog.open_panel",
             )],
             vec![PluginKeybinding::new(
                 "keybind.open_panel",
                 "ctrl+g",
-                "opens the Lua panel",
+                "opens the Extension panel",
                 "dialog.open_panel",
             )],
             vec![PluginUiDialog::new(
                 "dialog.open_panel",
-                "Lua panel",
-                "Panel registered by Lua",
-                "lua.submit_panel",
+                "Extension panel",
+                "Panel registered by Extension",
+                "extension.submit_panel",
             )],
         );
 
@@ -3971,9 +3971,9 @@ display_name = "Coder"
             .take_pending_plugin_ui_dialog()
             .expect("plugin dialog runner should be queued");
         assert_eq!(dialog.dialog_id, "dialog.open_panel");
-        assert_eq!(dialog.title, "Lua panel");
-        assert_eq!(dialog.description, "Panel registered by Lua");
-        assert_eq!(dialog.action_id, "lua.submit_panel");
+        assert_eq!(dialog.title, "Extension panel");
+        assert_eq!(dialog.description, "Panel registered by Extension");
+        assert_eq!(dialog.action_id, "extension.submit_panel");
         assert_eq!(root.editor.text(), "");
     }
 

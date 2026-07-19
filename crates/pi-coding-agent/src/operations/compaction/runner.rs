@@ -1,9 +1,5 @@
-use std::future::Future;
-use std::pin::Pin;
-
 use pi_agent_core::api::agent::AgentMessage;
 use pi_agent_core::api::compaction::{estimate_tokens, summarize_with_provider_streamer};
-use pi_agent_core::api::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRunOptions};
 use pi_ai::api::conversation::{AssistantMessage, ContentBlock};
 use pi_ai::api::stream::StreamOptions;
 use tokio_util::sync::CancellationToken;
@@ -20,81 +16,6 @@ use crate::services::runtime::{RuntimeService, scoped_provider_streamer_for_runt
 #[cfg(test)]
 use crate::session::event::SessionEventEnvelope;
 use crate::session::replay::{SessionReplay, transcript_item_id};
-
-const DEFAULT_ACTION: &str = "default";
-
-pub(crate) const MANUAL_COMPACTION_NODE_IDS: &[&str] = &[
-    "start_compaction",
-    "load_session_replay",
-    "select_compaction_range",
-    "prepare_summary_context",
-    "run_summary_model",
-    "record_compaction_events",
-    "finalize_compaction",
-    "emit_completion",
-];
-
-const MANUAL_COMPACTION_NODE_SPECS: &[ManualCompactionNodeSpec] = &[
-    ManualCompactionNodeSpec {
-        id: "start_compaction",
-        name: "StartCompaction",
-        kind: ManualCompactionNodeKind::StartCompaction,
-    },
-    ManualCompactionNodeSpec {
-        id: "load_session_replay",
-        name: "LoadSessionReplay",
-        kind: ManualCompactionNodeKind::LoadSessionReplay,
-    },
-    ManualCompactionNodeSpec {
-        id: "select_compaction_range",
-        name: "SelectCompactionRange",
-        kind: ManualCompactionNodeKind::SelectCompactionRange,
-    },
-    ManualCompactionNodeSpec {
-        id: "prepare_summary_context",
-        name: "PrepareSummaryContext",
-        kind: ManualCompactionNodeKind::PrepareSummaryContext,
-    },
-    ManualCompactionNodeSpec {
-        id: "run_summary_model",
-        name: "RunSummaryModel",
-        kind: ManualCompactionNodeKind::RunSummaryModel,
-    },
-    ManualCompactionNodeSpec {
-        id: "record_compaction_events",
-        name: "RecordCompactionEvents",
-        kind: ManualCompactionNodeKind::RecordCompactionEvents,
-    },
-    ManualCompactionNodeSpec {
-        id: "finalize_compaction",
-        name: "FinalizeCompaction",
-        kind: ManualCompactionNodeKind::FinalizeCompaction,
-    },
-    ManualCompactionNodeSpec {
-        id: "emit_completion",
-        name: "EmitCompletion",
-        kind: ManualCompactionNodeKind::EmitCompletion,
-    },
-];
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ManualCompactionNodeSpec {
-    id: &'static str,
-    name: &'static str,
-    kind: ManualCompactionNodeKind,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ManualCompactionNodeKind {
-    StartCompaction,
-    LoadSessionReplay,
-    SelectCompactionRange,
-    PrepareSummaryContext,
-    RunSummaryModel,
-    RecordCompactionEvents,
-    FinalizeCompaction,
-    EmitCompletion,
-}
 
 #[derive(Debug, Clone)]
 pub(crate) struct ManualCompactionOptions {
@@ -477,16 +398,9 @@ impl ManualCompactionContext {
     fn finalize_compaction(&mut self) -> Result<(), CodingSessionError> {
         self.finish_success().map(|_| ())
     }
-
-    fn emit_completion(&mut self) -> Result<(), CodingSessionError> {
-        self.finish_success().map(|_| ())
-    }
 }
 
-pub(crate) struct ManualCompactionFlow {
-    #[allow(dead_code)]
-    flow: Flow<ManualCompactionContext>,
-}
+pub(crate) struct ManualCompactionRunner;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ManualCompactionStep {
@@ -497,38 +411,11 @@ enum ManualCompactionStep {
     RunSummary,
     RecordEvents,
     Finalize,
-    EmitCompletion,
 }
 
-impl ManualCompactionFlow {
+impl ManualCompactionRunner {
     pub(crate) fn new() -> Result<Self, CodingSessionError> {
-        let mut flow = Flow::new(MANUAL_COMPACTION_NODE_IDS[0]).map_err(flow_error)?;
-        for spec in MANUAL_COMPACTION_NODE_SPECS {
-            flow.add_node(spec.id, ManualCompactionNode::new(spec.name, spec.kind))
-                .map_err(flow_error)?;
-        }
-        crate::services::flow::add_linear_edges(&mut flow, MANUAL_COMPACTION_NODE_IDS)?;
-        Ok(Self { flow })
-    }
-
-    #[cfg(test)]
-    pub(crate) async fn run(
-        &self,
-        ctx: &mut ManualCompactionContext,
-    ) -> Result<FlowOutcome, CodingSessionError> {
-        self.flow.run(ctx).await.map_err(flow_error)
-    }
-
-    #[allow(dead_code)]
-    pub(crate) async fn run_with_options(
-        &self,
-        ctx: &mut ManualCompactionContext,
-        options: FlowRunOptions,
-    ) -> Result<FlowOutcome, CodingSessionError> {
-        self.flow
-            .run_with_options(ctx, options)
-            .await
-            .map_err(flow_error)
+        Ok(Self)
     }
 
     pub(crate) async fn run_typed(
@@ -545,14 +432,10 @@ impl ManualCompactionFlow {
                 ManualCompactionStep::RunSummary => ctx.run_summary_model().await,
                 ManualCompactionStep::RecordEvents => ctx.record_compaction_events(),
                 ManualCompactionStep::Finalize => ctx.finalize_compaction(),
-                ManualCompactionStep::EmitCompletion => {
-                    ctx.emit_completion()?;
-                    return ctx.finish_success();
-                }
             };
             if let Err(error) = result {
                 let message = ctx.fail(error.clone());
-                return Err(CodingSessionError::Flow { message });
+                return Err(CodingSessionError::Workflow { message });
             }
             if ctx
                 .options()
@@ -563,6 +446,9 @@ impl ManualCompactionFlow {
                 ctx.fail(error.clone());
                 return Err(error);
             }
+            if step == ManualCompactionStep::Finalize {
+                return ctx.finish_success();
+            }
             step = match step {
                 ManualCompactionStep::Start => ManualCompactionStep::LoadReplay,
                 ManualCompactionStep::LoadReplay => ManualCompactionStep::SelectRange,
@@ -570,63 +456,9 @@ impl ManualCompactionFlow {
                 ManualCompactionStep::PrepareSummary => ManualCompactionStep::RunSummary,
                 ManualCompactionStep::RunSummary => ManualCompactionStep::RecordEvents,
                 ManualCompactionStep::RecordEvents => ManualCompactionStep::Finalize,
-                ManualCompactionStep::Finalize => ManualCompactionStep::EmitCompletion,
-                ManualCompactionStep::EmitCompletion => unreachable!(),
+                ManualCompactionStep::Finalize => unreachable!(),
             };
         }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-struct ManualCompactionNode {
-    name: &'static str,
-    kind: ManualCompactionNodeKind,
-}
-
-impl ManualCompactionNode {
-    fn new(name: &'static str, kind: ManualCompactionNodeKind) -> Self {
-        Self { name, kind }
-    }
-}
-
-impl FlowNode<ManualCompactionContext> for ManualCompactionNode {
-    fn name(&self) -> &str {
-        self.name
-    }
-
-    fn run<'a>(
-        &'a self,
-        ctx: &'a mut ManualCompactionContext,
-    ) -> Pin<Box<dyn Future<Output = Result<Action, String>> + Send + 'a>> {
-        Box::pin(async move {
-            let result = match self.kind {
-                ManualCompactionNodeKind::StartCompaction => ctx.start_compaction(),
-                ManualCompactionNodeKind::LoadSessionReplay => ctx.load_session_replay(),
-                ManualCompactionNodeKind::SelectCompactionRange => ctx.select_compaction_range(),
-                ManualCompactionNodeKind::PrepareSummaryContext => ctx.prepare_summary_context(),
-                ManualCompactionNodeKind::RunSummaryModel => ctx.run_summary_model().await,
-                ManualCompactionNodeKind::RecordCompactionEvents => ctx.record_compaction_events(),
-                ManualCompactionNodeKind::FinalizeCompaction => ctx.finalize_compaction(),
-                ManualCompactionNodeKind::EmitCompletion => ctx.emit_completion(),
-            };
-            match result {
-                Ok(()) => default_action(),
-                Err(error) => Err(ctx.fail(error)),
-            }
-        })
-    }
-}
-
-fn default_action() -> Result<Action, String> {
-    Action::new(DEFAULT_ACTION).map_err(|error| error.to_string())
-}
-
-fn flow_error(error: FlowError) -> CodingSessionError {
-    match error {
-        FlowError::Cancelled => CodingSessionError::Cancelled,
-        other => CodingSessionError::Flow {
-            message: other.to_string(),
-        },
     }
 }
 
@@ -680,7 +512,7 @@ mod tests {
             snapshot,
         );
 
-        let error = crate::services::flow::FlowService::new()
+        let error = crate::services::workflow::WorkflowService::new()
             .run_manual_compaction(&mut context)
             .await
             .unwrap_err();
@@ -808,11 +640,9 @@ mod tests {
             transaction,
             snapshot,
         );
-        let flow = ManualCompactionFlow::new().unwrap();
+        let flow = ManualCompactionRunner::new().unwrap();
 
-        let outcome = flow.run(&mut context).await.unwrap();
-
-        assert_eq!(outcome.last_node.as_str(), "emit_completion");
+        flow.run_typed(&mut context).await.unwrap();
         assert_eq!(context.summary(), Some("summary from flow"));
         assert!(
             context

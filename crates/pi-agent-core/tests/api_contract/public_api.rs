@@ -41,9 +41,6 @@ fn categorized_facade_exposes_only_intentional_contract_groups() {
         ContextUsageEstimate, estimate_tokens, summarize_with_provider_streamer,
     };
     use pi_agent_core::api::execution::{ExecOptions, ExecutionEnv, FileError, FileSystem};
-    use pi_agent_core::api::flow::{
-        Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRunOptions,
-    };
     use pi_agent_core::api::resources::{PromptTemplate, ResourceDiagnostic, Skill};
     use pi_agent_core::api::testing::InMemoryExecutionEnv;
     use pi_agent_core::api::tool::{
@@ -69,11 +66,6 @@ fn categorized_facade_exposes_only_intentional_contract_groups() {
         std::any::type_name::<ToolExecutionContext>(),
         std::any::type_name::<ToolFn>(),
         std::any::type_name::<ToolUpdateCallback>(),
-        std::any::type_name::<Action>(),
-        std::any::type_name::<Flow<()>>(),
-        std::any::type_name::<FlowError>(),
-        std::any::type_name::<FlowOutcome>(),
-        std::any::type_name::<FlowRunOptions>(),
         std::any::type_name::<ExecOptions>(),
         std::any::type_name::<FileError>(),
         std::any::type_name::<PromptTemplate>(),
@@ -88,32 +80,9 @@ fn categorized_facade_exposes_only_intentional_contract_groups() {
     assert!(categories.iter().all(|name| !name.is_empty()));
 
     fn accepts_execution<T: ExecutionEnv + FileSystem>() {}
-    fn accepts_node<T: FlowNode<()>>() {}
     let _ = accepts_execution::<InMemoryExecutionEnv>;
-    let _ = accepts_node::<CategorizedNoopNode>;
     let _ = estimate_tokens;
     let _ = summarize_with_provider_streamer;
-}
-
-struct CategorizedNoopNode;
-
-impl pi_agent_core::api::flow::FlowNode<()> for CategorizedNoopNode {
-    fn name(&self) -> &str {
-        "noop"
-    }
-
-    fn run<'a>(
-        &'a self,
-        _ctx: &'a mut (),
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<Output = Result<pi_agent_core::api::flow::Action, String>>
-                + Send
-                + 'a,
-        >,
-    > {
-        Box::pin(async { Ok(pi_agent_core::api::flow::Action::default()) })
-    }
 }
 
 #[test]

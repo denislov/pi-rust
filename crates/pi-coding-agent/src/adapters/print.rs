@@ -136,7 +136,7 @@ fn print_text_from_prompt_outcome(outcome: PromptTurnOutcome) -> Result<String, 
 fn print_cli_error_from_prompt_error(error: CodingSessionError) -> CliError {
     match error {
         CodingSessionError::Provider { message } => CliError::AgentFailure(message),
-        CodingSessionError::Flow { message } => {
+        CodingSessionError::Workflow { message } => {
             match message.strip_prefix("flow node 'run_agent_turn' failed: provider error: ") {
                 Some(provider_message) => CliError::AgentFailure(provider_message.into()),
                 None => CliError::SessionFailure(message),

@@ -12,7 +12,7 @@ credential-free, and isolated from developer configuration.
 | Crate | Owns test evidence for |
 | --- | --- |
 | `pi-ai` | provider request/stream conversion, auth/redaction, transport retry/error, catalog and registry invariants |
-| `pi-agent-core` | agent transitions, tool ordering/concurrency/cancellation, hooks, Flow semantics, compaction, generic resources |
+| `pi-agent-core` | typed agent transitions, tool ordering/concurrency/cancellation, hooks, compaction, generic resources |
 | `pi-tui` | terminal lifecycle, input, Unicode width, rendering/layout, resize, scrollback, component behavior |
 | `pi-coding-agent` | admission/outcomes, identity/lineage, capabilities, session transactions/replay/recovery, ProductEvents/snapshots, extensions, adapters |
 
@@ -22,7 +22,7 @@ not belong in core; product UI semantics do not belong in `pi-tui`.
 ## Required Runtime Matrices
 
 Every public operation is covered for applicable success, validation failure,
-active cancellation before/during/finalize, provider/tool/Flow failure, definite
+active cancellation before/during/finalize, provider/tool/workflow failure, definite
 persistence failure, commit uncertainty, recovery, dropped caller/owner,
 persistent/transient session, submission/direct API, and adapter paths.
 

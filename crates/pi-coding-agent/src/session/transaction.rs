@@ -13,7 +13,7 @@ use super::id::{Clock, IdGenerator};
 use super::manifest::SessionManifest;
 use super::repository::{ManifestPatch, SessionHandle, SessionLogStore};
 use crate::events::outbox::{DurableOutboxIntent, DurableOutboxRecordCandidate};
-use crate::operations::self_healing_edit::flow::{
+use crate::operations::self_healing_edit::runner::{
     SelfHealingEditOutcome, SelfHealingEditRepairAttempt,
 };
 use crate::profiles::{ProfileId, ProfileKind};
@@ -1177,7 +1177,7 @@ fn runtime_generation_for_operation(
 mod tests {
     use super::*;
     use crate::events::outbox::DurableOutboxRecordKind;
-    use crate::operations::self_healing_edit::flow::{
+    use crate::operations::self_healing_edit::runner::{
         SelfHealingEditCheckOutput, SelfHealingEditDiagnostic, SelfHealingEditOutcome,
         SelfHealingEditRepairAttempt, SelfHealingEditReplacement,
     };

@@ -34,12 +34,8 @@ use crate::services::plugin::PluginService;
 use crate::session::event::{
     DiagnosticLevel, PersistedContentBlock, PersistedDelegationStatus, PersistedToolResult,
 };
-#[cfg(test)]
-use crate::session::event::{OperationKind, SessionEventEnvelope};
 use crate::session::id::{SystemClock, SystemIdGenerator};
 use crate::session::replay::{MessageStatus, SessionReplay, TranscriptItem};
-#[cfg(test)]
-use crate::session::repository::{SessionHandle, SessionLogStore};
 use crate::session::service::SessionEventWriter;
 use crate::session::transaction::TurnTransaction;
 
@@ -778,7 +774,7 @@ impl PromptTurnContext {
             }
             PromptInvocation::Compact { .. } => {
                 return Err(CodingSessionError::UnsupportedCapability {
-                    capability: "manual compaction in PromptTurnFlow".into(),
+                    capability: "manual compaction in PromptTurnRunner".into(),
                 });
             }
             PromptInvocation::Text(_)
@@ -793,11 +789,6 @@ impl PromptTurnContext {
         }
         self.request_resolved = true;
         Ok(())
-    }
-
-    #[cfg(test)]
-    pub(crate) fn request_is_resolved(&self) -> bool {
-        self.request_resolved
     }
 
     pub(crate) fn resolve_runtime_from_options(&mut self) -> Result<(), CodingSessionError> {
@@ -829,11 +820,6 @@ impl PromptTurnContext {
             self.options.invocation(),
         )?);
         Ok(())
-    }
-
-    #[cfg(test)]
-    pub(crate) fn prepared_input(&self) -> Option<&[PersistedContentBlock]> {
-        self.prepared_input.as_deref()
     }
 
     pub(crate) fn load_resources_from_runtime(&mut self) -> Result<(), CodingSessionError> {
@@ -910,28 +896,6 @@ impl PromptTurnContext {
         self.agent.as_ref()
     }
 
-    #[cfg(test)]
-    pub(crate) fn begin_transaction(
-        &mut self,
-        store: &SessionLogStore,
-        handle: SessionHandle,
-    ) -> Result<(), CodingSessionError> {
-        if self.transaction.is_some() {
-            return Err(CodingSessionError::Session {
-                message: "prompt turn already has an active transaction".into(),
-            });
-        }
-        self.session_id = Some(handle.manifest().session_id.clone());
-        self.transaction = Some(TurnTransaction::begin(
-            store,
-            handle,
-            SystemIdGenerator,
-            SystemClock,
-            OperationKind::Prompt,
-        ));
-        Ok(())
-    }
-
     pub(crate) fn set_transaction(&mut self, transaction: PromptTurnTransaction) {
         self.transaction = Some(transaction);
     }
@@ -942,14 +906,6 @@ impl PromptTurnContext {
 
     pub(crate) fn take_transaction(&mut self) -> Option<PromptTurnTransaction> {
         self.transaction.take()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn pending_session_events(&self) -> &[SessionEventEnvelope] {
-        self.transaction
-            .as_ref()
-            .map(TurnTransaction::pending_events)
-            .unwrap_or_default()
     }
 
     pub(crate) fn enable_live_events(&mut self, event_service: EventService) {
@@ -1180,11 +1136,6 @@ impl PromptTurnContext {
 
         self.completion_recorded = true;
         Ok(())
-    }
-
-    #[cfg(test)]
-    pub(crate) fn completion_recorded(&self) -> bool {
-        self.completion_recorded
     }
 
     fn record_agent_event_to_transaction(
@@ -1443,7 +1394,7 @@ fn persisted_content_blocks_from_invocation(
             Ok(vec![PersistedContentBlock::Text { text }])
         }
         PromptInvocation::Compact { .. } => Err(CodingSessionError::UnsupportedCapability {
-            capability: "manual compaction in PromptTurnFlow".into(),
+            capability: "manual compaction in PromptTurnRunner".into(),
         }),
     }
 }

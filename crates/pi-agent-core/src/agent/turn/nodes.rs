@@ -1,6 +1,4 @@
 use std::collections::HashSet;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::agent::provider::stream_model_with_provider_streamer;
@@ -18,7 +16,6 @@ use crate::compaction::estimate::estimate_context_tokens;
 use crate::compaction::prepare::{prepare_compaction, should_compact};
 use crate::compaction::summarize::summarize_with_provider_streamer;
 use crate::context::conversion::{assemble_context, convert_to_context, default_convert_to_llm};
-use crate::flow::{Action, FlowNode};
 use crate::hooks::{
     AfterToolCallContext, AfterToolCallHook, BeforeProviderRequestContext, BeforeToolCallContext,
     PrepareNextTurnContext, ShouldStopAfterTurnContext,
@@ -40,157 +37,32 @@ const ACTION_DONE: &str = "done";
 const ACTION_ERROR: &str = "error";
 const ACTION_ABORTED: &str = "aborted";
 
-#[allow(dead_code)]
-pub struct StartTurnNode;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentTurnDecision {
+    Next,
+    Continue,
+    ContinueProvider,
+    Tools,
+    Done,
+    Error,
+    Aborted,
+}
 
-impl FlowNode<AgentTurnContext> for StartTurnNode {
-    fn name(&self) -> &str {
-        "start_turn"
-    }
-
-    fn run<'a>(
-        &'a self,
-        ctx: &'a mut AgentTurnContext,
-    ) -> Pin<Box<dyn Future<Output = Result<Action, String>> + Send + 'a>> {
-        Box::pin(async move { start_turn(ctx) })
+impl AgentTurnDecision {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Next => ACTION_DEFAULT,
+            Self::Continue => ACTION_CONTINUE,
+            Self::ContinueProvider => ACTION_CONTINUE_PROVIDER,
+            Self::Tools => ACTION_TOOLS,
+            Self::Done => ACTION_DONE,
+            Self::Error => ACTION_ERROR,
+            Self::Aborted => ACTION_ABORTED,
+        }
     }
 }
 
-#[allow(dead_code)]
-pub struct DrainQueuedInputNode;
-
-impl FlowNode<AgentTurnContext> for DrainQueuedInputNode {
-    fn name(&self) -> &str {
-        "drain_queued_input"
-    }
-
-    fn run<'a>(
-        &'a self,
-        ctx: &'a mut AgentTurnContext,
-    ) -> Pin<Box<dyn Future<Output = Result<Action, String>> + Send + 'a>> {
-        Box::pin(async move {
-            drain_queued_input(ctx);
-            default_action()
-        })
-    }
-}
-
-#[allow(dead_code)]
-pub struct PrepareProviderRequestNode;
-
-impl FlowNode<AgentTurnContext> for PrepareProviderRequestNode {
-    fn name(&self) -> &str {
-        "prepare_provider_request"
-    }
-
-    fn run<'a>(
-        &'a self,
-        ctx: &'a mut AgentTurnContext,
-    ) -> Pin<Box<dyn Future<Output = Result<Action, String>> + Send + 'a>> {
-        Box::pin(async move { prepare_provider_request(ctx).await })
-    }
-}
-
-#[allow(dead_code)]
-pub struct ApplyBeforeProviderRequestHookNode;
-
-impl FlowNode<AgentTurnContext> for ApplyBeforeProviderRequestHookNode {
-    fn name(&self) -> &str {
-        "apply_before_provider_request_hook"
-    }
-
-    fn run<'a>(
-        &'a self,
-        ctx: &'a mut AgentTurnContext,
-    ) -> Pin<Box<dyn Future<Output = Result<Action, String>> + Send + 'a>> {
-        Box::pin(async move { apply_before_provider_request_hook(ctx).await })
-    }
-}
-
-#[allow(dead_code)]
-pub struct MaybeCompactRuntimeContextNode;
-
-impl FlowNode<AgentTurnContext> for MaybeCompactRuntimeContextNode {
-    fn name(&self) -> &str {
-        "maybe_compact_runtime_context"
-    }
-
-    fn run<'a>(
-        &'a self,
-        ctx: &'a mut AgentTurnContext,
-    ) -> Pin<Box<dyn Future<Output = Result<Action, String>> + Send + 'a>> {
-        Box::pin(async move {
-            maybe_compact_runtime_context(ctx).await?;
-            default_action()
-        })
-    }
-}
-
-#[allow(dead_code)]
-pub struct ProviderStreamNode;
-
-impl FlowNode<AgentTurnContext> for ProviderStreamNode {
-    fn name(&self) -> &str {
-        "provider_stream"
-    }
-
-    fn run<'a>(
-        &'a self,
-        ctx: &'a mut AgentTurnContext,
-    ) -> Pin<Box<dyn Future<Output = Result<Action, String>> + Send + 'a>> {
-        Box::pin(async move { stream_provider(ctx).await })
-    }
-}
-
-#[allow(dead_code)]
-pub struct DecideAfterAssistantNode;
-
-impl FlowNode<AgentTurnContext> for DecideAfterAssistantNode {
-    fn name(&self) -> &str {
-        "decide_after_assistant"
-    }
-
-    fn run<'a>(
-        &'a self,
-        ctx: &'a mut AgentTurnContext,
-    ) -> Pin<Box<dyn Future<Output = Result<Action, String>> + Send + 'a>> {
-        Box::pin(async move { decide_after_assistant(ctx) })
-    }
-}
-
-#[allow(dead_code)]
-pub struct MaybePrepareNextTurnNode;
-
-impl FlowNode<AgentTurnContext> for MaybePrepareNextTurnNode {
-    fn name(&self) -> &str {
-        "maybe_prepare_next_turn"
-    }
-
-    fn run<'a>(
-        &'a self,
-        ctx: &'a mut AgentTurnContext,
-    ) -> Pin<Box<dyn Future<Output = Result<Action, String>> + Send + 'a>> {
-        Box::pin(async move { maybe_prepare_next_turn(ctx).await })
-    }
-}
-
-#[allow(dead_code)]
-pub struct ExecuteToolsNode;
-
-impl FlowNode<AgentTurnContext> for ExecuteToolsNode {
-    fn name(&self) -> &str {
-        "execute_tools"
-    }
-
-    fn run<'a>(
-        &'a self,
-        ctx: &'a mut AgentTurnContext,
-    ) -> Pin<Box<dyn Future<Output = Result<Action, String>> + Send + 'a>> {
-        Box::pin(async move { execute_tools(ctx).await })
-    }
-}
-
-pub fn start_turn(ctx: &mut AgentTurnContext) -> Result<Action, String> {
+pub fn start_turn(ctx: &mut AgentTurnContext) -> Result<AgentTurnDecision, String> {
     if ctx.cancel_token.is_cancelled() {
         ctx.should_finish = true;
         ctx.emit(AgentEvent::AgentError {
@@ -222,7 +94,9 @@ pub fn drain_queued_input(ctx: &mut AgentTurnContext) {
     ctx.has_more_queued_input = !ctx.steering_queue.is_empty() || !ctx.follow_up_queue.is_empty();
 }
 
-pub async fn prepare_provider_request(ctx: &mut AgentTurnContext) -> Result<Action, String> {
+pub async fn prepare_provider_request(
+    ctx: &mut AgentTurnContext,
+) -> Result<AgentTurnDecision, String> {
     let transformed_messages = if let Some(hook) = ctx.config.hooks.transform_context.clone() {
         let cancellation_token = ctx.cancel_token.clone();
         match tokio::select! {
@@ -317,7 +191,7 @@ pub async fn prepare_provider_request(ctx: &mut AgentTurnContext) -> Result<Acti
 
 pub async fn apply_before_provider_request_hook(
     ctx: &mut AgentTurnContext,
-) -> Result<Action, String> {
+) -> Result<AgentTurnDecision, String> {
     let mut request = match ctx.provider_request.clone() {
         Some(request) => request,
         None => {
@@ -423,7 +297,7 @@ pub async fn maybe_compact_runtime_context(ctx: &mut AgentTurnContext) -> Result
     Ok(())
 }
 
-pub async fn stream_provider(ctx: &mut AgentTurnContext) -> Result<Action, String> {
+pub async fn stream_provider(ctx: &mut AgentTurnContext) -> Result<AgentTurnDecision, String> {
     let request = ctx
         .provider_request
         .clone()
@@ -470,10 +344,10 @@ pub async fn stream_provider(ctx: &mut AgentTurnContext) -> Result<Action, Strin
 
     let error = stream_error.unwrap_or_else(|| "LLM stream ended without Done event".into());
     ctx.emit(AgentEvent::AgentError { error });
-    Action::new("error").map_err(|err| err.to_string())
+    Ok(AgentTurnDecision::Error)
 }
 
-pub fn decide_after_assistant(ctx: &mut AgentTurnContext) -> Result<Action, String> {
+pub fn decide_after_assistant(ctx: &mut AgentTurnContext) -> Result<AgentTurnDecision, String> {
     let assistant = ctx
         .assistant_message
         .clone()
@@ -542,7 +416,9 @@ pub fn decide_after_assistant(ctx: &mut AgentTurnContext) -> Result<Action, Stri
     }
 }
 
-pub async fn maybe_prepare_next_turn(ctx: &mut AgentTurnContext) -> Result<Action, String> {
+pub async fn maybe_prepare_next_turn(
+    ctx: &mut AgentTurnContext,
+) -> Result<AgentTurnDecision, String> {
     let assistant = ctx
         .assistant_message
         .clone()
@@ -616,7 +492,7 @@ pub async fn maybe_prepare_next_turn(ctx: &mut AgentTurnContext) -> Result<Actio
     }
 }
 
-pub async fn execute_tools(ctx: &mut AgentTurnContext) -> Result<Action, String> {
+pub async fn execute_tools(ctx: &mut AgentTurnContext) -> Result<AgentTurnDecision, String> {
     ctx.tool_results_all_terminate = false;
     let pending = std::mem::take(&mut ctx.pending_tool_calls);
     if pending.is_empty() {
@@ -699,7 +575,7 @@ pub async fn execute_tools(ctx: &mut AgentTurnContext) -> Result<Action, String>
 
     ctx.tool_results_all_terminate = all_terminate;
 
-    Action::new("continue").map_err(|err| err.to_string())
+    Ok(AgentTurnDecision::Continue)
 }
 
 async fn collect_parallel_tool_executions(
@@ -960,11 +836,11 @@ async fn execute_tool(
     }
 }
 
-fn default_action() -> Result<Action, String> {
-    action(ACTION_DEFAULT)
+fn default_action() -> Result<AgentTurnDecision, String> {
+    Ok(AgentTurnDecision::Next)
 }
 
-fn aborted(ctx: &mut AgentTurnContext) -> Result<Action, String> {
+fn aborted(ctx: &mut AgentTurnContext) -> Result<AgentTurnDecision, String> {
     ctx.should_finish = true;
     ctx.emit(AgentEvent::AgentError {
         error: "aborted".into(),
@@ -995,8 +871,17 @@ fn unique_id(used: &HashSet<String>, preferred: String) -> String {
     }
 }
 
-fn action(value: &str) -> Result<Action, String> {
-    Action::new(value).map_err(|err| err.to_string())
+fn action(value: &str) -> Result<AgentTurnDecision, String> {
+    match value {
+        ACTION_DEFAULT => Ok(AgentTurnDecision::Next),
+        ACTION_CONTINUE => Ok(AgentTurnDecision::Continue),
+        ACTION_CONTINUE_PROVIDER => Ok(AgentTurnDecision::ContinueProvider),
+        ACTION_TOOLS => Ok(AgentTurnDecision::Tools),
+        ACTION_DONE => Ok(AgentTurnDecision::Done),
+        ACTION_ERROR => Ok(AgentTurnDecision::Error),
+        ACTION_ABORTED => Ok(AgentTurnDecision::Aborted),
+        value => Err(format!("unknown agent turn decision '{value}'")),
+    }
 }
 
 async fn should_stop_after_turn(
@@ -1024,7 +909,9 @@ async fn should_stop_after_turn(
     }
 }
 
-async fn prepare_next_turn_or_error(ctx: &mut AgentTurnContext) -> Result<Option<Action>, String> {
+async fn prepare_next_turn_or_error(
+    ctx: &mut AgentTurnContext,
+) -> Result<Option<AgentTurnDecision>, String> {
     let Some(hook) = ctx.config.hooks.prepare_next_turn.clone() else {
         return Ok(None);
     };

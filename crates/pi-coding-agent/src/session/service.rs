@@ -13,7 +13,7 @@ use crate::events::outbox::{
     DurableOutboxIntent, DurableOutboxRecord, DurableOutboxRecordCandidate, DurableOutboxRecordKind,
 };
 use crate::events::session::SessionWriteEvent;
-use crate::operations::export::flow::{ExportContext, ExportOptions};
+use crate::operations::export::runner::{ExportContext, ExportOptions};
 use crate::operations::prompt::context::{
     PromptTurnContext, PromptTurnOutcome, PromptTurnTransaction,
 };

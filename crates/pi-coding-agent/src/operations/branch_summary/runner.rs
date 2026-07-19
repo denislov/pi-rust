@@ -1,10 +1,7 @@
 use std::collections::{HashMap, HashSet};
-use std::future::Future;
-use std::pin::Pin;
 
 use pi_agent_core::api::agent::AgentMessage;
 use pi_agent_core::api::compaction::summarize_with_provider_streamer;
-use pi_agent_core::api::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRunOptions};
 use pi_ai::api::conversation::{AssistantMessage, ContentBlock};
 use pi_ai::api::stream::StreamOptions;
 use tokio_util::sync::CancellationToken;
@@ -22,7 +19,6 @@ use crate::session::event::SessionEventEnvelope;
 use crate::session::event::{DiagnosticLevel, PersistedContentBlock};
 use crate::session::replay::{ReplayLeaf, SessionReplay, ToolCallStatus, TranscriptItem};
 
-const DEFAULT_ACTION: &str = "default";
 const NO_ABANDONED_BRANCH_REASON: &str =
     "No abandoned branch is available in the current Rust-native session view";
 const BRANCH_SUMMARY_PREAMBLE: &str = "The user explored a different conversation branch before returning here.\nSummary of that exploration:\n";
@@ -54,72 +50,6 @@ Use this EXACT format:
 1. [What should happen next to continue this work]
 
 Keep each section concise. Preserve exact file paths, function names, and error messages."#;
-
-pub(crate) const BRANCH_SUMMARY_NODE_IDS: &[&str] = &[
-    "start_branch_summary",
-    "load_branch_events",
-    "select_abandoned_range",
-    "prepare_summary_prompt",
-    "run_summary_model",
-    "record_branch_summary",
-    "finalize_branch_summary",
-];
-
-const BRANCH_SUMMARY_NODE_SPECS: &[BranchSummaryNodeSpec] = &[
-    BranchSummaryNodeSpec {
-        id: "start_branch_summary",
-        name: "StartBranchSummary",
-        kind: BranchSummaryNodeKind::StartBranchSummary,
-    },
-    BranchSummaryNodeSpec {
-        id: "load_branch_events",
-        name: "LoadBranchEvents",
-        kind: BranchSummaryNodeKind::LoadBranchEvents,
-    },
-    BranchSummaryNodeSpec {
-        id: "select_abandoned_range",
-        name: "SelectAbandonedRange",
-        kind: BranchSummaryNodeKind::SelectAbandonedRange,
-    },
-    BranchSummaryNodeSpec {
-        id: "prepare_summary_prompt",
-        name: "PrepareSummaryPrompt",
-        kind: BranchSummaryNodeKind::PrepareSummaryPrompt,
-    },
-    BranchSummaryNodeSpec {
-        id: "run_summary_model",
-        name: "RunSummaryModel",
-        kind: BranchSummaryNodeKind::RunSummaryModel,
-    },
-    BranchSummaryNodeSpec {
-        id: "record_branch_summary",
-        name: "RecordBranchSummary",
-        kind: BranchSummaryNodeKind::RecordBranchSummary,
-    },
-    BranchSummaryNodeSpec {
-        id: "finalize_branch_summary",
-        name: "FinalizeBranchSummary",
-        kind: BranchSummaryNodeKind::FinalizeBranchSummary,
-    },
-];
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct BranchSummaryNodeSpec {
-    id: &'static str,
-    name: &'static str,
-    kind: BranchSummaryNodeKind,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BranchSummaryNodeKind {
-    StartBranchSummary,
-    LoadBranchEvents,
-    SelectAbandonedRange,
-    PrepareSummaryPrompt,
-    RunSummaryModel,
-    RecordBranchSummary,
-    FinalizeBranchSummary,
-}
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct BranchSummaryOptions {
@@ -510,10 +440,7 @@ impl BranchSummaryContext {
     }
 }
 
-#[allow(dead_code)]
-pub(crate) struct BranchSummaryFlow {
-    flow: Flow<BranchSummaryContext>,
-}
+pub(crate) struct BranchSummaryRunner;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BranchSummaryStep {
@@ -526,47 +453,9 @@ enum BranchSummaryStep {
     Finalize,
 }
 
-impl BranchSummaryFlow {
+impl BranchSummaryRunner {
     pub(crate) fn new() -> Result<Self, CodingSessionError> {
-        let mut flow = Flow::new(BRANCH_SUMMARY_NODE_IDS[0]).map_err(flow_error)?;
-        for spec in BRANCH_SUMMARY_NODE_SPECS {
-            flow.add_node(spec.id, BranchSummaryNode::new(spec.name, spec.kind))
-                .map_err(flow_error)?;
-        }
-        crate::services::flow::add_linear_edges(&mut flow, BRANCH_SUMMARY_NODE_IDS)?;
-        Ok(Self { flow })
-    }
-
-    #[allow(dead_code)]
-    pub(crate) async fn run(
-        &self,
-        ctx: &mut BranchSummaryContext,
-    ) -> Result<FlowOutcome, CodingSessionError> {
-        self.flow.run(ctx).await.map_err(flow_error)
-    }
-
-    #[allow(dead_code)]
-    pub(crate) async fn run_with_cancellation(
-        &self,
-        ctx: &mut BranchSummaryContext,
-        cancellation: CancellationToken,
-    ) -> Result<FlowOutcome, CodingSessionError> {
-        ctx.set_cancellation(cancellation.clone());
-        let result = self
-            .flow
-            .run_with_options(
-                ctx,
-                FlowRunOptions {
-                    cancel: Some(cancellation),
-                    ..FlowRunOptions::default()
-                },
-            )
-            .await
-            .map_err(flow_error);
-        if let Err(error @ CodingSessionError::Cancelled) = &result {
-            ctx.fail(error.clone());
-        }
-        result
+        Ok(Self)
     }
 
     pub(crate) async fn run_typed(
@@ -597,7 +486,7 @@ impl BranchSummaryFlow {
                 BranchSummaryStep::Finalize => ctx.finalize_branch_summary(),
             };
             if let Err(error) = result {
-                return Err(CodingSessionError::Flow {
+                return Err(CodingSessionError::Workflow {
                     message: ctx.fail(error),
                 });
             }
@@ -611,58 +500,6 @@ impl BranchSummaryFlow {
                 BranchSummaryStep::Finalize => return Ok(()),
             };
         }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-struct BranchSummaryNode {
-    name: &'static str,
-    kind: BranchSummaryNodeKind,
-}
-
-impl BranchSummaryNode {
-    fn new(name: &'static str, kind: BranchSummaryNodeKind) -> Self {
-        Self { name, kind }
-    }
-}
-
-impl FlowNode<BranchSummaryContext> for BranchSummaryNode {
-    fn name(&self) -> &str {
-        self.name
-    }
-
-    fn run<'a>(
-        &'a self,
-        ctx: &'a mut BranchSummaryContext,
-    ) -> Pin<Box<dyn Future<Output = Result<Action, String>> + Send + 'a>> {
-        Box::pin(async move {
-            let result = match self.kind {
-                BranchSummaryNodeKind::StartBranchSummary => ctx.start_branch_summary(),
-                BranchSummaryNodeKind::LoadBranchEvents => ctx.load_branch_events(),
-                BranchSummaryNodeKind::SelectAbandonedRange => ctx.select_abandoned_range(),
-                BranchSummaryNodeKind::PrepareSummaryPrompt => ctx.prepare_summary_prompt(),
-                BranchSummaryNodeKind::RunSummaryModel => ctx.run_summary_model().await,
-                BranchSummaryNodeKind::RecordBranchSummary => ctx.record_branch_summary(),
-                BranchSummaryNodeKind::FinalizeBranchSummary => ctx.finalize_branch_summary(),
-            };
-            match result {
-                Ok(()) => default_action(),
-                Err(error) => Err(ctx.fail(error)),
-            }
-        })
-    }
-}
-
-fn default_action() -> Result<Action, String> {
-    Action::new(DEFAULT_ACTION).map_err(|error| error.to_string())
-}
-
-fn flow_error(error: FlowError) -> CodingSessionError {
-    match error {
-        FlowError::Cancelled => CodingSessionError::Cancelled,
-        error => CodingSessionError::Flow {
-            message: error.to_string(),
-        },
     }
 }
 
@@ -991,11 +828,9 @@ mod tests {
             transaction,
             OperationCapabilitySnapshot::permissive("op_test"),
         );
-        let flow = BranchSummaryFlow::new().unwrap();
+        let flow = BranchSummaryRunner::new().unwrap();
 
-        let outcome = flow.run(&mut context).await.unwrap();
-
-        assert_eq!(outcome.last_node.as_str(), "finalize_branch_summary");
+        flow.run_typed(&mut context, None).await.unwrap();
         assert_eq!(context.operation_id(), "op_test");
         assert!(
             context
@@ -1056,12 +891,12 @@ mod tests {
             transaction,
             OperationCapabilitySnapshot::permissive("op_test"),
         );
-        let flow = BranchSummaryFlow::new().unwrap();
+        let flow = BranchSummaryRunner::new().unwrap();
         let cancellation = CancellationToken::new();
         cancellation.cancel();
 
         let error = flow
-            .run_with_cancellation(&mut context, cancellation)
+            .run_typed(&mut context, Some(cancellation))
             .await
             .expect_err("pre-cancelled branch summary must not start");
 
@@ -1102,9 +937,9 @@ mod tests {
             transaction,
             OperationCapabilitySnapshot::permissive("op_test"),
         );
-        let flow = BranchSummaryFlow::new().unwrap();
+        let flow = BranchSummaryRunner::new().unwrap();
 
-        flow.run(&mut context).await.unwrap();
+        flow.run_typed(&mut context, None).await.unwrap();
 
         let BranchSummaryOutcome::Created { summary, .. } =
             context.outcome().expect("branch summary outcome")
@@ -1140,11 +975,9 @@ mod tests {
             transaction,
             OperationCapabilitySnapshot::permissive("op_test"),
         );
-        let flow = BranchSummaryFlow::new().unwrap();
+        let flow = BranchSummaryRunner::new().unwrap();
 
-        let outcome = flow.run(&mut context).await.unwrap();
-
-        assert_eq!(outcome.last_node.as_str(), "finalize_branch_summary");
+        flow.run_typed(&mut context, None).await.unwrap();
         assert_eq!(
             context.outcome(),
             Some(&BranchSummaryOutcome::NoOp {

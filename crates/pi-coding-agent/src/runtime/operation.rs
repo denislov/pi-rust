@@ -2,12 +2,14 @@ use super::capability::{
     CapabilityGeneration, OperationCapabilitySnapshot, SessionCapabilityAccess,
 };
 use super::control::OperationKind;
-use crate::operations::agent_invocation::flow::{AgentInvocationOptions, AgentInvocationOutcome};
-use crate::operations::export::flow::{ExportOptions, ExportOutcome};
-use crate::operations::plugin_load::flow::{PluginLoadOptions, PluginLoadOutcome};
+use crate::operations::agent_invocation::runner::{AgentInvocationOptions, AgentInvocationOutcome};
+use crate::operations::export::runner::{ExportOptions, ExportOutcome};
+use crate::operations::plugin_load::runner::{PluginLoadOptions, PluginLoadOutcome};
 use crate::operations::prompt::context::{PromptTurnOptions, PromptTurnOutcome, RuntimeSnapshot};
-use crate::operations::self_healing_edit::flow::{SelfHealingEditOutcome, SelfHealingEditRequest};
-use crate::operations::team_invocation::flow::{AgentTeamOptions, AgentTeamOutcome};
+use crate::operations::self_healing_edit::runner::{
+    SelfHealingEditOutcome, SelfHealingEditRequest,
+};
+use crate::operations::team_invocation::runner::{AgentTeamOptions, AgentTeamOutcome};
 use crate::profiles::ProfileId;
 
 #[derive(Debug)]
@@ -328,8 +330,8 @@ mod tests {
     use super::super::scheduler::OperationScheduler;
     use super::*;
     use crate::app::bootstrap::PromptInvocation;
-    use crate::operations::plugin_load::flow::PluginLoadOptions;
-    use crate::operations::self_healing_edit::flow::{
+    use crate::operations::plugin_load::runner::PluginLoadOptions;
+    use crate::operations::self_healing_edit::runner::{
         SelfHealingEditReplacement, SelfHealingEditRequest,
     };
     use crate::runtime::facade::CodingSessionError;

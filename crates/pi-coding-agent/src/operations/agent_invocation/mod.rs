@@ -1,13 +1,13 @@
-pub(crate) mod flow;
+pub(crate) mod runner;
 
 use crate::profiles::ProfileRegistry;
 use crate::runtime::capability::OperationCapabilitySnapshot;
 use crate::runtime::control::{OperationControl, PromptControlReceiver};
 use crate::runtime::facade::CodingSessionError;
 use crate::services::event::EventService;
-use crate::services::flow::FlowService;
 use crate::services::plugin::PluginService;
-use flow::{AgentInvocationContext, AgentInvocationOptions, AgentInvocationOutcome};
+use crate::services::workflow::WorkflowService;
+use runner::{AgentInvocationContext, AgentInvocationOptions, AgentInvocationOutcome};
 use tokio_util::sync::CancellationToken;
 
 pub(crate) async fn run(
@@ -17,7 +17,7 @@ pub(crate) async fn run(
     profile_registry: &ProfileRegistry,
     plugin_service: &PluginService,
     event_service: &EventService,
-    flow_service: &FlowService,
+    workflow_service: &WorkflowService,
     operation_control: &OperationControl,
     parent_capability_snapshot: OperationCapabilitySnapshot,
     cancellation: Option<CancellationToken>,
@@ -37,11 +37,11 @@ pub(crate) async fn run(
     }
     let result = match cancellation {
         Some(cancellation) => {
-            flow_service
+            workflow_service
                 .run_agent_invocation_with_cancellation(&mut context, cancellation)
                 .await
         }
-        None => flow_service.run_agent_invocation(&mut context).await,
+        None => workflow_service.run_agent_invocation(&mut context).await,
     };
     if let Err(error) = &result {
         context.ensure_failure_terminal_draft(error);

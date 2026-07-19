@@ -1,7 +1,3 @@
-use crate::plugins::error::PluginError;
-use crate::plugins::manifest::PluginMetadata;
-use crate::runtime::facade::PluginCapabilitySet;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
 pub(crate) struct UiActionDefinition {
@@ -97,35 +93,5 @@ impl UiDialogDefinition {
     pub(crate) fn with_fields(mut self, fields: Vec<UiDialogFieldDefinition>) -> Self {
         self.fields = fields;
         self
-    }
-}
-
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub(crate) struct UiRegistrationHost {
-    capabilities: PluginCapabilitySet,
-}
-
-#[allow(dead_code)]
-impl UiRegistrationHost {
-    pub(crate) fn new(capabilities: PluginCapabilitySet) -> Self {
-        Self { capabilities }
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn capabilities(&self) -> &PluginCapabilitySet {
-        &self.capabilities
-    }
-}
-
-#[allow(dead_code)]
-pub(crate) trait UiProvider: Send + Sync {
-    fn metadata(&self) -> PluginMetadata;
-
-    fn ui_actions(&self, host: &UiRegistrationHost)
-    -> Result<Vec<UiActionDefinition>, PluginError>;
-
-    fn dialogs(&self, _host: &UiRegistrationHost) -> Result<Vec<UiDialogDefinition>, PluginError> {
-        Ok(Vec::new())
     }
 }

@@ -3,22 +3,10 @@ use futures::channel::mpsc;
 use futures::{FutureExt, StreamExt};
 use std::sync::{Arc, RwLock};
 
+use super::nodes::AgentTurnDecision;
 use super::{context::AgentTurnContext, nodes};
 use crate::agent::AgentState;
 use crate::agent::types::{AgentEvent, AgentStream};
-use crate::flow::{Action, Flow, FlowError, FlowOutcome, FlowRunOptions};
-
-pub const AGENT_TURN_NODE_IDS: &[&str] = &[
-    "start_turn",
-    "drain_queued_input",
-    "maybe_compact_runtime_context",
-    "prepare_provider_request",
-    "apply_before_provider_request_hook",
-    "provider_stream",
-    "decide_after_assistant",
-    "maybe_prepare_next_turn",
-    "execute_tools",
-];
 
 const ACTION_CONTINUE: &str = "continue";
 const ACTION_CONTINUE_PROVIDER: &str = "continue_provider";
@@ -45,76 +33,9 @@ enum AgentTurnResult {
     Finish,
 }
 
-pub struct AgentTurnFlow {
-    #[allow(dead_code)]
-    flow: Flow<AgentTurnContext>,
-}
+pub struct AgentTurnRunner;
 
-impl AgentTurnFlow {
-    #[allow(dead_code)]
-    pub fn new() -> Result<Self, FlowError> {
-        let mut flow = Flow::new(AGENT_TURN_NODE_IDS[0])?;
-        flow.add_node("start_turn", nodes::StartTurnNode)?
-            .add_node("drain_queued_input", nodes::DrainQueuedInputNode)?
-            .add_node(
-                "maybe_compact_runtime_context",
-                nodes::MaybeCompactRuntimeContextNode,
-            )?
-            .add_node(
-                "prepare_provider_request",
-                nodes::PrepareProviderRequestNode,
-            )?
-            .add_node(
-                "apply_before_provider_request_hook",
-                nodes::ApplyBeforeProviderRequestHookNode,
-            )?
-            .add_node("provider_stream", nodes::ProviderStreamNode)?
-            .add_node("decide_after_assistant", nodes::DecideAfterAssistantNode)?
-            .add_node("maybe_prepare_next_turn", nodes::MaybePrepareNextTurnNode)?
-            .add_node("execute_tools", nodes::ExecuteToolsNode)?
-            .edge("start_turn", "drain_queued_input")?
-            .edge("drain_queued_input", "maybe_compact_runtime_context")?
-            .edge("maybe_compact_runtime_context", "prepare_provider_request")?
-            .edge(
-                "prepare_provider_request",
-                "apply_before_provider_request_hook",
-            )?
-            .edge("apply_before_provider_request_hook", "provider_stream")?
-            .edge("provider_stream", "decide_after_assistant")?
-            .edge_on(
-                "decide_after_assistant",
-                Action::new(ACTION_TOOLS)?,
-                "execute_tools",
-            )?
-            .edge_on(
-                "decide_after_assistant",
-                Action::new(ACTION_CONTINUE)?,
-                "maybe_prepare_next_turn",
-            )?
-            .edge_on(
-                "execute_tools",
-                Action::new(ACTION_CONTINUE)?,
-                "maybe_prepare_next_turn",
-            )?;
-
-        Ok(Self { flow })
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub async fn run(&self, ctx: &mut AgentTurnContext) -> Result<FlowOutcome, FlowError> {
-        self.run_with_options(ctx, FlowRunOptions::default()).await
-    }
-
-    #[allow(dead_code)]
-    pub async fn run_with_options(
-        &self,
-        ctx: &mut AgentTurnContext,
-        mut options: FlowRunOptions,
-    ) -> Result<FlowOutcome, FlowError> {
-        options.strict_missing_transition = false;
-        self.flow.run_with_options(ctx, options).await
-    }
-
+impl AgentTurnRunner {
     pub(crate) fn run_state(state: Arc<RwLock<AgentState>>) -> AgentStream {
         Box::pin(stream! {
             let mut turn: u32 = 0;
@@ -247,7 +168,10 @@ async fn run_typed_turn(
     }
 }
 
-fn transition_from_action(state: AgentTurnState, action: Action) -> Result<AgentTurnState, String> {
+fn transition_from_action(
+    state: AgentTurnState,
+    action: AgentTurnDecision,
+) -> Result<AgentTurnState, String> {
     let action = action.as_str();
     match (state, action) {
         (AgentTurnState::Start, "default") => Ok(AgentTurnState::DrainQueuedInput),

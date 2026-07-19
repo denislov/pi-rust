@@ -1,18 +1,4 @@
-const AGENT_TURN_FLOW_TEST_SOURCE: &str = include_str!("../agent/turn_flow.rs");
 const PARALLEL_TOOLS_TEST_SOURCE: &str = include_str!("../tool_hooks/parallel_tools.rs");
-
-#[test]
-fn agent_turn_flow_delayed_tool_tests_use_explicit_virtual_time_advance() {
-    if !AGENT_TURN_FLOW_TEST_SOURCE.contains("tokio::time::sleep(Duration::from_millis(delay_ms))")
-    {
-        return;
-    }
-
-    assert!(
-        AGENT_TURN_FLOW_TEST_SOURCE.contains("tokio::time::advance("),
-        "agent_turn_flow delayed-tool tests should use explicit virtual-time advancement instead of relying on paused-time auto-advance"
-    );
-}
 
 #[test]
 fn agent_loop_tests_do_not_use_wall_clock_sleep_for_ordering() {
@@ -33,15 +19,6 @@ fn parallel_tools_virtual_time_advances_use_named_durations() {
         PARALLEL_TOOLS_TEST_SOURCE,
         "parallel_tools",
         "parallel_tools tests should use named virtual-time advance durations instead of inline fixed durations",
-    );
-}
-
-#[test]
-fn agent_turn_flow_virtual_time_advances_use_named_durations() {
-    assert_no_inline_virtual_time_advances(
-        AGENT_TURN_FLOW_TEST_SOURCE,
-        "agent_turn_flow",
-        "agent_turn_flow tests should use named virtual-time advance durations instead of inline fixed durations",
     );
 }
 

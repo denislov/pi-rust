@@ -54,7 +54,7 @@ impl CodingAgentSession {
         );
         let _ = (
             &self.runtime_host.runtime_service,
-            &self.runtime_host.flow_service,
+            &self.runtime_host.workflow_service,
             &self.runtime_host.plugin_service,
         );
         match &self.runtime_host.session_coordinator.persistence {

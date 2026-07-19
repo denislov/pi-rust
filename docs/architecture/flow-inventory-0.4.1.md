@@ -1,5 +1,9 @@
 # Flow Inventory For 0.4.1
 
+Status: **historical migration inventory**. `CLC-042-001` in 0.4.2 completed
+every replacement listed below and deleted the generic Flow engine, facade,
+operation wrappers, and compatibility-only tests.
+
 This inventory is the evidence for `AWC-004`. It covers production Flow
 owners, the generic graph API, and the migration destination for each execution
 form. A Flow entry below is not permission to add another dynamic graph: new

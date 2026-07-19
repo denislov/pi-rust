@@ -8,14 +8,14 @@ use super::session_coordinator::SessionCoordinator;
 use super::snapshot::SnapshotCoordinator;
 use super::submission::PendingSubmissionLease;
 use crate::extensions::ExtensionPlatformOwner;
-use crate::operations::plugin_load::flow::PluginLoadOptions;
+use crate::operations::plugin_load::runner::PluginLoadOptions;
 use crate::profiles::ProfileRegistry;
 use crate::services::authorization::AuthorizationService;
 use crate::services::capability::CapabilityService;
 use crate::services::event::EventService;
-use crate::services::flow::FlowService;
 use crate::services::plugin::PluginService;
 use crate::services::runtime::RuntimeService;
+use crate::services::workflow::WorkflowService;
 
 /// Composition and lifetime owner for the product runtime.
 ///
@@ -28,7 +28,7 @@ pub(super) struct RuntimeHost {
     pub(super) event_hub: EventHub,
     pub(super) client_projection: ClientProjectionCoordinator,
     pub(super) runtime_service: RuntimeService,
-    pub(super) flow_service: FlowService,
+    pub(super) workflow_service: WorkflowService,
     pub(super) capability_service: CapabilityService,
     pub(super) plugin_service: PluginService,
     pub(super) profile_registry: ProfileRegistry,

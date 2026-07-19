@@ -30,10 +30,10 @@ use crate::events::tool::ToolEvent;
 use crate::events::workflow::{PluginLoadEvent, SelfHealingEditEvent};
 use crate::events::{CodingAgentProductEventKind, ProductEvent, ProductEventSequence};
 #[cfg(test)]
-use crate::operations::compaction::flow::ManualCompactionOutcome;
-use crate::operations::plugin_load::flow::PluginLoadOutcome;
+use crate::operations::compaction::runner::ManualCompactionOutcome;
+use crate::operations::plugin_load::runner::PluginLoadOutcome;
 use crate::operations::prompt::context::{DelegationRequest, PromptTurnOutcome};
-use crate::operations::self_healing_edit::flow::{
+use crate::operations::self_healing_edit::runner::{
     SelfHealingEditObserver, SelfHealingEditOutcome, SelfHealingEditRepairAttempt,
 };
 use crate::runtime::capability::InstalledCapabilityGeneration;
@@ -2921,10 +2921,10 @@ mod tests {
             None,
             "op_plugin_load".into(),
         );
-        let outcome = crate::operations::plugin_load::flow::PluginLoadOutcome {
-            loaded_plugin_ids: vec!["lua".into()],
+        let outcome = crate::operations::plugin_load::runner::PluginLoadOutcome {
+            loaded_plugin_ids: vec!["example.extension".into()],
             diagnostics: vec![crate::services::plugin::PluginDiagnostic {
-                plugin_id: Some("lua".into()),
+                plugin_id: Some("example.extension".into()),
                 message: "loaded with warning".into(),
             }],
             capabilities: crate::plugins::PluginCapabilities::new(),
@@ -3064,7 +3064,7 @@ mod tests {
 
     #[test]
     fn event_service_emits_owner_status_events() {
-        use crate::operations::compaction::flow::ManualCompactionOutcome;
+        use crate::operations::compaction::runner::ManualCompactionOutcome;
 
         let service = EventService::new();
         let mut receiver = service.subscribe_product_events();

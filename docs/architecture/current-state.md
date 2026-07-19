@@ -24,7 +24,7 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
 ## Runtime And Operations
 
 - Production Agent turns and fixed product workflows use typed state/pipeline
-  runners; generic `Flow<C>` remains compatibility/test-only for these paths.
+  runners. The generic `Flow<C>` engine and compatibility wrappers are deleted.
 - AgentTeam member execution is bounded to two structured child contexts and
   restores results in profile order.
 - Persistent sessions disable ephemeral core automatic compaction and use the
@@ -203,24 +203,24 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
 - The current transaction may append facts and then fail a manifest refresh,
   producing partial-commit uncertainty that startup recovery can inspect.
 
-## Agent, Flow, And Extensions
+## Agent, Workflows, And Extensions
 
-- The production Agent turn still uses the generic string-action Flow engine;
-  `0.4.1` owns typed state-machine convergence.
-- Product fixed workflows still include Flow-based implementations.
-- The legacy extension implementation still includes Rust contribution-provider
-  traits and Lua through `mlua`. The replacement path now has candidate
+- The production Agent turn uses `AgentTurnRunner` with exhaustive typed states
+  and a dedicated decision enum. Fixed product workflows use operation-specific
+  runners behind `WorkflowService`; the generic graph engine is absent.
+- The legacy Rust contribution-provider registry and Lua/`mlua` runtime are
+  deleted. The replacement path has candidate
   Manifest/WIT/schema contracts, immutable packages, grant-backed activation,
   lease-only Host handles, an offline TypeScript Component harness, and the
   accepted core/extension handler target boundary, and a minimum production
   Wasmtime Component invocation path with a real lease-backed Host call.
-  Contribution productization is Skipped; Lua/native legacy removal remains
-  `0.4.2` convergence work.
+  Contribution productization is Skipped; no Lua/native compatibility runtime
+  or automated migration layer is retained.
 - PluginLoad uses the admitted snapshot operation ID and typed
   Completed/Failed/Aborted root terminal evidence. Its terminal draft now
   persists through the coordinator outbox and publishes only after commit.
 - SelfHealingEdit terminal drafts persist through the same coordinator path;
-  cancellation observed after Flow success now records a failed/aborted
+  cancellation observed after runner success now records a failed/aborted
   transaction instead of losing the operation transaction.
 - Workbench semantic views, extension state/facts, package update coordination,
   and background extension services do not exist.
@@ -228,8 +228,8 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   capability generation, state/fact boundaries, per-invocation memory isolation,
   and Workbench revision/resync. Locked standalone Wasmtime and TypeScript/Jco
   fixtures add real-engine interruption/limit/disposal and typed WIT Component
-  evidence for accepted `ADR-003`. They are not production runtime dependencies;
-  the full extension kernel remains scheduled for `0.4.2`.
+  evidence for accepted `ADR-003`. Wasmtime is now a pinned production runtime
+  dependency for the reduced minimum Component vertical slice.
 
 ## Evidence Maintenance
 

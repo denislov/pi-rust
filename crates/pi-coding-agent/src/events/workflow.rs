@@ -5,7 +5,7 @@ use super::{
     CodingAgentProductEventReplacement, CodingAgentProductEventTerminalStatus,
     CodingAgentWorkflowProductEvent,
 };
-use crate::operations::self_healing_edit::flow::{
+use crate::operations::self_healing_edit::runner::{
     SelfHealingEditCheckOutput, SelfHealingEditDiagnostic, SelfHealingEditReplacement,
 };
 use crate::runtime::facade::CodingSessionError;

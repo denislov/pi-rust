@@ -1,5 +1,5 @@
 use crate::app::cli::error::CliError;
-use crate::operations::self_healing_edit::flow::{
+use crate::operations::self_healing_edit::runner::{
     SelfHealingEditCheckOutput, SelfHealingEditDiagnostic, SelfHealingEditRepairAttempt,
 };
 use serde::{Deserialize, Serialize};
@@ -68,8 +68,8 @@ pub enum CodingSessionError {
     Provider { message: String },
     #[error("tool error: {message}")]
     Tool { message: String },
-    #[error("flow error: {message}")]
-    Flow { message: String },
+    #[error("workflow error: {message}")]
+    Workflow { message: String },
     #[error("plugin error: {message}")]
     Plugin { message: String },
     #[error("cancelled")]
@@ -114,7 +114,7 @@ impl CodingSessionError {
             Self::SelfHealingEditFailed { .. } => "self_healing_edit_failed",
             Self::Provider { .. } => "provider",
             Self::Tool { .. } => "tool",
-            Self::Flow { .. } => "flow",
+            Self::Workflow { .. } => "workflow",
             Self::Plugin { .. } => "plugin",
             Self::Cancelled => "cancelled",
             Self::UnsupportedCapability { .. } => "unsupported_capability",
@@ -140,7 +140,7 @@ impl From<CodingSessionError> for CliError {
             | CodingSessionError::SelfHealingEditFailed { message, .. }
             | CodingSessionError::Provider { message }
             | CodingSessionError::Tool { message }
-            | CodingSessionError::Flow { message }
+            | CodingSessionError::Workflow { message }
             | CodingSessionError::Plugin { message } => CliError::SessionFailure(message),
             CodingSessionError::PartialCommit {
                 operation_id,
@@ -335,10 +335,10 @@ mod tests {
                 "tool",
             ),
             (
-                CodingSessionError::Flow {
+                CodingSessionError::Workflow {
                     message: "node failed".into(),
                 },
-                "flow",
+                "workflow",
             ),
             (
                 CodingSessionError::Plugin {

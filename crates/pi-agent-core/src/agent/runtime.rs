@@ -1,6 +1,6 @@
 #[cfg(any(test, feature = "test-support"))]
 use crate::agent::turn::AgentTurnContext;
-use crate::agent::turn::AgentTurnFlow;
+use crate::agent::turn::AgentTurnRunner;
 use crate::agent::types::{
     AgentConfig, AgentMessage, AgentResources, AgentStream, AgentTool, AgentToolDefinitionError,
 };
@@ -252,7 +252,7 @@ impl Agent {
         };
         Box::pin(async_stream::stream! {
             let _guard = guard;
-            let mut stream = AgentTurnFlow::run_state(state);
+            let mut stream = AgentTurnRunner::run_state(state);
             use futures::StreamExt;
             while let Some(event) = stream.next().await {
                 yield event;

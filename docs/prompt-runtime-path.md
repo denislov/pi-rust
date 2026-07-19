@@ -21,8 +21,8 @@ pi-coding-agent binary
   -> CodingAgentOperation::Prompt
   -> runtime scheduler + intent admission
   -> operation capability snapshot
-  -> PromptTurnContext + PromptTurnFlow
-  -> pi-agent-core Agent / AgentTurnFlow
+  -> PromptTurnContext + PromptTurnRunner
+  -> pi-agent-core Agent / AgentTurnRunner
   -> pi-ai scoped provider stream
   -> AgentEvent
   -> typed ProductEvent + session transaction
@@ -65,7 +65,7 @@ on stderr or in typed protocol/product events.
 
 The stable product facade is implemented under
 `crates/pi-coding-agent/src/runtime/facade.rs`. Prompt work passes through the
-runtime owners instead of calling a prompt Flow directly:
+runtime owners instead of calling a prompt workflow directly:
 
 ```text
 runtime/operation.rs    public operation request vocabulary
@@ -79,24 +79,24 @@ runtime/submission.rs   runtime-owned asynchronous task handles
 
 Admission freezes an `OperationCapabilitySnapshot`. Provider/model access,
 tools, filesystem, shell, plugins, session reads/writes, delegation, and
-generation/revocation are decided from that snapshot. The Prompt Flow receives
+generation/revocation are decided from that snapshot. The Prompt workflow receives
 the scoped handles it needs; it does not receive an unrestricted service
 container.
 
-## 3. Product Prompt Flow
+## 3. Product Prompt Workflow
 
-The product Flow lives in:
+The product workflow lives in:
 
 ```text
 crates/pi-coding-agent/src/operations/prompt/context.rs
-crates/pi-coding-agent/src/operations/prompt/flow.rs
+crates/pi-coding-agent/src/operations/prompt/runner.rs
 ```
 
-`PromptTurnFlow` currently executes these nodes in order:
+`PromptTurnRunner` currently executes these typed steps in order:
 
 | Node | Responsibility |
 | --- | --- |
-| `start_prompt_turn` | establish the Flow start point; prompt-start publication is owned outside the node |
+| `start_prompt_turn` | establish the workflow start point; prompt-start publication is owned outside the node |
 | `resolve_request` | normalize and validate the requested invocation |
 | `prepare_input` | run prompt preparation hooks and build operation input |
 | `resolve_runtime` | resolve the immutable runtime snapshot |
@@ -110,7 +110,7 @@ crates/pi-coding-agent/src/operations/prompt/flow.rs
 
 Persistent session opening, replay loading, transaction ownership, commit, and
 abort/failure finalization are coordinated by the product operation/session
-owners around this Flow. The Flow cannot invent a second durable write path.
+owners around this runner. The runner cannot invent a second durable write path.
 
 ## 4. Core Agent Loop
 
@@ -124,7 +124,7 @@ crates/pi-agent-core/src/agent/turn/runtime.rs
 crates/pi-agent-core/src/agent/turn/nodes.rs
 ```
 
-`Agent::prompt` adds the text input and starts `AgentTurnFlow`. The current core
+`Agent::prompt` adds the text input and starts `AgentTurnRunner`. The current core
 node inventory is:
 
 ```text
@@ -142,7 +142,7 @@ execute_tools
 After `provider_stream`, the assistant result either terminates, proceeds to
 tool execution, or continues to another provider turn. Tool results, steering,
 and follow-up input are folded into core agent state before the next turn.
-Cancellation is propagated through the Flow run options and the agent token.
+Cancellation is propagated through the runner cancellation boundaries and the agent token.
 
 `pi-agent-core` owns this generic loop but does not know about product sessions,
 RPC, ProductEvents, UI snapshots, profiles, or coding-agent policy.
@@ -179,7 +179,7 @@ crates/pi-coding-agent/src/services/event.rs
 
 The resulting `ProductEvent` stream carries stream/sequence identity,
 operation and turn association, typed event family data, and terminal outcome
-semantics. Adapters consume this stream; raw `AgentEvent` and `FlowEvent` do not
+semantics. Adapters consume this stream; raw `AgentEvent` do not
 cross the product boundary.
 
 Persistent session facts are staged and committed through:

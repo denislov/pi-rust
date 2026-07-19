@@ -1,7 +1,8 @@
-const AGENT_INVOCATION_FLOW: &str = include_str!("../../src/operations/agent_invocation/flow.rs");
-const AGENT_TEAM_FLOW: &str = include_str!("../../src/operations/team_invocation/flow.rs");
+const AGENT_INVOCATION_RUNNER: &str =
+    include_str!("../../src/operations/agent_invocation/runner.rs");
+const AGENT_TEAM_RUNNER: &str = include_str!("../../src/operations/team_invocation/runner.rs");
 const BRANCH_SUMMARY_SERVICE: &str = include_str!("../../src/operations/branch_summary/mod.rs");
-const FLOW_SERVICE: &str = include_str!("../../src/services/flow.rs");
+const WORKFLOW_SERVICE: &str = include_str!("../../src/services/workflow.rs");
 const MANUAL_COMPACTION_SERVICE: &str = include_str!("../../src/operations/compaction/mod.rs");
 const PROMPT_CONTEXT: &str = include_str!("../../src/operations/prompt/context.rs");
 const PROMPT_EXECUTION: &str = include_str!("../../src/operations/prompt/mod.rs");
@@ -442,8 +443,8 @@ fn documented_inventory_rows(source: &str) -> std::collections::BTreeSet<(String
 #[test]
 fn workflow_flows_emit_diagnostics_through_event_service_helpers() {
     for (name, source) in [
-        ("agent_invocation_flow", AGENT_INVOCATION_FLOW),
-        ("agent_team_flow", AGENT_TEAM_FLOW),
+        ("agent_invocation_runner", AGENT_INVOCATION_RUNNER),
+        ("agent_team_runner", AGENT_TEAM_RUNNER),
     ] {
         assert!(
             !source.contains("self.event_service.emit(CodingAgentEvent::Diagnostic"),
@@ -453,14 +454,14 @@ fn workflow_flows_emit_diagnostics_through_event_service_helpers() {
 }
 
 #[test]
-fn nested_workflows_use_explicit_subflow_runners() {
+fn nested_workflows_use_explicit_typed_runners() {
     for method in [
-        "run_prompt_subflow_for_agent_invocation",
-        "run_prompt_subflow_for_agent_team_member",
+        "run_prompt_subflow_typed_for_agent_invocation",
+        "run_prompt_subflow_typed_for_agent_team_member",
     ] {
         assert!(
-            FLOW_SERVICE.contains(method),
-            "FlowService should expose explicit nested workflow subflow runner `{method}`"
+            WORKFLOW_SERVICE.contains(method),
+            "WorkflowService should expose explicit nested typed runner `{method}`"
         );
     }
 
@@ -470,8 +471,8 @@ fn nested_workflows_use_explicit_subflow_runners() {
     assert!(delegation_execution.contains("run_agent_team"));
 
     for (name, source) in [
-        ("agent_invocation_flow", AGENT_INVOCATION_FLOW),
-        ("agent_team_flow", AGENT_TEAM_FLOW),
+        ("agent_invocation_runner", AGENT_INVOCATION_RUNNER),
+        ("agent_team_runner", AGENT_TEAM_RUNNER),
     ] {
         for needle in [
             "PromptTurnFlow::new()?.run",
@@ -480,7 +481,7 @@ fn nested_workflows_use_explicit_subflow_runners() {
         ] {
             assert!(
                 !source.contains(needle),
-                "{name} should route nested workflow execution through FlowService subflow runners instead of `{needle}`"
+                "{name} should route nested workflow execution through WorkflowService subflow runners instead of `{needle}`"
             );
         }
     }
@@ -516,8 +517,8 @@ fn session_service_builds_session_write_events_through_event_service_helpers() {
 #[test]
 fn workflow_flows_emit_prompt_outcomes_through_event_service_helpers() {
     for (name, source) in [
-        ("agent_invocation_flow", AGENT_INVOCATION_FLOW),
-        ("agent_team_flow", AGENT_TEAM_FLOW),
+        ("agent_invocation_runner", AGENT_INVOCATION_RUNNER),
+        ("agent_team_runner", AGENT_TEAM_RUNNER),
     ] {
         for event_name in ["PromptCompleted", "PromptAborted", "PromptFailed"] {
             let needle = format!("self.event_service.emit(CodingAgentEvent::{event_name}");

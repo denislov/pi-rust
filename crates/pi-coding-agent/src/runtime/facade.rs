@@ -32,7 +32,7 @@ pub use crate::extensions::{
     CodingAgentExtensionSourceChannel, CodingAgentExtensionTrustLevel,
     CodingAgentInstalledExtensionPackage,
 };
-pub use crate::operations::agent_invocation::flow::{
+pub use crate::operations::agent_invocation::runner::{
     AgentInvocationOptions, AgentInvocationOutcome,
 };
 pub use crate::operations::delegation::PendingDelegationConfirmation;
@@ -41,12 +41,12 @@ pub use crate::operations::prompt::context::{
     CodingDiagnostic, CodingDiagnosticSeverity, PromptTurnMode, PromptTurnOptions,
     PromptTurnOutcome,
 };
-pub use crate::operations::self_healing_edit::flow::{
+pub use crate::operations::self_healing_edit::runner::{
     SelfHealingEditCheckOutput, SelfHealingEditDiagnostic, SelfHealingEditModelRepairOptions,
     SelfHealingEditOutcome, SelfHealingEditRepairAttempt, SelfHealingEditReplacement,
     SelfHealingEditRequest,
 };
-pub use crate::operations::team_invocation::flow::{
+pub use crate::operations::team_invocation::runner::{
     AgentTeamMemberOutcome, AgentTeamOptions, AgentTeamOutcome,
 };
 pub use crate::profiles::{
@@ -104,10 +104,9 @@ pub(crate) use crate::operations::delegation::{
     DelegationTargetInventory, PendingDelegationConfirmationQueue,
     PendingDelegationConfirmationState, pending_state_from_replay,
 };
-use crate::operations::export::flow::ExportOptions;
-use crate::operations::plugin_load::flow::PluginLoadOptions;
+use crate::operations::export::runner::ExportOptions;
+use crate::operations::plugin_load::runner::PluginLoadOptions;
 use crate::runtime::capability::CapabilitySnapshotService;
-pub(crate) use crate::runtime::capability::PluginCapabilitySet;
 pub use crate::runtime::capability::{FilesystemCapability, ShellCapability};
 use crate::runtime::client::service::ClientService;
 use crate::runtime::control::{OperationControl, PromptControlCleanup, PromptControlGeneration};
@@ -120,17 +119,17 @@ pub(crate) use crate::runtime::submission::SubmissionLeaseLifecycle;
 use crate::services::authorization::AuthorizationService;
 use crate::services::capability::CapabilityService;
 use crate::services::event::EventService;
-use crate::services::flow::FlowService;
 use crate::services::plugin::PluginService;
 use crate::services::runtime::RuntimeService;
 use crate::services::session::{default_cwd, replay_derived_owner_state, session_cwd};
+use crate::services::workflow::WorkflowService;
 use crate::session::service::{SessionPersistence, SessionService, TransientSessionState};
 pub(in crate::runtime) use control::PromptControlCleanupGuard;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use crate::plugins::{
-    CommandDefinition, KeybindDefinition, PluginSource, UiActionDefinition, UiDialogDefinition,
+    CommandDefinition, KeybindDefinition, UiActionDefinition, UiDialogDefinition,
 };
 #[derive(Debug)]
 pub struct CodingAgentSession {

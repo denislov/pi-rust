@@ -22,14 +22,8 @@ mod cases {
     use crate::app::bootstrap::{PromptInvocation, SessionRunOptions};
     use crate::app::cli::prompt_options::PromptRunOptions;
     use crate::operations::delegation::delegation_runtime_seed_from_prompt_options;
-    use crate::operations::plugin_load::flow::{
-        PluginLoadCandidate, PluginLoadManifest, PluginLoadOptions,
-    };
+    use crate::operations::plugin_load::runner::PluginLoadOptions;
     use crate::operations::prompt::context::DelegationRequest;
-    use crate::plugins::{
-        CommandDefinition, CommandProvider, CommandRegistrationHost, PluginError, PluginId,
-        PluginMetadata, PluginRegistry, PluginSource, ToolProvider, ToolRegistrationHost,
-    };
     use crate::runtime::control::PromptControlCommand;
     use crate::runtime::finalization::OperationFinalizer;
     use crate::runtime::operation::{
@@ -860,60 +854,6 @@ mod cases {
         }
     }
 
-    struct SessionPluginToolProvider;
-
-    impl ToolProvider for SessionPluginToolProvider {
-        fn metadata(&self) -> PluginMetadata {
-            PluginMetadata::new(
-                PluginId::new("session-plugin-tool"),
-                "Session Plugin Tool",
-                "1.0.0",
-                PluginSource::FirstParty,
-            )
-        }
-
-        fn tools(&self, _host: &ToolRegistrationHost) -> Result<Vec<AgentTool>, PluginError> {
-            Ok(vec![AgentTool::new_text(
-                "plugin_echo",
-                "echoes plugin input",
-                serde_json::json!({"type": "object"}),
-                |_context, _args| async { Ok("plugin echo".to_owned()) },
-            )])
-        }
-    }
-
-    struct SessionPluginCommandProvider;
-
-    impl CommandProvider for SessionPluginCommandProvider {
-        fn metadata(&self) -> PluginMetadata {
-            PluginMetadata::new(
-                PluginId::new("session-plugin-command"),
-                "Session Plugin Command",
-                "1.0.0",
-                PluginSource::FirstParty,
-            )
-        }
-
-        fn commands(
-            &self,
-            _host: &CommandRegistrationHost,
-        ) -> Result<Vec<CommandDefinition>, PluginError> {
-            Ok(vec![CommandDefinition::new(
-                "plugin.say_hello",
-                "greets from session plugin",
-            )])
-        }
-
-        fn run_command(
-            &self,
-            command_id: &str,
-            _args: serde_json::Value,
-        ) -> Result<String, PluginError> {
-            assert_eq!(command_id, "plugin.say_hello");
-            Ok("hello".to_owned())
-        }
-    }
-
     struct RecordingProvider {
         contexts: Arc<Mutex<Vec<Context>>>,
         response: String,
@@ -1038,86 +978,6 @@ mod cases {
     }
 
     #[tokio::test]
-    async fn load_plugins_updates_session_runtime_and_emits_capability_events() {
-        let api = "coding-session-plugin-load-owner";
-        let contexts = Arc::new(Mutex::new(Vec::new()));
-        let _provider_guard = crate::test_support::ProviderGuard::register(
-            api,
-            Arc::new(RecordingProvider::new(contexts.clone(), "plugin loaded")),
-        );
-        let temp = tempfile::tempdir().unwrap();
-        let mut session = CodingAgentSession::create(
-            CodingAgentSessionOptions::new()
-                .with_ai_client(_provider_guard.ai_client())
-                .with_session_id("sess_plugin_load_owner")
-                .with_session_log_root(temp.path()),
-        )
-        .await
-        .unwrap();
-        let mut registry = PluginRegistry::new();
-        registry.register_tool_provider(Arc::new(SessionPluginToolProvider));
-        let options = PluginLoadOptions::new()
-            .with_candidate(PluginLoadCandidate::new(
-                PluginLoadManifest::new(
-                    "session-plugin",
-                    "Session Plugin",
-                    "1.0.0",
-                    PluginSource::FirstParty,
-                ),
-                registry,
-            ))
-            .with_candidate(PluginLoadCandidate::new(
-                PluginLoadManifest::new("", "Invalid Plugin", "1.0.0", PluginSource::Project),
-                PluginRegistry::new(),
-            ));
-        let mut events = session.subscribe_product_events();
-
-        // D-03: explicit candidates remain behind the internal operation owner.
-        let outcome = match session
-            .run_operation(Operation::PluginLoad(options), None)
-            .await
-            .unwrap()
-        {
-            OperationOutcome::PluginLoad(outcome) => outcome,
-            other => panic!("expected plugin load outcome, got {other:?}"),
-        };
-
-        assert_eq!(outcome.loaded_plugin_ids, vec!["session-plugin"]);
-        assert_eq!(outcome.diagnostics.len(), 1);
-        let emitted_events = std::iter::from_fn(|| events.try_recv().unwrap()).collect::<Vec<_>>();
-        assert!(
-            emitted_events.iter().any(|event| matches!(
-                event.event(),
-                CodingAgentProductEventKind::Diagnostic(
-                    CodingAgentDiagnosticProductEvent::Diagnostic { message, .. }
-                ) if message.contains("plugin id must not be empty")
-            )),
-            "{emitted_events:#?}"
-        );
-        assert!(emitted_events.iter().any(|event| matches!(
-            event.event(),
-            CodingAgentProductEventKind::Capability(
-                CodingAgentCapabilityProductEvent::Changed { .. }
-            )
-        )));
-
-        assert!(matches!(
-            session
-                .run(CodingAgentOperation::Prompt(prompt_options(
-                    api,
-                    "use plugin"
-                )))
-                .await
-                .unwrap(),
-            CodingAgentOperationOutcome::Prompt(_)
-        ));
-
-        let contexts = contexts.lock().unwrap();
-        let tools = contexts[0].tools.as_ref().unwrap();
-        assert!(tools.iter().any(|tool| tool.name == "plugin_echo"));
-    }
-
-    #[tokio::test]
     async fn load_plugins_records_persistent_plugin_load_events() {
         let temp = tempfile::tempdir().unwrap();
         let mut session = CodingAgentSession::create(
@@ -1127,27 +987,10 @@ mod cases {
         )
         .await
         .unwrap();
-        let mut registry = PluginRegistry::new();
-        registry.register_tool_provider(Arc::new(SessionPluginToolProvider));
-        let options = PluginLoadOptions::new()
-            .with_candidate(PluginLoadCandidate::new(
-                PluginLoadManifest::new(
-                    "session-plugin",
-                    "Session Plugin",
-                    "1.0.0",
-                    PluginSource::FirstParty,
-                ),
-                registry,
-            ))
-            .with_candidate(PluginLoadCandidate::new(
-                PluginLoadManifest::new("", "Invalid Plugin", "1.0.0", PluginSource::Project),
-                PluginRegistry::new(),
-            ));
         let mut product_events = session.subscribe_product_events();
 
-        // D-03: explicit candidates remain behind the internal operation owner.
         session
-            .run_operation(Operation::PluginLoad(options), None)
+            .run_operation(Operation::PluginLoad(PluginLoadOptions::new()), None)
             .await
             .unwrap();
         let emitted_events =
@@ -1190,15 +1033,9 @@ mod cases {
             .unwrap();
         assert_eq!(
             plugin_event["data"]["loaded_plugin_ids"],
-            serde_json::json!(["session-plugin"])
+            serde_json::json!([])
         );
-        assert_eq!(plugin_event["data"]["diagnostics"][0]["plugin_id"], "");
-        assert!(
-            plugin_event["data"]["diagnostics"][0]["message"]
-                .as_str()
-                .unwrap()
-                .contains("plugin id must not be empty")
-        );
+        assert_eq!(plugin_event["data"]["diagnostics"], serde_json::json!([]));
         let outbox = std::fs::read_to_string(
             temp.path()
                 .join("sess_plugin_load_events")
@@ -1238,191 +1075,6 @@ mod cases {
                     == crate::events::CodingAgentProductEventTerminalOperationKind::PluginLoad
             })
         }));
-    }
-
-    #[tokio::test]
-    async fn failed_plugin_load_persists_terminal_outbox_and_restarts_as_plugin_load() {
-        let temp = tempfile::tempdir().unwrap();
-        let plugin_dir = temp.path().join("plugins/invalid-ui");
-        fs::create_dir_all(&plugin_dir).unwrap();
-        fs::write(
-            plugin_dir.join("plugin.toml"),
-            r#"
-id = "invalid-ui"
-name = "Invalid UI"
-version = "0.1.0"
-runtime = "lua"
-entry = "plugin.lua"
-"#,
-        )
-        .unwrap();
-        fs::write(
-            plugin_dir.join("plugin.lua"),
-            r#"
-function register(host)
-  host:ui_action({
-    id = "ui.missing",
-    label = "Missing",
-    description = "targets a missing command",
-    action_id = "lua.missing_command"
-  })
-end
-"#,
-        )
-        .unwrap();
-        let session_root = temp.path().join("sessions");
-        let session_id = "sess_plugin_load_failure";
-        let mut session = CodingAgentSession::create(
-            CodingAgentSessionOptions::new()
-                .with_session_id(session_id)
-                .with_session_log_root(&session_root),
-        )
-        .await
-        .unwrap();
-        let mut product_events = session.subscribe_product_events();
-        let error = session
-            .run_operation(
-                Operation::PluginLoad(
-                    PluginLoadOptions::new()
-                        .with_discovery_root(temp.path().join("plugins"), PluginSource::Project),
-                ),
-                None,
-            )
-            .await
-            .unwrap_err();
-        assert_eq!(error.code(), "plugin");
-        let emitted = std::iter::from_fn(|| product_events.try_recv().unwrap()).collect::<Vec<_>>();
-        assert!(emitted.iter().any(|event| {
-            matches!(
-                event.event(),
-                CodingAgentProductEventKind::Workflow(
-                    CodingAgentWorkflowProductEvent::PluginLoadFailed { .. }
-                )
-            ) && event.terminal_operation().is_some_and(|terminal| {
-                terminal.kind
-                    == crate::events::CodingAgentProductEventTerminalOperationKind::PluginLoad
-            })
-        }));
-        let event_log =
-            std::fs::read_to_string(session_root.join(session_id).join("events.jsonl")).unwrap();
-        assert!(event_log.contains("operation.failed"));
-        assert!(event_log.contains("operation.terminal.recorded"));
-        let outbox =
-            std::fs::read_to_string(session_root.join(session_id).join("outbox.jsonl")).unwrap();
-        assert!(outbox.contains("operation_terminal"));
-        assert!(outbox.contains("\"operation_kind\":\"plugin_load\""));
-
-        session.shutdown().await.unwrap();
-        drop(session);
-        let reopened = CodingAgentSession::open(
-            CodingAgentSessionOptions::new()
-                .with_session_id(session_id)
-                .with_session_log_root(&session_root),
-        )
-        .await
-        .unwrap();
-        let connection = reopened
-            .connect(public_projection::CodingAgentClientId::new(
-                "plugin-load-failure-replay",
-            ))
-            .unwrap();
-        let public_projection::CodingAgentReconnect::Replayed { events, .. } =
-            connection.reconnect(0).unwrap()
-        else {
-            panic!("plugin-load failure must be retained for restart redelivery")
-        };
-        assert!(events.iter().any(|event| {
-            matches!(
-                event.event(),
-                CodingAgentProductEventKind::Workflow(
-                    CodingAgentWorkflowProductEvent::PluginLoadFailed { .. }
-                )
-            ) && event.terminal_operation().is_some_and(|terminal| {
-                terminal.kind
-                    == crate::events::CodingAgentProductEventTerminalOperationKind::PluginLoad
-            })
-        }));
-    }
-
-    #[tokio::test]
-    async fn reload_plugins_discovers_default_project_and_user_roots() {
-        let env = crate::test_support::EnvGuard::new(&["PI_RUST_DIR"]);
-        let temp = tempfile::tempdir().unwrap();
-        let cwd = temp.path().join("project");
-        let global = temp.path().join("global");
-        let project_plugin = cwd.join(".pi-rust/plugins/project-lua");
-        let user_plugin = global.join("plugins/user-lua");
-        fs::create_dir_all(&project_plugin).unwrap();
-        fs::create_dir_all(&user_plugin).unwrap();
-        fs::write(
-            project_plugin.join("plugin.toml"),
-            r#"
-id = "project-lua"
-name = "Project Lua"
-version = "0.1.0"
-runtime = "lua"
-"#,
-        )
-        .unwrap();
-        fs::write(
-            user_plugin.join("plugin.toml"),
-            r#"
-id = "user-lua"
-name = "User Lua"
-version = "0.1.0"
-runtime = "lua"
-"#,
-        )
-        .unwrap();
-        env.set_pi_rust_dir(&global);
-        let mut session = CodingAgentSession::create(
-            CodingAgentSessionOptions::new()
-                .with_cwd(&cwd)
-                .with_session_id("sess_plugin_reload_defaults")
-                .with_session_log_root(temp.path().join("sessions")),
-        )
-        .await
-        .unwrap();
-        let mut events = session.subscribe_product_events();
-
-        let outcome = session.run(CodingAgentOperation::PluginLoad).await.unwrap();
-        let CodingAgentOperationOutcome::PluginLoad(outcome) = outcome else {
-            panic!("plugin-load operation returned another outcome")
-        };
-
-        assert!(outcome.loaded_plugin_ids.is_empty());
-        assert_eq!(outcome.diagnostics.len(), 2);
-        assert!(
-            outcome
-                .diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.plugin_id.as_deref() == Some("project-lua"))
-        );
-        assert!(
-            outcome
-                .diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.plugin_id.as_deref() == Some("user-lua"))
-        );
-        let emitted_events = std::iter::from_fn(|| events.try_recv().unwrap()).collect::<Vec<_>>();
-        assert_eq!(
-            emitted_events
-                .iter()
-                .filter(|event| matches!(
-                    event.event(),
-                    CodingAgentProductEventKind::Diagnostic(
-                        CodingAgentDiagnosticProductEvent::Diagnostic { .. }
-                    )
-                ))
-                .count(),
-            2
-        );
-        assert!(emitted_events.iter().any(|event| matches!(
-            event.event(),
-            CodingAgentProductEventKind::Capability(
-                CodingAgentCapabilityProductEvent::Changed { .. }
-            )
-        )));
     }
 
     #[tokio::test]
@@ -3619,27 +3271,6 @@ runtime = "lua"
             } => leaf_id,
             other => panic!("expected selected prompt success, got {other:?}"),
         };
-        let mut registry = PluginRegistry::new();
-        registry.register_command_provider(Arc::new(SessionPluginCommandProvider));
-        // D-03: public PluginLoad cannot inject the command registry used to
-        // verify plugin capability continuity across a fork.
-        session
-            .run_operation(
-                Operation::PluginLoad(PluginLoadOptions::new().with_candidate(
-                    PluginLoadCandidate::new(
-                        PluginLoadManifest::new(
-                            "session-plugin-command",
-                            "Session Plugin Command",
-                            "1.0.0",
-                            PluginSource::FirstParty,
-                        ),
-                        registry,
-                    ),
-                )),
-                None,
-            )
-            .await
-            .unwrap();
         session
             .run(CodingAgentOperation::SetDefaultAgentProfile {
                 profile_id: ProfileId::from("reviewer"),
@@ -3660,17 +3291,6 @@ runtime = "lua"
             session.current_capability_generation_for_tests(),
             capability_generation_before
         );
-        let command = session
-            .run(CodingAgentOperation::PluginCommand {
-                command_id: "plugin.say_hello".into(),
-                args: serde_json::Value::Null,
-            })
-            .await
-            .unwrap();
-        assert!(matches!(
-            command,
-            CodingAgentOperationOutcome::PluginCommand(output) if output == "hello"
-        ));
         session
             .run(CodingAgentOperation::SetDefaultAgentProfile {
                 profile_id: ProfileId::from("default"),
@@ -3779,76 +3399,6 @@ runtime = "lua"
                 .active_leaf_id
                 .as_deref(),
             Some(target_leaf_id.as_str())
-        );
-    }
-
-    #[tokio::test]
-    async fn submitted_plugin_command_uses_guard_and_preserves_plugin_error() {
-        let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
-            .await
-            .unwrap();
-        let mut registry = PluginRegistry::new();
-        registry.register_command_provider(Arc::new(SessionPluginCommandProvider));
-        // D-03: public PluginLoad cannot inject the command registry required
-        // to exercise the private plugin-command error boundary.
-        session
-            .run_operation(
-                Operation::PluginLoad(PluginLoadOptions::new().with_candidate(
-                    PluginLoadCandidate::new(
-                        PluginLoadManifest::new(
-                            "session-plugin-command",
-                            "Session Plugin Command",
-                            "1.0.0",
-                            PluginSource::FirstParty,
-                        ),
-                        registry,
-                    ),
-                )),
-                None,
-            )
-            .await
-            .unwrap();
-        let operation = CodingAgentOperation::PluginCommand {
-            command_id: "missing.command".into(),
-            args: serde_json::Value::Null,
-        };
-
-        let error = session.submit(operation).unwrap().join().await.unwrap_err();
-
-        assert_eq!(error.code(), "plugin");
-        assert_eq!(
-            error.to_string(),
-            "plugin error: plugin command not found: missing.command"
-        );
-        assert_eq!(
-            session.runtime_host.operation_supervisor.control.active(),
-            None
-        );
-    }
-
-    #[tokio::test]
-    async fn plugin_command_uses_non_session_slot_while_session_writer_is_busy() {
-        let mut session = CodingAgentSession::non_persistent(CodingAgentSessionOptions::new())
-            .await
-            .unwrap();
-        let _guard = session
-            .runtime_host
-            .operation_supervisor
-            .control
-            .begin(OperationKind::Prompt, "op_test".into())
-            .unwrap();
-        let operation = CodingAgentOperation::PluginCommand {
-            command_id: "missing.command".into(),
-            args: serde_json::Value::Null,
-        };
-
-        let error = session.submit(operation).unwrap().join().await.unwrap_err();
-
-        assert_eq!(error.code(), "unsupported_capability");
-        assert!(error.to_string().contains("missing.command"));
-        assert_eq!(
-            session.runtime_host.operation_supervisor.control.active(),
-            Some(OperationKind::Prompt)
         );
     }
 
@@ -5350,7 +4900,7 @@ runtime = "lua"
     }
 
     #[tokio::test]
-    async fn canonical_run_preserves_plugin_profile_and_delegation_contracts() {
+    async fn canonical_run_preserves_profile_and_delegation_contracts() {
         let api = "coding-session-canonical-delegation-decision";
         let _provider_guard = crate::test_support::ProviderGuard::register(
             api,
@@ -5361,59 +4911,10 @@ runtime = "lua"
         let temp = tempfile::tempdir().unwrap();
         let options = CodingAgentSessionOptions::new()
             .with_ai_client(_provider_guard.ai_client())
-            .with_session_id("sess_canonical_plugin_profile_delegation")
+            .with_session_id("sess_canonical_profile_delegation")
             .with_session_log_root(temp.path());
         let mut session = CodingAgentSession::create(options.clone()).await.unwrap();
-        let mut registry = PluginRegistry::new();
-        registry.register_command_provider(Arc::new(SessionPluginCommandProvider));
-        session.runtime_host.default_plugin_load_options =
-            PluginLoadOptions::new().with_candidate(PluginLoadCandidate::new(
-                PluginLoadManifest::new(
-                    "canonical-command",
-                    "Canonical Command",
-                    "1.0.0",
-                    PluginSource::FirstParty,
-                ),
-                registry,
-            ));
         let mut events = session.subscribe_product_events();
-
-        let loaded = session.run(CodingAgentOperation::PluginLoad).await.unwrap();
-        assert!(matches!(
-            loaded,
-            CodingAgentOperationOutcome::PluginLoad(CodingAgentPluginLoadOutcome {
-                loaded_plugin_ids,
-                diagnostics,
-                capability_changed: true,
-            }) if loaded_plugin_ids == vec!["canonical-command"] && diagnostics.is_empty()
-        ));
-        let command = session
-            .run(CodingAgentOperation::PluginCommand {
-                command_id: "plugin.say_hello".into(),
-                args: serde_json::Value::Null,
-            })
-            .await
-            .unwrap();
-        assert!(matches!(
-            command,
-            CodingAgentOperationOutcome::PluginCommand(output) if output == "hello"
-        ));
-        let error = session
-            .run(CodingAgentOperation::PluginCommand {
-                command_id: "missing.command".into(),
-                args: serde_json::Value::Null,
-            })
-            .await
-            .unwrap_err();
-        assert_eq!(error.code(), "plugin");
-        assert_eq!(
-            error.to_string(),
-            "plugin error: plugin command not found: missing.command"
-        );
-        assert_eq!(
-            session.runtime_host.operation_supervisor.control.active(),
-            None
-        );
 
         let profile = session
             .run(CodingAgentOperation::SetDefaultAgentProfile {

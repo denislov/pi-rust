@@ -1,15 +1,10 @@
-use std::future::Future;
 use std::path::{Path, PathBuf};
-use std::pin::Pin;
 use std::sync::Arc;
 
 use futures::{
     StreamExt,
     future::{BoxFuture, FutureExt},
 };
-#[cfg(test)]
-use pi_agent_core::api::execution::{ExecOptions, ExecutionEnv, FileError};
-use pi_agent_core::api::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRunOptions};
 use pi_ai::api::conversation::{AssistantMessage, ContentBlock, Context, Message, StopReason};
 use pi_ai::api::stream::{AssistantMessageEvent, StreamOptions};
 use serde::Deserialize;
@@ -25,19 +20,6 @@ use crate::runtime::capability::{FilesystemCapability, ModelCapability};
 use crate::runtime::control::OperationCancellationHandle;
 use crate::runtime::facade::CodingSessionError;
 use crate::services::runtime::stream_model_for_scoped_runtime;
-
-const DEFAULT_ACTION: &str = "default";
-
-pub(crate) const SELF_HEALING_EDIT_NODE_IDS: &[&str] = &[
-    "start_edit_workflow",
-    "read_target",
-    "propose_patch",
-    "validate_patch",
-    "apply_patch",
-    "run_check",
-    "repair_patch",
-    "record_result",
-];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelfHealingEditReplacement {
@@ -325,12 +307,6 @@ impl SelfHealingEditOptions {
         self
     }
 
-    #[cfg(test)]
-    pub(crate) fn with_check_runner(mut self, runner: Arc<dyn SelfHealingEditCheckRunner>) -> Self {
-        self.check_runner = Some(runner);
-        self
-    }
-
     pub(crate) fn with_real_check_runner(mut self) -> Self {
         self.check_runner = Some(Arc::new(RealSelfHealingEditCheckRunner));
         self
@@ -354,16 +330,6 @@ impl SelfHealingEditOptions {
         observer: Arc<dyn SelfHealingEditObserver>,
     ) -> Self {
         self.repair_observer = Some(observer);
-        self
-    }
-
-    #[cfg(test)]
-    pub(crate) fn with_execution_env<E>(mut self, env: E) -> Self
-    where
-        E: ExecutionEnv + Clone + 'static,
-    {
-        self.operations = Arc::new(ExecutionEnvEditOperations::new(env.clone()));
-        self.check_runner = Some(Arc::new(ExecutionEnvCheckRunner::new(env)));
         self
     }
 }
@@ -414,11 +380,6 @@ impl SelfHealingEditContext {
             failure_error: None,
             cancellation_handle: None,
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn diagnostics(&self) -> &[SelfHealingEditDiagnostic] {
-        &self.diagnostics
     }
 
     pub(crate) fn repair_attempts(&self) -> &[SelfHealingEditRepairAttempt] {
@@ -697,72 +658,7 @@ impl SelfHealingEditContext {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct SelfHealingEditNodeSpec {
-    id: &'static str,
-    name: &'static str,
-    kind: SelfHealingEditNodeKind,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SelfHealingEditNodeKind {
-    StartEditWorkflow,
-    ReadTarget,
-    ProposePatch,
-    ValidatePatch,
-    ApplyPatch,
-    RunCheck,
-    RepairPatch,
-    RecordResult,
-}
-
-const SELF_HEALING_EDIT_NODE_SPECS: &[SelfHealingEditNodeSpec] = &[
-    SelfHealingEditNodeSpec {
-        id: "start_edit_workflow",
-        name: "StartEditWorkflow",
-        kind: SelfHealingEditNodeKind::StartEditWorkflow,
-    },
-    SelfHealingEditNodeSpec {
-        id: "read_target",
-        name: "ReadTarget",
-        kind: SelfHealingEditNodeKind::ReadTarget,
-    },
-    SelfHealingEditNodeSpec {
-        id: "propose_patch",
-        name: "ProposePatch",
-        kind: SelfHealingEditNodeKind::ProposePatch,
-    },
-    SelfHealingEditNodeSpec {
-        id: "validate_patch",
-        name: "ValidatePatch",
-        kind: SelfHealingEditNodeKind::ValidatePatch,
-    },
-    SelfHealingEditNodeSpec {
-        id: "apply_patch",
-        name: "ApplyPatch",
-        kind: SelfHealingEditNodeKind::ApplyPatch,
-    },
-    SelfHealingEditNodeSpec {
-        id: "run_check",
-        name: "RunCheck",
-        kind: SelfHealingEditNodeKind::RunCheck,
-    },
-    SelfHealingEditNodeSpec {
-        id: "repair_patch",
-        name: "RepairPatch",
-        kind: SelfHealingEditNodeKind::RepairPatch,
-    },
-    SelfHealingEditNodeSpec {
-        id: "record_result",
-        name: "RecordResult",
-        kind: SelfHealingEditNodeKind::RecordResult,
-    },
-];
-
-#[allow(dead_code)]
-pub(crate) struct SelfHealingEditFlow {
-    flow: Flow<SelfHealingEditContext>,
-}
+pub(crate) struct SelfHealingEditRunner;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SelfHealingEditStep {
@@ -776,48 +672,9 @@ enum SelfHealingEditStep {
     RecordResult,
 }
 
-impl SelfHealingEditFlow {
+impl SelfHealingEditRunner {
     pub(crate) fn new() -> Result<Self, CodingSessionError> {
-        let mut flow = Flow::new(SELF_HEALING_EDIT_NODE_IDS[0]).map_err(flow_error)?;
-        for spec in SELF_HEALING_EDIT_NODE_SPECS {
-            flow.add_node(spec.id, SelfHealingEditNode::new(spec.name, spec.kind))
-                .map_err(flow_error)?;
-        }
-        for pair in SELF_HEALING_EDIT_NODE_IDS.windows(2) {
-            flow.edge(pair[0], pair[1]).map_err(flow_error)?;
-        }
-        Ok(Self { flow })
-    }
-
-    #[allow(dead_code)]
-    pub(crate) async fn run(
-        &self,
-        ctx: &mut SelfHealingEditContext,
-    ) -> Result<FlowOutcome, CodingSessionError> {
-        self.flow.run(ctx).await.map_err(flow_error)
-    }
-
-    #[allow(dead_code)]
-    pub(crate) async fn run_with_cancellation(
-        &self,
-        ctx: &mut SelfHealingEditContext,
-        cancellation: CancellationToken,
-    ) -> Result<FlowOutcome, CodingSessionError> {
-        let result = self
-            .flow
-            .run_with_options(
-                ctx,
-                FlowRunOptions {
-                    cancel: Some(cancellation),
-                    ..FlowRunOptions::default()
-                },
-            )
-            .await
-            .map_err(flow_error);
-        if let Err(error @ CodingSessionError::Cancelled) = &result {
-            ctx.fail(error.clone());
-        }
-        result
+        Ok(Self)
     }
 
     pub(crate) async fn run_typed(
@@ -846,7 +703,7 @@ impl SelfHealingEditFlow {
                 SelfHealingEditStep::RecordResult => ctx.record_result(),
             };
             if let Err(error) = result {
-                return Err(CodingSessionError::Flow {
+                return Err(CodingSessionError::Workflow {
                     message: ctx.fail(error),
                 });
             }
@@ -861,46 +718,6 @@ impl SelfHealingEditFlow {
                 SelfHealingEditStep::RecordResult => return Ok(()),
             };
         }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-struct SelfHealingEditNode {
-    name: &'static str,
-    kind: SelfHealingEditNodeKind,
-}
-
-impl SelfHealingEditNode {
-    fn new(name: &'static str, kind: SelfHealingEditNodeKind) -> Self {
-        Self { name, kind }
-    }
-}
-
-impl FlowNode<SelfHealingEditContext> for SelfHealingEditNode {
-    fn name(&self) -> &str {
-        self.name
-    }
-
-    fn run<'a>(
-        &'a self,
-        ctx: &'a mut SelfHealingEditContext,
-    ) -> Pin<Box<dyn Future<Output = Result<Action, String>> + Send + 'a>> {
-        Box::pin(async move {
-            let result = match self.kind {
-                SelfHealingEditNodeKind::StartEditWorkflow => ctx.start_edit_workflow(),
-                SelfHealingEditNodeKind::ReadTarget => ctx.read_target().await,
-                SelfHealingEditNodeKind::ProposePatch => ctx.propose_patch(),
-                SelfHealingEditNodeKind::ValidatePatch => ctx.validate_patch(),
-                SelfHealingEditNodeKind::ApplyPatch => ctx.apply_patch().await,
-                SelfHealingEditNodeKind::RunCheck => ctx.run_check().await,
-                SelfHealingEditNodeKind::RepairPatch => ctx.repair_patch().await,
-                SelfHealingEditNodeKind::RecordResult => ctx.record_result(),
-            };
-            match result {
-                Ok(()) => default_action(),
-                Err(error) => Err(ctx.fail(error)),
-            }
-        })
     }
 }
 
@@ -945,92 +762,6 @@ fn shell_check_command(command: &str) -> Command {
         let mut shell = Command::new("sh");
         shell.arg("-c").arg(command);
         shell
-    }
-}
-
-#[cfg(test)]
-struct ExecutionEnvCheckRunner<E> {
-    env: E,
-}
-
-#[cfg(test)]
-impl<E> ExecutionEnvCheckRunner<E> {
-    fn new(env: E) -> Self {
-        Self { env }
-    }
-}
-
-#[cfg(test)]
-impl<E> SelfHealingEditCheckRunner for ExecutionEnvCheckRunner<E>
-where
-    E: ExecutionEnv + Clone + 'static,
-{
-    fn run_check<'a>(
-        &'a self,
-        cwd: &'a Path,
-        command: &'a str,
-    ) -> BoxFuture<'a, Result<SelfHealingEditCheckOutput, String>> {
-        async move {
-            let output = self
-                .env
-                .exec(
-                    command,
-                    Some(ExecOptions {
-                        cwd: Some(cwd.to_path_buf()),
-                    }),
-                )
-                .await
-                .map_err(|error| error.to_string())?;
-            Ok(SelfHealingEditCheckOutput {
-                command: command.to_owned(),
-                stdout: output.stdout,
-                stderr: output.stderr,
-                exit_code: output.exit_code,
-            })
-        }
-        .boxed()
-    }
-}
-
-#[cfg(test)]
-struct ExecutionEnvEditOperations<E> {
-    env: E,
-}
-
-#[cfg(test)]
-impl<E> ExecutionEnvEditOperations<E> {
-    fn new(env: E) -> Self {
-        Self { env }
-    }
-}
-
-#[cfg(test)]
-impl<E> EditOperations for ExecutionEnvEditOperations<E>
-where
-    E: ExecutionEnv + Clone + 'static,
-{
-    fn read_file<'a>(&'a self, path: &'a Path) -> BoxFuture<'a, Result<Vec<u8>, String>> {
-        async move {
-            self.env
-                .read_binary_file(path.to_string_lossy().as_ref())
-                .await
-                .map_err(file_error_message)
-        }
-        .boxed()
-    }
-
-    fn write_file<'a>(
-        &'a self,
-        path: &'a Path,
-        content: &'a [u8],
-    ) -> BoxFuture<'a, Result<(), String>> {
-        async move {
-            self.env
-                .write_file(path.to_string_lossy().as_ref(), content)
-                .await
-                .map_err(file_error_message)
-        }
-        .boxed()
     }
 }
 
@@ -1170,22 +901,9 @@ fn parse_model_repair_response(text: &str) -> Result<Vec<SelfHealingEditReplacem
         .collect())
 }
 
-fn default_action() -> Result<Action, String> {
-    Action::new(DEFAULT_ACTION).map_err(|error| error.to_string())
-}
-
 fn session_error(message: impl Into<String>) -> CodingSessionError {
     CodingSessionError::Session {
         message: message.into(),
-    }
-}
-
-fn flow_error(error: FlowError) -> CodingSessionError {
-    match error {
-        FlowError::Cancelled => CodingSessionError::Cancelled,
-        error => CodingSessionError::Flow {
-            message: error.to_string(),
-        },
     }
 }
 
@@ -1212,9 +930,4 @@ fn compact_check_text(text: &str) -> String {
     } else {
         format!("{}...", compact.chars().take(MAX_LEN).collect::<String>())
     }
-}
-
-#[cfg(test)]
-fn file_error_message(error: FileError) -> String {
-    error.to_string()
 }

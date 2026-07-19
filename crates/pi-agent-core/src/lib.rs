@@ -2,7 +2,6 @@ mod agent;
 mod compaction;
 mod context;
 mod execution;
-mod flow;
 mod hooks;
 mod resources;
 #[cfg(any(test, feature = "test-support"))]

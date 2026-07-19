@@ -1,5 +1,14 @@
 # Changes
 
+## 0.4.2 - Unreleased
+
+### Breaking Changes
+
+- Removed the generic `api::flow` graph API and test facade after all production
+  consumers converged on typed runners.
+- Removed compatibility agent-turn node wrappers and `AgentTurnFlow`; the agent
+  loop now runs only through `AgentTurnRunner` and `AgentTurnDecision`.
+
 ## 0.3.0 - 2026-07-17
 
 ### Runtime

@@ -1,8 +1,4 @@
-use std::future::Future;
-use std::pin::Pin;
-
 use futures::StreamExt;
-use pi_agent_core::api::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRunOptions};
 use pi_ai::api::conversation::AssistantMessage;
 use tokio_util::sync::CancellationToken;
 
@@ -23,54 +19,11 @@ use crate::runtime::control::{OperationControl, OperationKind};
 use crate::runtime::facade::{CodingSessionError, PendingDelegationConfirmationState};
 use crate::runtime::scheduler::OperationScheduler;
 use crate::services::event::EventService;
-use crate::services::flow::FlowService;
 use crate::services::plugin::PluginService;
+use crate::services::workflow::WorkflowService;
 use crate::session::id::{Clock, IdGenerator, SystemClock, SystemIdGenerator};
 
-const DEFAULT_ACTION: &str = "default";
 const MAX_TEAM_MEMBER_CONCURRENCY: usize = 2;
-
-pub(crate) const AGENT_TEAM_NODE_IDS: &[&str] = &[
-    "start_team",
-    "plan_subtasks",
-    "run_member_agent",
-    "collect_member_result",
-    "merge_or_reject_result",
-    "finalize_team",
-];
-
-const AGENT_TEAM_NODE_SPECS: &[AgentTeamNodeSpec] = &[
-    AgentTeamNodeSpec {
-        id: "start_team",
-        name: "StartTeam",
-        kind: AgentTeamNodeKind::StartTeam,
-    },
-    AgentTeamNodeSpec {
-        id: "plan_subtasks",
-        name: "PlanSubtasks",
-        kind: AgentTeamNodeKind::PlanSubtasks,
-    },
-    AgentTeamNodeSpec {
-        id: "run_member_agent",
-        name: "RunMemberAgent",
-        kind: AgentTeamNodeKind::RunMemberAgent,
-    },
-    AgentTeamNodeSpec {
-        id: "collect_member_result",
-        name: "CollectMemberResult",
-        kind: AgentTeamNodeKind::CollectMemberResult,
-    },
-    AgentTeamNodeSpec {
-        id: "merge_or_reject_result",
-        name: "MergeOrRejectResult",
-        kind: AgentTeamNodeKind::MergeOrRejectResult,
-    },
-    AgentTeamNodeSpec {
-        id: "finalize_team",
-        name: "FinalizeTeam",
-        kind: AgentTeamNodeKind::FinalizeTeam,
-    },
-];
 
 #[derive(Debug, Clone)]
 pub struct AgentTeamOptions {
@@ -151,27 +104,7 @@ pub struct AgentTeamOutcome {
     pub diagnostics: Vec<CodingDiagnostic>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct AgentTeamNodeSpec {
-    id: &'static str,
-    name: &'static str,
-    kind: AgentTeamNodeKind,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AgentTeamNodeKind {
-    StartTeam,
-    PlanSubtasks,
-    RunMemberAgent,
-    CollectMemberResult,
-    MergeOrRejectResult,
-    FinalizeTeam,
-}
-
-#[allow(dead_code)]
-pub(crate) struct AgentTeamFlow {
-    flow: Flow<AgentTeamContext>,
-}
+pub(crate) struct AgentTeamRunner;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AgentTeamStep {
@@ -183,48 +116,9 @@ enum AgentTeamStep {
     Finalize,
 }
 
-impl AgentTeamFlow {
+impl AgentTeamRunner {
     pub(crate) fn new() -> Result<Self, CodingSessionError> {
-        let mut flow = Flow::new(AGENT_TEAM_NODE_IDS[0]).map_err(flow_error)?;
-        for spec in AGENT_TEAM_NODE_SPECS {
-            flow.add_node(spec.id, AgentTeamNode::new(spec.name, spec.kind))
-                .map_err(flow_error)?;
-        }
-        for pair in AGENT_TEAM_NODE_IDS.windows(2) {
-            flow.edge(pair[0], pair[1]).map_err(flow_error)?;
-        }
-        Ok(Self { flow })
-    }
-
-    #[allow(dead_code)]
-    pub(crate) async fn run(
-        &self,
-        ctx: &mut AgentTeamContext,
-    ) -> Result<FlowOutcome, CodingSessionError> {
-        self.flow.run(ctx).await.map_err(flow_error)
-    }
-
-    #[allow(dead_code)]
-    pub(crate) async fn run_with_cancellation(
-        &self,
-        ctx: &mut AgentTeamContext,
-        cancellation: CancellationToken,
-    ) -> Result<FlowOutcome, CodingSessionError> {
-        let result = self
-            .flow
-            .run_with_options(
-                ctx,
-                FlowRunOptions {
-                    cancel: Some(cancellation),
-                    ..FlowRunOptions::default()
-                },
-            )
-            .await
-            .map_err(flow_error);
-        if let Err(error @ CodingSessionError::Cancelled) = &result {
-            ctx.fail(error.clone());
-        }
-        result
+        Ok(Self)
     }
 
     pub(crate) async fn run_typed(
@@ -252,7 +146,7 @@ impl AgentTeamFlow {
                 AgentTeamStep::Finalize => ctx.finalize_team(),
             };
             if let Err(error) = result {
-                return Err(CodingSessionError::Flow {
+                return Err(CodingSessionError::Workflow {
                     message: ctx.fail(error),
                 });
             }
@@ -265,44 +159,6 @@ impl AgentTeamFlow {
                 AgentTeamStep::Finalize => return Ok(()),
             };
         }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-struct AgentTeamNode {
-    name: &'static str,
-    kind: AgentTeamNodeKind,
-}
-
-impl AgentTeamNode {
-    fn new(name: &'static str, kind: AgentTeamNodeKind) -> Self {
-        Self { name, kind }
-    }
-}
-
-impl FlowNode<AgentTeamContext> for AgentTeamNode {
-    fn name(&self) -> &str {
-        self.name
-    }
-
-    fn run<'a>(
-        &'a self,
-        ctx: &'a mut AgentTeamContext,
-    ) -> Pin<Box<dyn Future<Output = Result<Action, String>> + Send + 'a>> {
-        Box::pin(async move {
-            let result = match self.kind {
-                AgentTeamNodeKind::StartTeam => ctx.start_team(),
-                AgentTeamNodeKind::PlanSubtasks => ctx.plan_subtasks(),
-                AgentTeamNodeKind::RunMemberAgent => ctx.run_member_agents().await,
-                AgentTeamNodeKind::CollectMemberResult => ctx.collect_member_result(),
-                AgentTeamNodeKind::MergeOrRejectResult => ctx.merge_or_reject_result().await,
-                AgentTeamNodeKind::FinalizeTeam => ctx.finalize_team(),
-            };
-            match result {
-                Ok(()) => default_action(),
-                Err(error) => Err(ctx.fail(error)),
-            }
-        })
     }
 }
 
@@ -620,7 +476,7 @@ impl AgentTeamContext {
         child_context.set_capability_snapshot(capability_snapshot);
 
         let mut finished_outcome = None;
-        let child_delegations = match FlowService::new()
+        let child_delegations = match WorkflowService::new()
             .run_prompt_subflow_typed_for_agent_team_member(&mut child_context)
             .await
         {
@@ -772,7 +628,7 @@ impl AgentTeamContext {
         child_delegation_depth: usize,
     ) -> Result<(), CodingSessionError> {
         let outcome = Box::pin(crate::operations::delegation::execution::execute_agent(
-            &FlowService::new(),
+            &WorkflowService::new(),
             self.registry.clone(),
             self.plugin_service.clone(),
             self.event_service.clone(),
@@ -796,7 +652,7 @@ impl AgentTeamContext {
         child_delegation_depth: usize,
     ) -> Result<(), CodingSessionError> {
         let outcome = Box::pin(crate::operations::delegation::execution::execute_team(
-            &FlowService::new(),
+            &WorkflowService::new(),
             self.registry.clone(),
             self.plugin_service.clone(),
             self.event_service.clone(),
@@ -885,19 +741,6 @@ impl AgentTeamContext {
             }
         }
         error.to_string()
-    }
-}
-
-fn default_action() -> Result<Action, String> {
-    Action::new(DEFAULT_ACTION).map_err(|error| error.to_string())
-}
-
-fn flow_error(error: FlowError) -> CodingSessionError {
-    match error {
-        FlowError::Cancelled => CodingSessionError::Cancelled,
-        error => CodingSessionError::Flow {
-            message: error.to_string(),
-        },
     }
 }
 

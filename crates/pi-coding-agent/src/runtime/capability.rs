@@ -214,31 +214,11 @@ pub(crate) struct UiCapability;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct PluginCapabilitySet {
     allow_all: bool,
-    tool_provider_ids: BTreeSet<String>,
-    command_provider_ids: BTreeSet<String>,
-    hook_provider_ids: BTreeSet<String>,
-    ui_provider_ids: BTreeSet<String>,
-    keybind_provider_ids: BTreeSet<String>,
 }
 
 impl PluginCapabilitySet {
     pub(crate) fn permissive() -> Self {
-        Self {
-            allow_all: true,
-            ..Self::default()
-        }
-    }
-
-    pub(crate) fn allows_tool_provider(&self, plugin_id: &str) -> bool {
-        self.allow_all || self.tool_provider_ids.contains(plugin_id)
-    }
-
-    pub(crate) fn allows_command_provider(&self, plugin_id: &str) -> bool {
-        self.allow_all || self.command_provider_ids.contains(plugin_id)
-    }
-
-    pub(crate) fn allows_hook_provider(&self, plugin_id: &str) -> bool {
-        self.allow_all || self.hook_provider_ids.contains(plugin_id)
+        Self { allow_all: true }
     }
 
     pub(crate) fn is_permissive(&self) -> bool {
@@ -247,15 +227,8 @@ impl PluginCapabilitySet {
 }
 
 impl From<&PluginCapabilities> for PluginCapabilitySet {
-    fn from(value: &PluginCapabilities) -> Self {
-        Self {
-            allow_all: false,
-            tool_provider_ids: value.tool_provider_ids.clone(),
-            command_provider_ids: value.command_provider_ids.clone(),
-            hook_provider_ids: value.hook_provider_ids.clone(),
-            ui_provider_ids: value.ui_provider_ids.clone(),
-            keybind_provider_ids: value.keybind_provider_ids.clone(),
-        }
+    fn from(_value: &PluginCapabilities) -> Self {
+        Self::default()
     }
 }
 
@@ -498,19 +471,7 @@ mod tests {
                     | OperationKind::SelfHealingEdit
             ),
             model_profile_id: Some(ProfileId::from("reviewer")),
-            plugin_capabilities: PluginCapabilities {
-                tool_providers: 1,
-                command_providers: 1,
-                hook_providers: 1,
-                ui_providers: 0,
-                keybind_providers: 0,
-                diagnostics: 0,
-                tool_provider_ids: BTreeSet::from(["tools-plugin".into()]),
-                command_provider_ids: BTreeSet::from(["commands-plugin".into()]),
-                hook_provider_ids: BTreeSet::from(["hooks-plugin".into()]),
-                ui_provider_ids: BTreeSet::new(),
-                keybind_provider_ids: BTreeSet::new(),
-            },
+            plugin_capabilities: PluginCapabilities::new(),
             persistent_session: true,
             cwd: Some(std::path::PathBuf::from("/workspace")),
             shell_path: None,
@@ -542,8 +503,7 @@ mod tests {
         assert!(snapshot.shell.is_none());
         assert!(snapshot.session_read.is_some());
         assert!(snapshot.session_write.is_some());
-        assert!(snapshot.plugin.allows_tool_provider("tools-plugin"));
-        assert!(!snapshot.plugin.allows_tool_provider("other-plugin"));
+        assert!(!snapshot.plugin.is_permissive());
     }
 
     #[test]

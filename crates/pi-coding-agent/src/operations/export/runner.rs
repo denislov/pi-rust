@@ -1,8 +1,4 @@
-use std::future::Future;
 use std::path::{Path, PathBuf};
-use std::pin::Pin;
-
-use pi_agent_core::api::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome};
 
 use super::{
     CodingAgentSessionExport, export_from_replay, render_export_html, write_rendered_export_html,
@@ -10,67 +6,6 @@ use super::{
 use crate::runtime::error::CodingSessionError;
 use crate::runtime::facade::context::CodingAgentSessionSummary;
 use crate::session::replay::SessionReplay;
-
-const DEFAULT_ACTION: &str = "default";
-
-pub(crate) const EXPORT_NODE_IDS: &[&str] = &[
-    "start_export",
-    "load_session_replay",
-    "select_export_view",
-    "render_export",
-    "write_export",
-    "emit_completion",
-];
-
-const EXPORT_NODE_SPECS: &[ExportNodeSpec] = &[
-    ExportNodeSpec {
-        id: "start_export",
-        name: "StartExport",
-        kind: ExportNodeKind::StartExport,
-    },
-    ExportNodeSpec {
-        id: "load_session_replay",
-        name: "LoadSessionReplay",
-        kind: ExportNodeKind::LoadSessionReplay,
-    },
-    ExportNodeSpec {
-        id: "select_export_view",
-        name: "SelectExportView",
-        kind: ExportNodeKind::SelectExportView,
-    },
-    ExportNodeSpec {
-        id: "render_export",
-        name: "RenderExport",
-        kind: ExportNodeKind::RenderExport,
-    },
-    ExportNodeSpec {
-        id: "write_export",
-        name: "WriteExport",
-        kind: ExportNodeKind::WriteExport,
-    },
-    ExportNodeSpec {
-        id: "emit_completion",
-        name: "EmitCompletion",
-        kind: ExportNodeKind::EmitCompletion,
-    },
-];
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ExportNodeSpec {
-    id: &'static str,
-    name: &'static str,
-    kind: ExportNodeKind,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ExportNodeKind {
-    StartExport,
-    LoadSessionReplay,
-    SelectExportView,
-    RenderExport,
-    WriteExport,
-    EmitCompletion,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ExportOptions {
@@ -231,16 +166,9 @@ impl ExportContext {
         self.written_path = Some(write_rendered_export_html(&html, &path)?);
         Ok(())
     }
-
-    fn emit_completion(&mut self) -> Result<(), CodingSessionError> {
-        self.finish_success().map(|_| ())
-    }
 }
 
-pub(crate) struct ExportFlow {
-    #[allow(dead_code)]
-    flow: Flow<ExportContext>,
-}
+pub(crate) struct ExportRunner;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExportStep {
@@ -252,20 +180,9 @@ enum ExportStep {
     EmitCompletion,
 }
 
-impl ExportFlow {
+impl ExportRunner {
     pub(crate) fn new() -> Result<Self, CodingSessionError> {
-        let mut flow = Flow::new(EXPORT_NODE_IDS[0]).map_err(flow_error)?;
-        for spec in EXPORT_NODE_SPECS {
-            flow.add_node(spec.id, ExportNode::new(spec.name, spec.kind))
-                .map_err(flow_error)?;
-        }
-        crate::services::flow::add_linear_edges(&mut flow, EXPORT_NODE_IDS)?;
-        Ok(Self { flow })
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn run(&self, ctx: &mut ExportContext) -> Result<FlowOutcome, CodingSessionError> {
-        futures::executor::block_on(self.flow.run(ctx)).map_err(flow_error)
+        Ok(Self)
     }
 
     pub(crate) fn run_typed(
@@ -284,7 +201,7 @@ impl ExportFlow {
             };
             if let Err(error) = result {
                 let message = ctx.fail(error.clone());
-                return Err(CodingSessionError::Flow { message });
+                return Err(CodingSessionError::Workflow { message });
             }
             step = match step {
                 ExportStep::Start => ExportStep::LoadReplay,
@@ -295,53 +212,5 @@ impl ExportFlow {
                 ExportStep::EmitCompletion => unreachable!(),
             };
         }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-struct ExportNode {
-    name: &'static str,
-    kind: ExportNodeKind,
-}
-
-impl ExportNode {
-    fn new(name: &'static str, kind: ExportNodeKind) -> Self {
-        Self { name, kind }
-    }
-}
-
-impl FlowNode<ExportContext> for ExportNode {
-    fn name(&self) -> &str {
-        self.name
-    }
-
-    fn run<'a>(
-        &'a self,
-        ctx: &'a mut ExportContext,
-    ) -> Pin<Box<dyn Future<Output = Result<Action, String>> + Send + 'a>> {
-        Box::pin(async move {
-            let result = match self.kind {
-                ExportNodeKind::StartExport => ctx.start_export(),
-                ExportNodeKind::LoadSessionReplay => ctx.load_session_replay(),
-                ExportNodeKind::SelectExportView => ctx.select_export_view(),
-                ExportNodeKind::RenderExport => ctx.render_export(),
-                ExportNodeKind::WriteExport => ctx.write_export(),
-                ExportNodeKind::EmitCompletion => ctx.emit_completion(),
-            };
-            match result {
-                Ok(()) => default_action(),
-                Err(error) => Err(ctx.fail(error)),
-            }
-        })
-    }
-}
-
-fn default_action() -> Result<Action, String> {
-    Action::new(DEFAULT_ACTION).map_err(|error| error.to_string())
-}
-
-fn flow_error(error: FlowError) -> CodingSessionError {
-    CodingSessionError::Flow {
-        message: error.to_string(),
     }
 }

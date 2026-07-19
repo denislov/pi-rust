@@ -3,24 +3,23 @@ use crate::runtime::capability::{OperationCapabilitySnapshot, SessionWriteCapabi
 use crate::runtime::control::OperationCancellationHandle;
 use crate::runtime::facade::CodingSessionError;
 use crate::services::event::EventService;
-use crate::services::flow::FlowService;
-use crate::services::plugin::{PluginDiagnostic, PluginService};
+use crate::services::plugin::PluginDiagnostic;
+use crate::services::workflow::WorkflowService;
 use crate::session::event::PersistedPluginDiagnostic;
 use crate::session::service::{SessionPersistence, SessionService};
 use tokio_util::sync::CancellationToken;
 
-pub(crate) mod flow;
+pub(crate) mod runner;
 
-use flow::{PluginLoadContext, PluginLoadOptions, PluginLoadOutcome};
+use runner::{PluginLoadContext, PluginLoadOptions, PluginLoadOutcome};
 
 pub(crate) struct PluginLoadExecution {
     pub(crate) outcome: PluginLoadOutcome,
-    pub(crate) loaded_plugin_service: Option<PluginService>,
 }
 
 pub(crate) async fn run(
     persistence: &mut SessionPersistence,
-    flow_service: &FlowService,
+    workflow_service: &WorkflowService,
     event_service: &EventService,
     options: PluginLoadOptions,
     snapshot: &OperationCapabilitySnapshot,
@@ -39,11 +38,11 @@ pub(crate) async fn run(
     let mut context = PluginLoadContext::new(options);
     let mut outcome = match match cancellation.as_ref() {
         Some(cancellation) => {
-            flow_service
+            workflow_service
                 .run_plugin_load_with_cancellation(&mut context, cancellation.clone())
                 .await
         }
-        None => flow_service.run_plugin_load(&mut context).await,
+        None => workflow_service.run_plugin_load(&mut context).await,
     } {
         Ok(outcome) => outcome,
         Err(error) => {
@@ -134,11 +133,7 @@ pub(crate) async fn run(
             session_service.commit_plugin_load_transaction(Some(transaction), &operation_id)?;
         event_service.emit_session_write_events(&finalized);
     }
-    let loaded_plugin_service = context.take_loaded_plugin_service();
-    Ok(PluginLoadExecution {
-        outcome,
-        loaded_plugin_service,
-    })
+    Ok(PluginLoadExecution { outcome })
 }
 
 fn persisted_plugin_diagnostics(

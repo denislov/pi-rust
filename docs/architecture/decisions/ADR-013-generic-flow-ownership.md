@@ -1,5 +1,9 @@
 # ADR-013: Generic Flow Ownership And Migration
 
+Status: **superseded by `CLC-042-001` in 0.4.2**. This ADR records the temporary
+0.4.1 migration decision. Once all production consumers used typed runners,
+the generic Flow implementation and compatibility API were deleted.
+
 ## Status
 
 Accepted 2026-07-19 for `0.4.1` `AWC-004`.

@@ -47,8 +47,14 @@
   calling the lease-backed UI Host boundary. This raises the MSRV to Rust 1.94.
 - Reduced later Extension scope: contribution parity, advanced services/state,
   extension-driven Workbench, full Extension DX, and full runtime baselines are
-  explicitly Skipped. Lua/native extension infrastructure removal and obsolete
-  generic Flow cleanup remain required 0.4.2 convergence work.
+  explicitly Skipped.
+- Completed `EKR-007`: removed `mlua`, Lua discovery/execution, runtime/source
+  selection, native Rust contribution-provider traits and registries, and their
+  compatibility fixtures. PluginLoad now reloads only durable Wasm activation.
+- Completed `CLC-042-001`: removed the generic `pi-agent-core` Flow engine and
+  public facade, replaced the remaining agent action with `AgentTurnDecision`,
+  renamed product operation modules to typed runners, and converged
+  `FlowService` to `WorkflowService` with absence guards.
 - Workspace packages remain at `0.4.1` until all 0.4.2 implementation, debt,
   conformance, and release gates close.
 

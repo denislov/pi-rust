@@ -23,11 +23,6 @@ pub mod tool {
     };
 }
 
-/// Generic typed orchestration graph used by product-owned operations.
-pub mod flow {
-    pub use crate::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRunOptions};
-}
-
 /// Capability-neutral filesystem and shell execution contracts plus output
 /// shaping helpers used by coding tools.
 pub mod execution {
@@ -91,11 +86,8 @@ pub mod transcript {
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing {
     pub use crate::agent::turn::{
-        AgentTurnContext, AgentTurnFlow, AgentTurnProviderRequestOverride,
-        ApplyBeforeProviderRequestHookNode, DecideAfterAssistantNode, DrainQueuedInputNode,
-        ExecuteToolsNode, MaybeCompactRuntimeContextNode, MaybePrepareNextTurnNode,
-        PendingToolCall, PrepareProviderRequestNode, ProviderStreamNode, RuntimeCompactionState,
-        StartTurnNode, apply_before_provider_request_hook, decide_after_assistant,
+        AgentTurnContext, AgentTurnDecision, AgentTurnProviderRequestOverride, PendingToolCall,
+        RuntimeCompactionState, apply_before_provider_request_hook, decide_after_assistant,
         drain_queued_input, execute_tools, maybe_compact_runtime_context, maybe_prepare_next_turn,
         prepare_provider_request, start_turn, stream_provider,
     };
@@ -107,7 +99,6 @@ pub mod testing {
         build_session_context,
     };
     pub use crate::execution::capture::bash_execution_to_text;
-    pub use crate::flow::{FlowEvent, FlowEventCallback, NodeId};
     pub use crate::testing::environment::InMemoryExecutionEnv;
     pub use crate::testing::harness::{
         AbortResult, AgentHarness, AgentHarnessEvent, AgentHarnessHooks, AgentHarnessPhase,

@@ -254,17 +254,6 @@ fn production_and_examples_use_only_item_allowlisted_upstream_contracts() {
             ],
         ),
         (
-            "flow",
-            &[
-                "Action",
-                "Flow",
-                "FlowError",
-                "FlowNode",
-                "FlowOutcome",
-                "FlowRunOptions",
-            ],
-        ),
-        (
             "resources",
             &[
                 "AgentResources",
@@ -282,7 +271,7 @@ fn production_and_examples_use_only_item_allowlisted_upstream_contracts() {
                 "substitute_args",
             ],
         ),
-        ("testing", &["FlowEvent", "InMemoryExecutionEnv", "NodeId"]),
+        ("testing", &["InMemoryExecutionEnv"]),
         (
             "tool",
             &[
@@ -857,7 +846,7 @@ fn self_healing_model_repair_uses_scoped_runtime_streaming() {
     let scan = SourceScan::new();
     let self_healing = fs::read_to_string(
         scan.crate_root
-            .join("src/operations/self_healing_edit/flow.rs"),
+            .join("src/operations/self_healing_edit/runner.rs"),
     )
     .expect("read self-healing edit flow source");
 
@@ -904,11 +893,11 @@ fn scoped_runtime_streaming_helper_uses_ai_client_without_global_stream_model() 
 fn summary_product_flows_use_scoped_runtime_streamer() {
     let scan = SourceScan::new();
     let manual_compaction =
-        fs::read_to_string(scan.crate_root.join("src/operations/compaction/flow.rs"))
+        fs::read_to_string(scan.crate_root.join("src/operations/compaction/runner.rs"))
             .expect("read manual compaction flow source");
     let branch_summary = fs::read_to_string(
         scan.crate_root
-            .join("src/operations/branch_summary/flow.rs"),
+            .join("src/operations/branch_summary/runner.rs"),
     )
     .expect("read branch summary flow source");
 

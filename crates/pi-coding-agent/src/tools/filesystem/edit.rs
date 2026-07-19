@@ -1,6 +1,6 @@
-use crate::operations::self_healing_edit::flow::{
-    SelfHealingEditContext, SelfHealingEditFlow, SelfHealingEditOptions, SelfHealingEditOutcome,
-    SelfHealingEditReplacement,
+use crate::operations::self_healing_edit::runner::{
+    SelfHealingEditContext, SelfHealingEditOptions, SelfHealingEditOutcome,
+    SelfHealingEditReplacement, SelfHealingEditRunner,
 };
 use crate::runtime::capability::FilesystemCapability;
 use crate::runtime::facade::CodingSessionError;
@@ -320,8 +320,8 @@ async fn edit_tool_execute_with_operations(
     let options =
         SelfHealingEditOptions::new(cwd.to_path_buf(), path, replacements).with_operations(ops);
     let mut context = SelfHealingEditContext::new(options);
-    let flow = SelfHealingEditFlow::new().map_err(|error| error.to_string())?;
-    match flow.run_typed(&mut context, None).await {
+    let runner = SelfHealingEditRunner::new().map_err(|error| error.to_string())?;
+    match runner.run_typed(&mut context, None).await {
         Ok(_) => context
             .finish_success()
             .map(self_healing_outcome_to_tool_output)
@@ -342,7 +342,7 @@ fn coding_session_error_message(error: CodingSessionError) -> String {
         | CodingSessionError::SelfHealingEditFailed { message, .. }
         | CodingSessionError::Provider { message }
         | CodingSessionError::Tool { message }
-        | CodingSessionError::Flow { message }
+        | CodingSessionError::Workflow { message }
         | CodingSessionError::Plugin { message } => message,
         CodingSessionError::Cancelled => "cancelled".to_owned(),
         CodingSessionError::UnsupportedCapability { capability } => {

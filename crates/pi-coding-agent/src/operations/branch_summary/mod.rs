@@ -1,4 +1,4 @@
-use self::flow::{
+use self::runner::{
     BranchSummaryContext, BranchSummaryOptions, branch_summary_failed_outcome,
     branch_summary_outcome_text, branch_summary_success_outcome,
 };
@@ -9,13 +9,13 @@ use crate::runtime::capability::{
 use crate::runtime::control::OperationCancellationHandle;
 use crate::runtime::facade::CodingSessionError;
 use crate::services::event::EventService;
-use crate::services::flow::FlowService;
 use crate::services::session::apply_finalized_session_write;
+use crate::services::workflow::WorkflowService;
 use crate::session::id::{IdGenerator, SystemIdGenerator};
 use crate::session::service::{SessionPersistence, SessionService};
 use tokio_util::sync::CancellationToken;
 
-pub(crate) mod flow;
+pub(crate) mod runner;
 
 pub(crate) fn reused_outcome(
     persistence: &SessionPersistence,
@@ -48,7 +48,7 @@ pub(crate) fn reused_outcome(
 
 pub(crate) async fn run(
     session_service: &mut SessionService,
-    flow_service: &FlowService,
+    workflow_service: &WorkflowService,
     event_service: &EventService,
     options: PromptTurnOptions,
     source_leaf_id: String,
@@ -77,11 +77,11 @@ pub(crate) async fn run(
 
     let result = match cancellation.as_ref() {
         Some(cancellation) => {
-            flow_service
+            workflow_service
                 .run_branch_summary_with_cancellation(&mut context, cancellation.clone())
                 .await
         }
-        None => flow_service.run_branch_summary(&mut context).await,
+        None => workflow_service.run_branch_summary(&mut context).await,
     };
     match result {
         Ok(branch_summary) => {

@@ -4,19 +4,19 @@ use crate::profiles::{ProfileId, ProfileKind};
 use crate::runtime::capability::{OperationCapabilitySnapshot, SessionReadCapability};
 use crate::runtime::error::CodingSessionError;
 use crate::runtime::facade::context::CodingAgentSessionSummary;
-use crate::services::flow::FlowService;
+use crate::services::workflow::WorkflowService;
 use crate::session::event::{DiagnosticLevel, PersistedContentBlock, PersistedDelegationStatus};
 use crate::session::replay::{MessageStatus, SessionReplay, ToolCallStatus, TranscriptItem};
 use crate::session::service::SessionPersistence;
 
-pub(crate) mod flow;
+pub(crate) mod runner;
 
 pub(crate) fn run(
-    options: flow::ExportOptions,
+    options: runner::ExportOptions,
     snapshot: &OperationCapabilitySnapshot,
     persistence: &SessionPersistence,
-    flow_service: &FlowService,
-) -> Result<flow::ExportOutcome, CodingSessionError> {
+    workflow_service: &WorkflowService,
+) -> Result<runner::ExportOutcome, CodingSessionError> {
     SessionReadCapability::require(snapshot.session_read.as_ref())?;
     let SessionPersistence::Persistent(session_service) = persistence else {
         return Err(CodingSessionError::UnsupportedCapability {
@@ -24,7 +24,7 @@ pub(crate) fn run(
         });
     };
     let mut context = session_service.export_context(options)?;
-    flow_service.run_export(&mut context)
+    workflow_service.run_export(&mut context)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -339,7 +339,7 @@ display_name = "Coder"
     assert!(output.contains("agent reply"), "{output:?}");
     assert!(output.contains("status: idle"), "{output:?}");
     assert!(
-        !output.contains("requires AgentInvocationFlow"),
+        !output.contains("requires AgentInvocationRunner"),
         "{output:?}"
     );
 }
@@ -397,7 +397,7 @@ members = ["coder", "reviewer"]
     assert!(output.contains("coder reply"), "{output:?}");
     assert!(output.contains("reviewer reply"), "{output:?}");
     assert!(output.contains("status: idle"), "{output:?}");
-    assert!(!output.contains("requires AgentTeamFlow"), "{output:?}");
+    assert!(!output.contains("requires AgentTeamRunner"), "{output:?}");
 }
 
 #[tokio::test]

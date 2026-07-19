@@ -241,7 +241,7 @@ impl IntentRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::operations::export::flow::ExportOptions;
+    use crate::operations::export::runner::ExportOptions;
     use crate::runtime::control::{OperationKind, PromptControlCommand};
     use crate::runtime::operation::OperationDispatchMode;
     use crate::runtime::operation::{Operation, OperationClass};

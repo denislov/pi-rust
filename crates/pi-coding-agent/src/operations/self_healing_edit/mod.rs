@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use self::flow::{
+use self::runner::{
     ModelSelfHealingEditRepairStrategy, PlannedSelfHealingEditRepairStrategy,
     SelfHealingEditContext, SelfHealingEditOptions, SelfHealingEditOutcome,
     SelfHealingEditRepairStrategy, SelfHealingEditReplacement,
@@ -12,12 +12,12 @@ use crate::runtime::capability::{
 use crate::runtime::control::OperationCancellationHandle;
 use crate::runtime::facade::CodingSessionError;
 use crate::services::event::{EventService, SelfHealingEditEventObserver};
-use crate::services::flow::FlowService;
 use crate::services::session::{default_cwd, session_cwd};
+use crate::services::workflow::WorkflowService;
 use crate::session::service::{FinalizedSessionWrite, SessionService};
 use tokio_util::sync::CancellationToken;
 
-pub(crate) mod flow;
+pub(crate) mod runner;
 
 pub(crate) struct SelfHealingEditExecution {
     pub(crate) result: Result<SelfHealingEditOutcome, CodingSessionError>,
@@ -27,7 +27,7 @@ pub(crate) struct SelfHealingEditExecution {
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run(
     session_service: &mut SessionService,
-    flow_service: &FlowService,
+    workflow_service: &WorkflowService,
     event_service: EventService,
     path: String,
     replacements: Vec<SelfHealingEditReplacement>,
@@ -80,11 +80,11 @@ pub(crate) async fn run(
 
     let result = match cancellation.as_ref() {
         Some(cancellation) => {
-            flow_service
+            workflow_service
                 .run_self_healing_edit_with_cancellation(&mut context, cancellation.clone())
                 .await
         }
-        None => flow_service.run_self_healing_edit(&mut context).await,
+        None => workflow_service.run_self_healing_edit(&mut context).await,
     };
     match result {
         Ok(outcome) => {

@@ -670,12 +670,10 @@ fn implementation_modules_stay_private_and_retired_roots_stay_absent() {
 
     let plugins_source = fs::read_to_string(crate_root.join("src/plugins/mod.rs"))
         .expect("plugins module should be readable");
-    for owner in ["contributions", "manifest"] {
-        assert!(
-            plugins_source.contains(&format!("mod {owner};")),
-            "plugin owner `{owner}` must remain declared"
-        );
-    }
+    assert!(
+        plugins_source.contains("mod contributions;"),
+        "plugin contribution DTO owner must remain declared"
+    );
     for retired in ["command", "hook", "keybind", "tool", "ui"] {
         assert!(
             !plugins_source.contains(&format!("mod {retired};"))
@@ -837,7 +835,7 @@ fn stable_api_excludes_internal_runtime_contracts() {
         "PluginService",
         "PluginLoadService",
         "CapabilityService",
-        "FlowService",
+        "WorkflowService",
         "ProfileRegistry",
         "ProfileRegistryOptions",
         "PluginRegistry",

@@ -508,13 +508,11 @@ fn flush_replay_hydration_group(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
-    use std::sync::Arc;
-
     use pi_agent_core::api::agent::AgentResources;
     use pi_agent_core::api::tool::{AgentTool, ToolExecutionMode};
     use pi_ai::api::auth::ProviderAuthDiagnostic;
     use pi_ai::api::model::{Model, ModelCost, ModelInput};
+    use std::collections::HashSet;
 
     use super::*;
     use crate::app::bootstrap::{PromptInvocation, SessionRunOptions};
@@ -719,95 +717,6 @@ mod tests {
             diagnostics,
             vec![("api_key".into(), "auth.toml:oauth".into())]
         );
-    }
-
-    struct RuntimeToolProvider;
-
-    impl crate::plugins::ToolProvider for RuntimeToolProvider {
-        fn metadata(&self) -> crate::plugins::PluginMetadata {
-            crate::plugins::PluginMetadata::new(
-                crate::plugins::PluginId::new("runtime-plugin"),
-                "runtime-plugin",
-                "0.1.0",
-                crate::plugins::PluginSource::FirstParty,
-            )
-        }
-
-        fn tools(
-            &self,
-            _host: &crate::plugins::ToolRegistrationHost,
-        ) -> Result<Vec<AgentTool>, crate::plugins::PluginError> {
-            Ok(vec![AgentTool::new_text(
-                "plugin_echo",
-                "plugin echo tool",
-                serde_json::json!({"type": "object"}),
-                |_, _| async { Ok("plugin output".to_string()) },
-            )])
-        }
-    }
-
-    struct InvalidRuntimeToolProvider;
-
-    impl crate::plugins::ToolProvider for InvalidRuntimeToolProvider {
-        fn metadata(&self) -> crate::plugins::PluginMetadata {
-            crate::plugins::PluginMetadata::new(
-                crate::plugins::PluginId::new("invalid-runtime-plugin"),
-                "invalid-runtime-plugin",
-                "0.1.0",
-                crate::plugins::PluginSource::FirstParty,
-            )
-        }
-
-        fn tools(
-            &self,
-            _host: &crate::plugins::ToolRegistrationHost,
-        ) -> Result<Vec<AgentTool>, crate::plugins::PluginError> {
-            Ok(vec![AgentTool::new_text(
-                " ",
-                "invalid empty-name plugin tool",
-                serde_json::json!({"type": "object"}),
-                |_, _| async { Ok("plugin output".to_string()) },
-            )])
-        }
-    }
-
-    #[test]
-    fn build_agent_runtime_with_plugins_merges_plugin_tools_into_provider_context() {
-        let service = RuntimeService::new();
-        let runtime = runtime_snapshot("runtime-plugin-tools");
-        let mut registry = crate::plugins::PluginRegistry::new();
-        registry.register_tool_provider(Arc::new(RuntimeToolProvider));
-        let plugin_service = crate::services::plugin::PluginService::with_registry(registry);
-
-        let agent = service
-            .build_agent_runtime_with_plugins(&runtime, &plugin_service)
-            .unwrap();
-
-        let (context, _) = agent.provider_request_snapshot();
-        let tool_names: Vec<_> = context
-            .tools
-            .expect("plugin tools should be exposed to provider context")
-            .into_iter()
-            .map(|tool| tool.name)
-            .collect();
-        assert_eq!(tool_names, vec!["plugin_echo"]);
-    }
-
-    #[test]
-    fn build_agent_runtime_rejects_invalid_plugin_tools() {
-        let service = RuntimeService::new();
-        let runtime = runtime_snapshot("runtime-invalid-plugin-tools");
-        let mut registry = crate::plugins::PluginRegistry::new();
-        registry.register_tool_provider(Arc::new(InvalidRuntimeToolProvider));
-        let plugin_service = crate::services::plugin::PluginService::with_registry(registry);
-
-        let error = match service.build_agent_runtime_with_plugins(&runtime, &plugin_service) {
-            Ok(_) => panic!("invalid plugin tool should be rejected"),
-            Err(error) => error,
-        };
-
-        assert!(matches!(error, CodingSessionError::Tool { .. }));
-        assert!(error.to_string().contains("tool name"));
     }
 
     #[test]

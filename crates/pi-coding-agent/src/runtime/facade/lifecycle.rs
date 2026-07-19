@@ -164,7 +164,7 @@ impl CodingAgentSession {
     ) -> Result<PathBuf, CodingSessionError> {
         let session_service = SessionService::open(&options)?;
         let mut context = session_service.export_context(ExportOptions::html(path.as_ref()))?;
-        let outcome = FlowService::new().run_export(&mut context)?;
+        let outcome = WorkflowService::new().run_export(&mut context)?;
         outcome.path.ok_or_else(|| CodingSessionError::Session {
             message: "export completed without a written html path".into(),
         })
@@ -215,7 +215,7 @@ impl CodingAgentSession {
                     pending_submission: None,
                 },
                 runtime_service,
-                flow_service: FlowService::new(),
+                workflow_service: WorkflowService::new(),
                 capability_service: CapabilityService::new(),
                 plugin_service: PluginService::new(),
                 profile_registry,
@@ -281,7 +281,7 @@ impl CodingAgentSession {
                     pending_submission: None,
                 },
                 runtime_service,
-                flow_service: FlowService::new(),
+                workflow_service: WorkflowService::new(),
                 capability_service: CapabilityService::new(),
                 plugin_service: PluginService::new(),
                 profile_registry,
@@ -296,14 +296,8 @@ impl CodingAgentSession {
 }
 
 fn default_plugin_load_options(options: &CodingAgentSessionOptions) -> PluginLoadOptions {
-    let cwd = options
-        .cwd()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(default_cwd);
-    let paths = crate::config::resolve_paths(&cwd);
+    let _ = options;
     PluginLoadOptions::new()
-        .with_discovery_root(paths.project_dir.join("plugins"), PluginSource::Project)
-        .with_discovery_root(paths.global_dir.join("plugins"), PluginSource::User)
 }
 
 fn profile_registry_for_options(

@@ -1595,7 +1595,7 @@ mod tests {
 
         let result: Result<(), CodingSessionError> = (|| {
             let _guard = state.begin(OperationKind::Compact, "op_test".into())?;
-            Err(CodingSessionError::Flow {
+            Err(CodingSessionError::Workflow {
                 message: "node failed".into(),
             })
         })();

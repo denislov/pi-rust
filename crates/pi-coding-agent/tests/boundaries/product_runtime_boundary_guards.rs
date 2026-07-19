@@ -25,6 +25,95 @@ struct MethodExpectation {
 }
 
 #[test]
+fn legacy_extension_and_generic_flow_implementations_cannot_return() {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = crate_root
+        .parent()
+        .and_then(Path::parent)
+        .expect("coding-agent crate should be in the workspace");
+    let manifest =
+        fs::read_to_string(crate_root.join("Cargo.toml")).expect("read pi-coding-agent manifest");
+    assert!(
+        !manifest.contains("mlua"),
+        "Lua runtime dependency must stay deleted"
+    );
+
+    let forbidden_extension_symbols = [
+        "PluginRegistry",
+        "PluginSource",
+        "ToolProvider",
+        "CommandProvider",
+        "HookProvider",
+        "UiProvider",
+        "KeybindProvider",
+        "LuaToolProvider",
+        "LuaCommandProvider",
+    ];
+    let forbidden_flow_symbols = [
+        "pi_agent_core::api::flow",
+        "crate::flow",
+        "FlowNode",
+        "FlowOutcome",
+        "FlowRunOptions",
+        "FlowService",
+        "AgentTurnFlow",
+    ];
+
+    let mut violations = Vec::new();
+    for root in [
+        crate_root.join("src"),
+        repo_root.join("crates/pi-agent-core/src"),
+    ] {
+        for path in rust_files_under(&root) {
+            let source = fs::read_to_string(&path).expect("read production Rust source");
+            for forbidden in forbidden_extension_symbols
+                .iter()
+                .chain(forbidden_flow_symbols.iter())
+            {
+                if source.contains(forbidden) {
+                    violations.push(format!(
+                        "{} contains {forbidden}",
+                        relative_path(repo_root, &path)
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "legacy extension/Flow code returned:\n{}",
+        violations.join("\n")
+    );
+
+    for removed in [
+        "crates/pi-agent-core/src/flow",
+        "crates/pi-coding-agent/src/services/flow.rs",
+    ] {
+        assert!(
+            !repo_root.join(removed).exists(),
+            "removed path returned: {removed}"
+        );
+    }
+    for operation in [
+        "agent_invocation",
+        "branch_summary",
+        "compaction",
+        "export",
+        "plugin_load",
+        "prompt",
+        "self_healing_edit",
+        "team_invocation",
+    ] {
+        assert!(
+            !crate_root
+                .join(format!("src/operations/{operation}/flow.rs"))
+                .exists(),
+            "typed operation must not regain a Flow wrapper: {operation}"
+        );
+    }
+}
+
+#[test]
 fn extension_host_handles_are_lease_only_and_service_free() {
     let source =
         fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/extensions/host.rs"))
@@ -50,7 +139,7 @@ fn extension_host_handles_are_lease_only_and_service_free() {
         "AiClient",
         "Repository",
         "OperationControl",
-        "FlowService",
+        "WorkflowService",
         "Sender<",
         "Receiver<",
         "Arc<dyn",
@@ -847,7 +936,7 @@ fn production_interactive_uses_canonical_operations() {
                     "PluginLoadOptions",
                     "OperationDescriptor",
                     "OperationExecution",
-                    "FlowService",
+                    "WorkflowService",
                     "SessionService",
                     "EventService",
                     "CapabilityService",
@@ -1110,8 +1199,8 @@ fn model_provider_paths_require_the_frozen_model_handle() {
     let scan = SourceScan::new();
     let owners = [
         "src/services/runtime.rs",
-        "src/operations/compaction/flow.rs",
-        "src/operations/branch_summary/flow.rs",
+        "src/operations/compaction/runner.rs",
+        "src/operations/branch_summary/runner.rs",
         "src/operations/self_healing_edit/mod.rs",
     ];
 
@@ -1187,29 +1276,6 @@ fn plugin_command_paths_use_capability_aware_execution() {
         !source.contains(".run_command(\""),
         "plugin command execution must not bypass capability-aware dispatch with bare .run_command( calls"
     );
-}
-
-#[test]
-fn frozen_plugin_capabilities_authorize_exact_provider_identities() {
-    let scan = SourceScan::new();
-    let capability = fs::read_to_string(scan.crate_root.join("src/runtime/capability.rs"))
-        .expect("read capability source");
-    let service = fs::read_to_string(scan.crate_root.join("src/services/plugin.rs"))
-        .expect("read plugin service source");
-
-    for category in ["tool", "command", "hook"] {
-        assert!(
-            capability.contains(&format!("{category}_provider_ids: BTreeSet<String>")),
-            "frozen plugin capability must retain exact {category} provider IDs"
-        );
-        assert!(
-            service.contains(&format!("allows_{category}_provider(&plugin_id)")),
-            "plugin service must filter {category} providers by frozen identity"
-        );
-    }
-    assert!(service.contains("provider_ids(self.registry.tool_providers())"));
-    assert!(service.contains("provider_ids(self.registry.command_providers())"));
-    assert!(service.contains("provider_ids(self.registry.hook_providers())"));
 }
 
 #[test]
@@ -2281,8 +2347,8 @@ fn durable_operation_paths_consume_admitted_identity_without_regeneration() {
     assert_direct_cfg_test(&transaction, "pub(crate) fn begin_with_runtime_generation(");
 
     for relative in [
-        "src/operations/agent_invocation/flow.rs",
-        "src/operations/team_invocation/flow.rs",
+        "src/operations/agent_invocation/runner.rs",
+        "src/operations/team_invocation/runner.rs",
     ] {
         let source = fs::read_to_string(scan.crate_root.join(relative))
             .expect("read invocation flow source");
@@ -2700,8 +2766,8 @@ fn delegated_child_flows_require_scheduler_lineage_admission() {
     }
 
     for relative in [
-        "src/operations/agent_invocation/flow.rs",
-        "src/operations/team_invocation/flow.rs",
+        "src/operations/agent_invocation/runner.rs",
+        "src/operations/team_invocation/runner.rs",
     ] {
         let source = fs::read_to_string(scan.crate_root.join(relative))
             .expect("read delegated child flow source");

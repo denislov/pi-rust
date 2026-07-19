@@ -2,9 +2,9 @@ use super::{
     DelegationLineageEntry, PendingDelegationConfirmationState,
     capability_snapshot_for_child_operation,
 };
-use crate::operations::agent_invocation::flow::{AgentInvocationContext, AgentInvocationOptions};
+use crate::operations::agent_invocation::runner::{AgentInvocationContext, AgentInvocationOptions};
 use crate::operations::prompt::context::{DelegationRequest, PromptTurnOptions};
-use crate::operations::team_invocation::flow::{AgentTeamContext, AgentTeamOptions};
+use crate::operations::team_invocation::runner::{AgentTeamContext, AgentTeamOptions};
 use crate::profiles::{ProfileKind, ProfileRegistry};
 use crate::runtime::capability::{OperationCapabilitySnapshot, SessionWriteCapability};
 use crate::runtime::control::{OperationControl, OperationKind};
@@ -14,9 +14,9 @@ use crate::runtime::session_coordinator::{
     SessionCoordinator, SessionWriterCommand, SessionWriterReply,
 };
 use crate::services::event::EventService;
-use crate::services::flow::FlowService;
 use crate::services::plugin::PluginService;
 use crate::services::runtime::RuntimeService;
+use crate::services::workflow::WorkflowService;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ApprovedDelegationExecution {
@@ -31,7 +31,7 @@ pub(crate) struct ApprovedDelegationExecutionOutcome {
 }
 
 pub(crate) async fn execute_agent(
-    flow_service: &FlowService,
+    workflow_service: &WorkflowService,
     profile_registry: ProfileRegistry,
     plugin_service: PluginService,
     event_service: EventService,
@@ -88,11 +88,11 @@ pub(crate) async fn execute_agent(
     let result = match child_admission.cancellation_token() {
         Some(cancellation) => {
             Box::pin(
-                flow_service.run_agent_invocation_with_cancellation(&mut context, cancellation),
+                workflow_service.run_agent_invocation_with_cancellation(&mut context, cancellation),
             )
             .await
         }
-        None => Box::pin(flow_service.run_agent_invocation(&mut context)).await,
+        None => Box::pin(workflow_service.run_agent_invocation(&mut context)).await,
     };
     let pending_confirmations = context.take_pending_delegation_confirmations();
     let outcome = match result {
@@ -123,7 +123,7 @@ pub(crate) async fn execute_agent(
 }
 
 pub(crate) async fn execute_team(
-    flow_service: &FlowService,
+    workflow_service: &WorkflowService,
     profile_registry: ProfileRegistry,
     plugin_service: PluginService,
     event_service: EventService,
@@ -178,10 +178,10 @@ pub(crate) async fn execute_team(
     event_service.emit_delegation_started(request, child_operation_id.clone());
     let result = match child_admission.cancellation_token() {
         Some(cancellation) => {
-            Box::pin(flow_service.run_agent_team_with_cancellation(&mut context, cancellation))
+            Box::pin(workflow_service.run_agent_team_with_cancellation(&mut context, cancellation))
                 .await
         }
-        None => Box::pin(flow_service.run_agent_team(&mut context)).await,
+        None => Box::pin(workflow_service.run_agent_team(&mut context)).await,
     };
     let pending_confirmations = context.take_pending_delegation_confirmations();
     let outcome = match result {
@@ -215,7 +215,7 @@ pub(crate) async fn execute_team(
 pub(crate) async fn approve(
     session_coordinator: &mut SessionCoordinator,
     runtime_service: &RuntimeService,
-    flow_service: &FlowService,
+    workflow_service: &WorkflowService,
     profile_registry: &ProfileRegistry,
     plugin_service: &PluginService,
     event_service: &EventService,
@@ -247,7 +247,7 @@ pub(crate) async fn approve(
     let outcome = match pending.request.target_kind {
         ProfileKind::Agent => {
             execute_agent(
-                flow_service,
+                workflow_service,
                 profile_registry.clone(),
                 plugin_service.clone(),
                 event_service.clone(),
@@ -262,7 +262,7 @@ pub(crate) async fn approve(
         }
         ProfileKind::Team => {
             execute_team(
-                flow_service,
+                workflow_service,
                 profile_registry.clone(),
                 plugin_service.clone(),
                 event_service.clone(),

@@ -35,7 +35,7 @@ Forbidden shapes include:
   passed as convenience dependencies;
 - provider-specific wire types crossing into `pi-agent-core` or public product
   protocols;
-- Flow nodes, node IDs, `AgentEvent`, or `FlowEvent` exposed to product adapters;
+- workflow runner internals, private state IDs, or `AgentEvent` exposed to product adapters;
 - `pi-tui` component/widget types exposed to product extensions;
 - raw Rust trait objects as an untrusted extension ABI;
 - test-support APIs in production signatures.
@@ -45,7 +45,7 @@ Forbidden shapes include:
 | Concern | Owner |
 | --- | --- |
 | model metadata, auth inputs, HTTP/SSE, provider wire mapping | `pi-ai` |
-| provider-neutral agent loop, generic Flow primitives, generic tools/resources | `pi-agent-core` |
+| provider-neutral typed agent loop, generic tools/resources | `pi-agent-core` |
 | generic terminal lifecycle, input, layout, components | `pi-tui` |
 | operation admission/policy, sessions, ProductEvents, snapshots, extensions, adapters | `pi-coding-agent` |
 | browser presentation | `pi-web-ui` when activated |
@@ -57,7 +57,7 @@ Forbidden shapes include:
 The stable embedding surface is `pi_coding_agent::api`. Root-level compatibility
 exports are not a place to grow new contracts. Public APIs expose product verbs,
 typed outcomes/events, snapshots, protocol negotiation, and narrow testing
-fixtures—not scheduler, Flow, service, repository, provider-client, plugin-host,
+fixtures—not scheduler, workflow runner, service, repository, provider-client, plugin-host,
 or adapter internals.
 
 ## Enforcement

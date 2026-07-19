@@ -4,13 +4,15 @@ use crate::events::{
     CodingAgentProductEventTerminalOperation, CodingAgentProductEventTerminalOperationKind,
     CodingAgentProductEventTerminalStatus,
 };
-use crate::operations::agent_invocation::flow::{AgentInvocationOptions, AgentInvocationOutcome};
+use crate::operations::agent_invocation::runner::{AgentInvocationOptions, AgentInvocationOutcome};
 use crate::operations::export::CodingAgentSessionExport;
-use crate::operations::export::flow::ExportOptions;
-use crate::operations::plugin_load::flow::{PluginLoadOptions, PluginLoadOutcome};
+use crate::operations::export::runner::ExportOptions;
+use crate::operations::plugin_load::runner::{PluginLoadOptions, PluginLoadOutcome};
 use crate::operations::prompt::context::{PromptTurnOptions, PromptTurnOutcome};
-use crate::operations::self_healing_edit::flow::{SelfHealingEditOutcome, SelfHealingEditRequest};
-use crate::operations::team_invocation::flow::{AgentTeamOptions, AgentTeamOutcome};
+use crate::operations::self_healing_edit::runner::{
+    SelfHealingEditOutcome, SelfHealingEditRequest,
+};
+use crate::operations::team_invocation::runner::{AgentTeamOptions, AgentTeamOutcome};
 use crate::profiles::ProfileId;
 use crate::runtime::control::OperationKind;
 use crate::runtime::operation::{
@@ -996,7 +998,7 @@ mod tests {
 
     use super::*;
     use crate::app::bootstrap::PromptInvocation;
-    use crate::operations::export::flow::ExportOutcome;
+    use crate::operations::export::runner::ExportOutcome;
     use crate::plugins::PluginCapabilities;
     use crate::runtime::control::OperationKind;
     use crate::runtime::facade::context::CodingAgentSessionSummary;
