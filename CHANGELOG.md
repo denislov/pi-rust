@@ -57,6 +57,9 @@
   public facade, replaced the remaining agent action with `AgentTurnDecision`,
   renamed product operation modules to typed runners, and converged
   `FlowService` to `WorkflowService` with absence guards.
+- Added required `CLC-042-002` cleanup for the now-unreachable PluginCommand,
+  RPC, interactive keybinding/dialog, and contribution presentation surface;
+  this is deletion work, not resumed Extension productization.
 - Workspace packages remain at `0.4.1` until all 0.4.2 implementation, debt,
   conformance, and release gates close.
 
