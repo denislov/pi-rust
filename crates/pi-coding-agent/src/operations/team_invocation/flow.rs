@@ -1,6 +1,7 @@
 use std::future::Future;
 use std::pin::Pin;
 
+use futures::StreamExt;
 use pi_agent_core::api::flow::{Action, Flow, FlowError, FlowNode, FlowOutcome, FlowRunOptions};
 use pi_ai::api::conversation::AssistantMessage;
 use tokio_util::sync::CancellationToken;
@@ -27,6 +28,7 @@ use crate::services::plugin::PluginService;
 use crate::session::id::{Clock, IdGenerator, SystemClock, SystemIdGenerator};
 
 const DEFAULT_ACTION: &str = "default";
+const MAX_TEAM_MEMBER_CONCURRENCY: usize = 2;
 
 pub(crate) const AGENT_TEAM_NODE_IDS: &[&str] = &[
     "start_team",
@@ -303,6 +305,7 @@ impl FlowNode<AgentTeamContext> for AgentTeamNode {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct AgentTeamContext {
     options: AgentTeamOptions,
     registry: ProfileRegistry,
@@ -477,9 +480,33 @@ impl AgentTeamContext {
     async fn run_member_agents(&mut self) -> Result<(), CodingSessionError> {
         let members = self.member_profiles.clone();
         let task = self.options.task.clone();
-        for profile in members {
-            let result = self.run_profile_child(&profile, task.clone()).await?;
-            self.member_results.push(result);
+        let base = self.clone();
+        let mut completed =
+            futures::stream::iter(members.into_iter().enumerate().map(|(index, profile)| {
+                let mut worker = base.clone();
+                worker.member_results.clear();
+                worker.pending_delegation_confirmations.clear();
+                let task = task.clone();
+                async move {
+                    let result = worker.run_profile_child(&profile, task).await;
+                    (
+                        index,
+                        result,
+                        worker.pending_delegation_confirmations,
+                        worker.child_capability_snapshot,
+                    )
+                }
+            }))
+            .buffer_unordered(MAX_TEAM_MEMBER_CONCURRENCY)
+            .collect::<Vec<_>>()
+            .await;
+        completed.sort_by_key(|(index, _, _, _)| *index);
+        for (_, result, pending, capability_snapshot) in completed {
+            self.pending_delegation_confirmations.extend(pending);
+            if capability_snapshot.is_some() {
+                self.child_capability_snapshot = capability_snapshot;
+            }
+            self.member_results.push(result?);
         }
         Ok(())
     }

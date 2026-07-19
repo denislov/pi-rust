@@ -38,9 +38,8 @@
   typed runner. The generic graph remains compatibility-only.
 - Added the AgentTeam typed pipeline vertical slice: team production paths now
   use explicit planning, member execution, result collection, merge, and
-  finalization steps, with typed PromptTurn children. Existing sequential member
-  ordering is preserved; bounded structured concurrency remains tracked as a
-  separate AWC-003 task.
+  finalization steps, with typed PromptTurn children. Member child contexts now
+  run with bounded concurrency of two and results are restored in profile order.
 - Added the PluginLoad typed pipeline vertical slice: production plugin loading
   now uses explicit discovery, validation, loading, capability registration,
   diagnostics, and finalization steps with boundary cancellation checks. The
