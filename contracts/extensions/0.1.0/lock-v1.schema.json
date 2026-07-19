@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pi-rust.local/contracts/extensions/lock-v1.schema.json",
+  "title": "Pi Extension Dependency Lock v1 Candidate",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "extension", "dependencies"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "extension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$",
+          "maxLength": 128
+        },
+        "version": { "type": "string", "minLength": 1, "maxLength": 128 }
+      }
+    },
+    "dependencies": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "version", "sha256"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$",
+            "maxLength": 128
+          },
+          "version": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "sha256": {
+            "description": "SHA-256 digest of the complete installed dependency package",
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        }
+      }
+    }
+  }
+}

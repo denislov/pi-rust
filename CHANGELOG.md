@@ -7,6 +7,14 @@
 - Started `EKR-001`: accepted ADR-007 package quarantine and ADR-008 independent
   contract versioning, published hashed Manifest v2/contribution/WIT candidates,
   and added a strict internal Manifest v2 parser and offline contract gate.
+- Added dependency lock v1 and strict directory quarantine candidates. Lock
+  validation binds exact dependency versions/digests to Manifest requirements;
+  quarantine rejects unsafe or ambiguous layouts and verifies component/resource
+  integrity before immutable installation.
+- Added the candidate immutable package store: store-owned staging is revalidated,
+  dependencies are matched by exact package digest and identity, complete package
+  bytes are content-addressed, and installation atomically publishes read-only,
+  idempotently reloadable package trees.
 - Workspace packages remain at `0.4.1` until all 0.4.2 implementation, debt,
   conformance, and release gates close.
 

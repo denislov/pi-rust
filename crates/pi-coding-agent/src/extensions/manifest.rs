@@ -44,11 +44,11 @@ struct ComponentArtifact {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct DependencyRequirement {
-    id: String,
-    requires: String,
+pub(super) struct DependencyRequirement {
+    pub(super) id: String,
+    pub(super) requires: String,
     #[serde(default)]
-    optional: bool,
+    pub(super) optional: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -124,6 +124,14 @@ impl ExtensionManifestV2 {
         &self.component.sha256
     }
 
+    pub(super) fn dependencies(&self) -> &[DependencyRequirement] {
+        &self.dependencies
+    }
+
+    pub(super) fn resources(&self) -> &[String] {
+        &self.resources
+    }
+
     fn validate(&self) -> Result<(), ExtensionManifestError> {
         require(
             self.schema_version == MANIFEST_SCHEMA_VERSION,
@@ -176,6 +184,10 @@ impl ExtensionManifestV2 {
     }
 
     fn validate_dependencies(&self) -> Result<(), ExtensionManifestError> {
+        require(
+            self.dependencies.len() <= 64,
+            "dependencies cannot contain more than 64 entries",
+        )?;
         require(
             unique(
                 self.dependencies

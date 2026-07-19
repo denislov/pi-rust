@@ -9,6 +9,9 @@ hashes and may not become a second ABI source.
 freezes it. Installed packages contain a Wasm Component and data resources only;
 these authoring/build inputs are repository contracts, not runtime dependencies.
 
+The candidate bundle contains strict Manifest v2, dependency lock v1,
+contribution v1, and WIT world contracts.
+
 Verify the checked-in inputs from this directory:
 
 ```bash
