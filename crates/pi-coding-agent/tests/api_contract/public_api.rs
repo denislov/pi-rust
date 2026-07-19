@@ -57,6 +57,12 @@ use pi_coding_agent::api::event::{
     CodingAgentSessionWriteFailureStatus, CodingAgentSubmittedEventDurability,
     CodingAgentTeamProductEvent, CodingAgentToolProductEvent, CodingAgentWorkflowProductEvent,
 };
+use pi_coding_agent::api::extension::{
+    CodingAgentExtensionActivation, CodingAgentExtensionActivationRequest,
+    CodingAgentExtensionGrantRequest, CodingAgentExtensionPermission,
+    CodingAgentExtensionSourceChannel, CodingAgentExtensionTrustLevel,
+    CodingAgentInstalledExtensionPackage,
+};
 use pi_coding_agent::api::operation::{
     AgentInvocationOptions, AgentInvocationOutcome, AgentTeamMemberOutcome, AgentTeamOptions,
     AgentTeamOutcome, BranchSummaryReusePolicy, CodingAgentOperation, CodingAgentOperationOutcome,
@@ -123,6 +129,41 @@ fn lifecycle_values_are_exhaustive_and_importable() {
         },
     ];
     assert_eq!(anchors.len(), 3);
+}
+
+#[test]
+fn extension_activation_contract_is_typed_and_authority_free() {
+    use std::collections::BTreeSet;
+
+    let request = CodingAgentExtensionActivationRequest {
+        workspace_id: "workspace-1".into(),
+        root_package_digests: vec!["a".repeat(64)],
+        grants: vec![CodingAgentExtensionGrantRequest {
+            package_digest: "a".repeat(64),
+            source_channel: CodingAgentExtensionSourceChannel::Registry,
+            source_digest: "b".repeat(64),
+            trust: CodingAgentExtensionTrustLevel::Verified,
+            session_ids: BTreeSet::from(["session-1".into()]),
+            permissions: BTreeSet::from([CodingAgentExtensionPermission::WorkspaceRead]),
+        }],
+    };
+    let encoded = serde_json::to_value(&request).unwrap();
+
+    assert_eq!(encoded["grants"][0]["permissions"][0], "workspace.read");
+    assert_eq!(encoded["grants"][0]["sourceChannel"], "registry");
+    let text = encoded.to_string();
+    for forbidden in ["token", "secret", "credential", "repository", "provider"] {
+        assert!(!text.contains(forbidden), "leaked {forbidden}: {text}");
+    }
+    let decoded: CodingAgentExtensionActivationRequest = serde_json::from_value(encoded).unwrap();
+    assert_eq!(decoded, request);
+
+    fn importable(
+        _: Option<CodingAgentExtensionActivation>,
+        _: Option<CodingAgentInstalledExtensionPackage>,
+    ) {
+    }
+    importable(None, None);
 }
 
 #[test]
@@ -686,6 +727,107 @@ async fn coding_session_run_dispatches_public_runtime_operations() {
             .to_string()
             .contains("active leaf navigation requires a persistent Rust-native session")
     );
+}
+
+#[tokio::test]
+async fn trusted_host_installs_activates_and_reloads_immutable_extension() {
+    use sha2::{Digest, Sha256};
+    use std::collections::BTreeSet;
+
+    let temp = tempfile::tempdir().unwrap();
+    let project = temp.path().join("project");
+    let global = temp.path().join("global");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::create_dir_all(&global).unwrap();
+    let _env = EnvGuard::with_pi_rust_dir(&global);
+    let options = CodingAgentSessionOptions::new().with_cwd(&project);
+    let mut session = CodingAgentSession::non_persistent(options.clone())
+        .await
+        .unwrap();
+    let staging = session.create_extension_staging_directory().unwrap();
+    let component = b"public extension component candidate";
+    std::fs::write(staging.join("component.wasm"), component).unwrap();
+    std::fs::write(
+        staging.join("extension.json"),
+        serde_json::json!({
+            "schemaVersion": 2,
+            "id": "example.public",
+            "version": "1.0.0",
+            "api": { "requires": "^0.1" },
+            "component": {
+                "path": "component.wasm",
+                "sha256": format!("{:x}", Sha256::digest(component)),
+                "world": "pi:extension/extension@0.1.0"
+            },
+            "lock": "extension.lock.json",
+            "dependencies": [],
+            "activation": ["workspace"],
+            "permissions": [],
+            "contributions": {},
+            "resources": [],
+            "limits": {
+                "memoryBytes": 65536,
+                "fuel": 1,
+                "deadlineMs": 1,
+                "outputBytes": 1
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        staging.join("extension.lock.json"),
+        serde_json::json!({
+            "schemaVersion": 1,
+            "extension": { "id": "example.public", "version": "1.0.0" },
+            "dependencies": []
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let installed = session.install_extension_staged(staging).unwrap();
+    let activation = session
+        .activate_extensions(CodingAgentExtensionActivationRequest {
+            workspace_id: "workspace-public".into(),
+            root_package_digests: vec![installed.package_digest.clone()],
+            grants: vec![CodingAgentExtensionGrantRequest {
+                package_digest: installed.package_digest.clone(),
+                source_channel: CodingAgentExtensionSourceChannel::Local,
+                source_digest: "d".repeat(64),
+                trust: CodingAgentExtensionTrustLevel::Untrusted,
+                session_ids: BTreeSet::new(),
+                permissions: BTreeSet::new(),
+            }],
+        })
+        .unwrap();
+    assert_eq!(activation.packages.len(), 1);
+    assert_eq!(activation.packages[0].id, "example.public");
+
+    let loaded = session.run(CodingAgentOperation::PluginLoad).await.unwrap();
+    let CodingAgentOperationOutcome::PluginLoad(loaded) = loaded else {
+        panic!("extension reload must use plugin-load lifecycle until EKR-007 removes legacy")
+    };
+    assert_eq!(loaded.loaded_plugin_ids, ["example.public"]);
+    assert!(loaded.capability_changed);
+
+    let unchanged = session.run(CodingAgentOperation::PluginLoad).await.unwrap();
+    let CodingAgentOperationOutcome::PluginLoad(unchanged) = unchanged else {
+        panic!("repeated extension reload must retain plugin-load outcome")
+    };
+    assert_eq!(unchanged.loaded_plugin_ids, ["example.public"]);
+    assert!(!unchanged.capability_changed);
+
+    let mut restarted = CodingAgentSession::non_persistent(options).await.unwrap();
+    let reloaded = restarted
+        .run(CodingAgentOperation::PluginLoad)
+        .await
+        .unwrap();
+    let CodingAgentOperationOutcome::PluginLoad(reloaded) = reloaded else {
+        panic!("durable extension activation must reload after restart")
+    };
+    assert_eq!(reloaded.loaded_plugin_ids, ["example.public"]);
+    assert!(reloaded.capability_changed);
 }
 
 #[tokio::test]

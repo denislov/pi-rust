@@ -26,7 +26,6 @@ pub(crate) struct ValidatedPackageDirectory {
     manifest: ExtensionManifestV2,
     lock: ExtensionLockV1,
     package_digest: String,
-    total_bytes: u64,
 }
 
 #[derive(Debug, Error)]
@@ -90,7 +89,6 @@ impl ValidatedPackageDirectory {
             manifest,
             lock,
             package_digest,
-            total_bytes: state.total_bytes,
         })
     }
 
@@ -106,22 +104,22 @@ impl ValidatedPackageDirectory {
         self.manifest.version()
     }
 
-    pub(crate) fn component_digest(&self) -> &str {
-        self.manifest.component_digest()
-    }
-
     pub(crate) fn package_digest(&self) -> &str {
         &self.package_digest
-    }
-
-    pub(crate) fn total_bytes(&self) -> u64 {
-        self.total_bytes
     }
 
     pub(super) fn locked_dependencies(
         &self,
     ) -> impl Iterator<Item = super::lock::LockedDependencyRef<'_>> {
         self.lock.dependencies()
+    }
+
+    pub(super) fn requested_permissions(&self) -> &[String] {
+        self.manifest.permissions()
+    }
+
+    pub(super) fn contract_world(&self) -> &str {
+        self.manifest.contract_world()
     }
 }
 
@@ -361,7 +359,6 @@ mod tests {
         assert_eq!(package.id(), "example.review");
         assert_eq!(package.version(), "1.2.3");
         assert_eq!(package.package_digest().len(), 64);
-        assert!(package.total_bytes() > 0);
     }
 
     #[test]

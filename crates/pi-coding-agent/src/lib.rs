@@ -50,6 +50,16 @@ pub mod api {
         };
     }
 
+    /// Trusted-host installation, grant, and workspace activation contracts.
+    pub mod extension {
+        pub use crate::runtime::facade::{
+            CodingAgentExtensionActivation, CodingAgentExtensionActivationRequest,
+            CodingAgentExtensionGrantRequest, CodingAgentExtensionPermission,
+            CodingAgentExtensionSourceChannel, CodingAgentExtensionTrustLevel,
+            CodingAgentInstalledExtensionPackage,
+        };
+    }
+
     /// Commands and outcomes accepted by [`runtime::CodingAgentSession`].
     pub mod operation {
         pub use crate::runtime::facade::{

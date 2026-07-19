@@ -45,6 +45,12 @@ build_fixture() {
     "$BIN/json2ts" --input lock-v1.schema.json \
       --output "$GENERATED/lock-v1.d.ts" \
       --bannerComment "/* Generated from contracts/extensions/0.1.0/lock-v1.schema.json; do not edit. */"
+    "$BIN/json2ts" --input grant-v1.schema.json \
+      --output "$GENERATED/grant-v1.d.ts" \
+      --bannerComment "/* Generated from contracts/extensions/0.1.0/grant-v1.schema.json; do not edit. */"
+    "$BIN/json2ts" --input activation-v1.schema.json \
+      --output "$GENERATED/activation-v1.d.ts" \
+      --bannerComment "/* Generated from contracts/extensions/0.1.0/activation-v1.schema.json; do not edit. */"
   )
 
   mapfile -t generated_types < <(find "$GENERATED" -type f -name '*.d.ts' -print | sort)
@@ -84,6 +90,8 @@ validate_fixture() {
   test -s "$GENERATED/manifest-v2.d.ts"
   test -s "$GENERATED/contributions-v1.d.ts"
   test -s "$GENERATED/lock-v1.d.ts"
+  test -s "$GENERATED/grant-v1.d.ts"
+  test -s "$GENERATED/activation-v1.d.ts"
   jq -e '[.outputs[].imports[]] | length == 0' "$BUILD/esbuild-meta.json" >/dev/null
   grep -F 'import pi:extension/host-diagnostics@0.1.0;' "$BUILD/embedded.wit" >/dev/null
   grep -F 'export pi:extension/guest@0.1.0;' "$BUILD/embedded.wit" >/dev/null

@@ -443,6 +443,7 @@ impl CodingAgentSession {
                             &snapshot,
                             operation_cancellation.clone(),
                             operation_cancellation_handle.clone(),
+                            &self.runtime_host.extension_platform,
                         )
                         .await?;
                         if let Some(plugin_service) = execution.loaded_plugin_service {

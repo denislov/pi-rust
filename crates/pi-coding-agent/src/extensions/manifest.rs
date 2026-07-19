@@ -132,6 +132,14 @@ impl ExtensionManifestV2 {
         &self.resources
     }
 
+    pub(super) fn permissions(&self) -> &[String] {
+        &self.permissions
+    }
+
+    pub(super) fn contract_world(&self) -> &str {
+        &self.component.world
+    }
+
     fn validate(&self) -> Result<(), ExtensionManifestError> {
         require(
             self.schema_version == MANIFEST_SCHEMA_VERSION,
@@ -262,10 +270,13 @@ impl ExtensionManifestV2 {
 fn valid_id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
-        && value.bytes().all(|byte| {
-            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'-' | b'_')
-        })
         && value.as_bytes()[0].is_ascii_lowercase()
+        && value.split(['.', '-']).all(|segment| {
+            !segment.is_empty()
+                && segment
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+        })
 }
 
 fn valid_sha256(value: &str) -> bool {

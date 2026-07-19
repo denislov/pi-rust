@@ -9,6 +9,8 @@ sha256sum -c SHA256SUMS
 jq -e . manifest-v2.schema.json >/dev/null
 jq -e . contributions-v1.schema.json >/dev/null
 jq -e . lock-v1.schema.json >/dev/null
+jq -e . grant-v1.schema.json >/dev/null
+jq -e . activation-v1.schema.json >/dev/null
 
 for forbidden in runtime language source trust grant lease; do
   if jq -e --arg field "$forbidden" '.properties[$field] != null' manifest-v2.schema.json >/dev/null; then

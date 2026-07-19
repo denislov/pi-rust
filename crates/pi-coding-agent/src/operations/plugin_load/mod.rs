@@ -1,3 +1,4 @@
+use crate::extensions::ExtensionPlatformOwner;
 use crate::runtime::capability::{OperationCapabilitySnapshot, SessionWriteCapability};
 use crate::runtime::control::OperationCancellationHandle;
 use crate::runtime::facade::CodingSessionError;
@@ -25,6 +26,7 @@ pub(crate) async fn run(
     snapshot: &OperationCapabilitySnapshot,
     cancellation: Option<CancellationToken>,
     cancellation_handle: Option<OperationCancellationHandle>,
+    extension_platform: &ExtensionPlatformOwner,
 ) -> Result<PluginLoadExecution, CodingSessionError> {
     SessionWriteCapability::require(snapshot.session_write.as_ref())?;
     let operation_id = snapshot.operation_id.clone();
@@ -35,7 +37,7 @@ pub(crate) async fn run(
         SessionPersistence::NonPersistent(_) => None,
     };
     let mut context = PluginLoadContext::new(options);
-    let outcome = match match cancellation.as_ref() {
+    let mut outcome = match match cancellation.as_ref() {
         Some(cancellation) => {
             flow_service
                 .run_plugin_load_with_cancellation(&mut context, cancellation.clone())
@@ -59,6 +61,31 @@ pub(crate) async fn run(
             return Err(error);
         }
     };
+    let extension_snapshot = match extension_platform.reload_if_configured() {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            if let Some(transaction) = transaction.take()
+                && let SessionPersistence::Persistent(session_service) = persistence
+            {
+                let finalized = session_service.fail_plugin_load_transaction(
+                    Some(transaction),
+                    &operation_id,
+                    error.code(),
+                    error.to_string(),
+                )?;
+                event_service.emit_session_write_events(&finalized);
+            }
+            return Err(error);
+        }
+    };
+    if let Some(extension_activation) = extension_snapshot {
+        outcome
+            .loaded_plugin_ids
+            .extend(extension_activation.snapshot.packages.keys().cloned());
+        outcome.loaded_plugin_ids.sort();
+        outcome.loaded_plugin_ids.dedup();
+        outcome.capability_changed |= extension_activation.capability_changed;
+    }
     if let Some(cancellation_handle) = cancellation_handle
         && let Err(error) = cancellation_handle.close()
     {

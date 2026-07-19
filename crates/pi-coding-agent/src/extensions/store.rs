@@ -113,6 +113,7 @@ impl ExtensionPackageStore {
         Ok(installed(&installed_package))
     }
 
+    #[cfg(test)]
     pub(crate) fn load(
         &self,
         package_digest: &str,
@@ -125,6 +126,20 @@ impl ExtensionPackageStore {
             return Err(PackageStoreError::ContentAddressCollision);
         }
         Ok(installed(&package))
+    }
+
+    pub(super) fn load_validated(
+        &self,
+        package_digest: &str,
+    ) -> Result<ValidatedPackageDirectory, PackageStoreError> {
+        if !valid_digest(package_digest) {
+            return Err(PackageStoreError::ContentAddressCollision);
+        }
+        let package = ValidatedPackageDirectory::validate(self.package_path(package_digest))?;
+        if package.package_digest() != package_digest {
+            return Err(PackageStoreError::ContentAddressCollision);
+        }
+        Ok(package)
     }
 
     fn validate_dependencies(

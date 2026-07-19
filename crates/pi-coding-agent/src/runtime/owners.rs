@@ -7,6 +7,7 @@ use super::finalization::OperationFinalizer;
 use super::session_coordinator::SessionCoordinator;
 use super::snapshot::SnapshotCoordinator;
 use super::submission::PendingSubmissionLease;
+use crate::extensions::ExtensionPlatformOwner;
 use crate::operations::plugin_load::flow::PluginLoadOptions;
 use crate::profiles::ProfileRegistry;
 use crate::services::authorization::AuthorizationService;
@@ -33,6 +34,7 @@ pub(super) struct RuntimeHost {
     pub(super) profile_registry: ProfileRegistry,
     pub(super) default_plugin_load_options: PluginLoadOptions,
     pub(super) authorization_service: AuthorizationService,
+    pub(super) extension_platform: ExtensionPlatformOwner,
 }
 
 /// Admission, immutable execution, capacity, cancellation, and capability owner.

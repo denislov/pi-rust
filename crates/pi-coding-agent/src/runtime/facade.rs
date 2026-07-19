@@ -26,6 +26,12 @@ pub use crate::events::{
 };
 #[allow(unused_imports)]
 pub(crate) use crate::events::{ProductEvent, ProductEventSequence};
+pub use crate::extensions::{
+    CodingAgentExtensionActivation, CodingAgentExtensionActivationRequest,
+    CodingAgentExtensionGrantRequest, CodingAgentExtensionPermission,
+    CodingAgentExtensionSourceChannel, CodingAgentExtensionTrustLevel,
+    CodingAgentInstalledExtensionPackage,
+};
 pub use crate::operations::agent_invocation::flow::{
     AgentInvocationOptions, AgentInvocationOutcome,
 };

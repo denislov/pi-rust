@@ -455,6 +455,7 @@ fn stable_api_has_only_scenario_categories_and_no_flat_exports() {
         "cli",
         "client",
         "event",
+        "extension",
         "operation",
         "protocol",
         "runtime",

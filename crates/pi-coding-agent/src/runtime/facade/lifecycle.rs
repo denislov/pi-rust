@@ -1,16 +1,40 @@
 use super::*;
 
 impl CodingAgentSession {
+    pub fn create_extension_staging_directory(&self) -> Result<PathBuf, CodingSessionError> {
+        self.runtime_host
+            .extension_platform
+            .create_staging_directory()
+    }
+
+    pub fn install_extension_staged(
+        &self,
+        staging: impl Into<PathBuf>,
+    ) -> Result<CodingAgentInstalledExtensionPackage, CodingSessionError> {
+        self.runtime_host
+            .extension_platform
+            .install_staged(staging.into())
+    }
+
+    pub fn activate_extensions(
+        &self,
+        request: CodingAgentExtensionActivationRequest,
+    ) -> Result<CodingAgentExtensionActivation, CodingSessionError> {
+        self.runtime_host.extension_platform.activate(request)
+    }
+
     pub async fn create(options: CodingAgentSessionOptions) -> Result<Self, CodingSessionError> {
         let session_service = SessionService::create(&options)?;
         let profile_registry = profile_registry_for_options(&options, Some(&session_service))?;
         let runtime_service = runtime_service_for_options(&options);
+        let extension_platform = extension_platform_for_options(&options, Some(&session_service));
         Self::from_services(
             session_service,
             default_plugin_load_options(&options),
             profile_registry,
             runtime_service,
             options.tool_authorization_mode(),
+            extension_platform,
         )
     }
 
@@ -18,12 +42,14 @@ impl CodingAgentSession {
         let session_service = SessionService::open(&options)?;
         let profile_registry = profile_registry_for_options(&options, Some(&session_service))?;
         let runtime_service = runtime_service_for_options(&options);
+        let extension_platform = extension_platform_for_options(&options, Some(&session_service));
         Self::from_services(
             session_service,
             default_plugin_load_options(&options),
             profile_registry,
             runtime_service,
             options.tool_authorization_mode(),
+            extension_platform,
         )
     }
 
@@ -33,12 +59,14 @@ impl CodingAgentSession {
         let session_service = SessionService::open_or_create(&options)?;
         let profile_registry = profile_registry_for_options(&options, Some(&session_service))?;
         let runtime_service = runtime_service_for_options(&options);
+        let extension_platform = extension_platform_for_options(&options, Some(&session_service));
         Self::from_services(
             session_service,
             default_plugin_load_options(&options),
             profile_registry,
             runtime_service,
             options.tool_authorization_mode(),
+            extension_platform,
         )
     }
 
@@ -50,12 +78,14 @@ impl CodingAgentSession {
                 message: "non-persistent coding sessions do not accept a session id or path".into(),
             });
         }
+        let extension_platform = extension_platform_for_options(&options, None);
         Self::from_transient(
             TransientSessionState::new(option_default_agent_profile_id(&options)),
             default_plugin_load_options(&options),
             profile_registry_for_options(&options, None)?,
             runtime_service_for_options(&options),
             options.tool_authorization_mode(),
+            extension_platform,
         )
     }
 
@@ -146,6 +176,7 @@ impl CodingAgentSession {
         profile_registry: ProfileRegistry,
         runtime_service: RuntimeService,
         tool_authorization_mode: crate::authorization::ToolAuthorizationMode,
+        extension_platform: crate::extensions::ExtensionPlatformOwner,
     ) -> Result<Self, CodingSessionError> {
         let mut session_service = session_service;
         let replay_state = replay_derived_owner_state(&mut session_service)?;
@@ -190,6 +221,7 @@ impl CodingAgentSession {
                 profile_registry,
                 default_plugin_load_options,
                 authorization_service,
+                extension_platform,
             },
         };
         session.refresh_snapshot_projection();
@@ -214,6 +246,7 @@ impl CodingAgentSession {
         profile_registry: ProfileRegistry,
         runtime_service: RuntimeService,
         tool_authorization_mode: crate::authorization::ToolAuthorizationMode,
+        extension_platform: crate::extensions::ExtensionPlatformOwner,
     ) -> Result<Self, CodingSessionError> {
         let snapshot_coordinator = SnapshotCoordinator::new();
         let client_service = ClientService::new(snapshot_coordinator.clone());
@@ -254,6 +287,7 @@ impl CodingAgentSession {
                 profile_registry,
                 default_plugin_load_options,
                 authorization_service,
+                extension_platform,
             },
         };
         session.refresh_snapshot_projection();
@@ -302,4 +336,20 @@ fn runtime_service_for_options(options: &CodingAgentSessionOptions) -> RuntimeSe
         .cloned()
         .map(RuntimeService::with_ai_client)
         .unwrap_or_else(RuntimeService::new)
+}
+
+fn extension_platform_for_options(
+    options: &CodingAgentSessionOptions,
+    session_service: Option<&SessionService>,
+) -> crate::extensions::ExtensionPlatformOwner {
+    let cwd = options
+        .cwd()
+        .map(Path::to_path_buf)
+        .or_else(|| session_service.and_then(session_cwd))
+        .unwrap_or_else(default_cwd);
+    let paths = crate::config::resolve_paths(&cwd);
+    crate::extensions::ExtensionPlatformOwner::new(
+        paths.global_dir.join("extensions/store"),
+        paths.project_dir.join("extensions"),
+    )
 }

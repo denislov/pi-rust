@@ -3,6 +3,7 @@
 use pi_coding_agent::api::runtime::{CodingAgentSessionOptions, CodingSessionError};
 use pi_coding_agent::api::operation::{AgentInvocationOptions, AgentInvocationOutcome, AgentTeamMemberOutcome, AgentTeamOptions, AgentTeamOutcome, BranchSummaryReusePolicy, CodingAgentOperation, CodingAgentOperationOutcome, CodingAgentPluginLoadOutcome, PendingDelegationConfirmation, PromptTurnOptions, PromptTurnOutcome, SelfHealingEditOutcome, SelfHealingEditReplacement, SelfHealingEditRequest};
 use pi_coding_agent::api::client::{CodingAgentSnapshot, CodingAgentSnapshotCursor};
+use pi_coding_agent::api::extension::{CodingAgentExtensionActivationRequest, CodingAgentExtensionPermission, CodingAgentInstalledExtensionPackage};
 use pi_coding_agent::api::view::{CodingAgentPluginDiagnostic, CodingAgentSessionExport, CodingAgentSessionSummary, CodingAgentSessionView, ProfileId};
 use pi_coding_agent::api::cli::runtime::{PromptInvocation};
 
@@ -99,6 +100,9 @@ fn support_types() {
     touch::<Option<CodingAgentSnapshot>>(None);
     touch::<Option<CodingAgentSnapshotCursor>>(None);
     touch::<Option<PendingDelegationConfirmation>>(None);
+    touch::<Option<CodingAgentExtensionActivationRequest>>(None);
+    touch::<Option<CodingAgentExtensionPermission>>(None);
+    touch::<Option<CodingAgentInstalledExtensionPackage>>(None);
 }
 
 fn main() {

@@ -129,6 +129,17 @@ fn final_receiver_aware_compatibility_absence_and_retained_api_guard() {
         false,
         &["run", "submit"],
     );
+    add_expectations(
+        &mut expected,
+        "trusted-host extension lifecycle",
+        "pub",
+        false,
+        &[
+            "create_extension_staging_directory",
+            "install_extension_staged",
+            "activate_extensions",
+        ],
+    );
     let absent = [
         "invoke_agent",
         "invoke_team",

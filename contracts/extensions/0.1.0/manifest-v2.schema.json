@@ -72,7 +72,17 @@
       "type": "array",
       "maxItems": 128,
       "uniqueItems": true,
-      "items": { "type": "string", "minLength": 1, "maxLength": 128 }
+      "items": {
+        "enum": [
+          "model.invoke",
+          "process.exec",
+          "session.read",
+          "session.write",
+          "ui.interact",
+          "workspace.read",
+          "workspace.write"
+        ]
+      }
     },
     "contributions": {
       "$ref": "contributions-v1.schema.json"

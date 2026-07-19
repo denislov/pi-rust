@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pi-rust.local/contracts/extensions/grant-v1.schema.json",
+  "title": "Pi Extension Grant Record v1 Candidate",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "extension",
+    "sourceChannel",
+    "sourceDigest",
+    "trust",
+    "scope",
+    "permissions",
+    "contractWorld"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "extension": { "$ref": "#/$defs/identity" },
+    "sourceChannel": { "enum": ["bundled", "local", "registry"] },
+    "sourceDigest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "trust": { "enum": ["untrusted", "verified"] },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workspaceId"],
+      "properties": {
+        "workspaceId": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "sessionIds": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 256 }
+        }
+      }
+    },
+    "permissions": {
+      "type": "array",
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/permission" }
+    },
+    "contractWorld": { "const": "pi:extension/extension@0.1.0" }
+  },
+  "$defs": {
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "packageDigest"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$",
+          "maxLength": 128
+        },
+        "version": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "packageDigest": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      }
+    },
+    "permission": {
+      "enum": [
+        "model.invoke",
+        "process.exec",
+        "session.read",
+        "session.write",
+        "ui.interact",
+        "workspace.read",
+        "workspace.write"
+      ]
+    }
+  }
+}

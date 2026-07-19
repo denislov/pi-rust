@@ -65,11 +65,16 @@ closed. Secrets and grant internals are redacted from diagnostics/events. Lease
 validation and revoke races are audited. Handles and buffers are bounded and
 closed on cancel, revoke, update, session close, or shutdown.
 
-## Prototype Evidence
+## Implementation Evidence
 
-The offline prototype proves operation binding, deadline checks,
-stale-generation rejection, and absence of implicit dependency authority. It is
-decision evidence, not the production Host API implementation.
+The original offline prototype proves operation binding, deadline checks,
+stale-generation rejection, and absence of implicit dependency authority.
+`0.4.2` `EKR-003` now has production-owned GrantRecord, instance-generation,
+operation-lease, immutable activation, revoke token, and late-result fence types.
+The public trusted-host lifecycle proves installation, explicit activation, and
+restart recovery without dependency permission transfer. Typed Host API handles
+and their complete per-call conformance matrix remain before this ADR's
+implementation is complete.
 
 ## Verification
 

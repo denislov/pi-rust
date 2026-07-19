@@ -10,7 +10,9 @@ freezes it. Installed packages contain a Wasm Component and data resources only;
 these authoring/build inputs are repository contracts, not runtime dependencies.
 
 The candidate bundle contains strict Manifest v2, dependency lock v1,
-contribution v1, and WIT world contracts.
+contribution v1, GrantRecord v1, workspace activation v1, and WIT world
+contracts. Grant and activation records are host-owned durable contracts; they
+are never accepted from an extension package.
 
 Verify the checked-in inputs from this directory:
 
