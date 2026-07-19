@@ -19,10 +19,6 @@ pub(crate) enum ExtensionPermission {
     ModelInvoke,
     #[serde(rename = "process.exec")]
     ProcessExec,
-    #[serde(rename = "session.read")]
-    SessionRead,
-    #[serde(rename = "session.write")]
-    SessionWrite,
     #[serde(rename = "ui.interact")]
     UiInteract,
     #[serde(rename = "workspace.read")]
@@ -62,7 +58,7 @@ pub(crate) struct ExtensionGrantScope {
     pub(crate) session_ids: BTreeSet<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct GrantRecord {
     schema_version: u32,
@@ -73,6 +69,23 @@ pub(crate) struct GrantRecord {
     pub(crate) scope: ExtensionGrantScope,
     pub(crate) permissions: BTreeSet<ExtensionPermission>,
     pub(crate) contract_world: String,
+}
+
+impl std::fmt::Debug for GrantRecord {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("GrantRecord")
+            .field("schema_version", &self.schema_version)
+            .field("extension", &self.extension)
+            .field("source_channel", &self.source_channel)
+            .field("source_digest", &"<redacted>")
+            .field("trust", &self.trust)
+            .field("workspace_id", &self.scope.workspace_id)
+            .field("session_scope_count", &self.scope.session_ids.len())
+            .field("permission_count", &self.permissions.len())
+            .field("contract_world", &self.contract_world)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,7 +104,7 @@ pub(crate) struct ExtensionInstanceGrant {
     revoked: CancellationToken,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) struct OperationCapabilityLease {
     identity: ExtensionGrantIdentity,
     generation: ExtensionGrantGeneration,
@@ -103,10 +116,45 @@ pub(crate) struct OperationCapabilityLease {
     operation_cancelled: CancellationToken,
 }
 
+impl std::fmt::Debug for OperationCapabilityLease {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("OperationCapabilityLease")
+            .field("extension_id", &self.identity.id)
+            .field("package_digest", &self.identity.package_digest)
+            .field("generation", &self.generation)
+            .field("operation_id", &self.operation_id)
+            .field("scope", &"<redacted>")
+            .field("permission_count", &self.permissions.len())
+            .field("deadline", &self.deadline)
+            .finish_non_exhaustive()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RevokedExtensionGrant {
     pub(crate) extension_id: String,
     pub(crate) generation: ExtensionGrantGeneration,
+}
+
+#[derive(Clone)]
+pub(crate) struct ExtensionRegistrationHandle {
+    identity: ExtensionGrantIdentity,
+    workspace_id: String,
+    generation: ExtensionGrantGeneration,
+    revoked: CancellationToken,
+}
+
+impl std::fmt::Debug for ExtensionRegistrationHandle {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ExtensionRegistrationHandle")
+            .field("extension_id", &self.identity.id)
+            .field("package_digest", &self.identity.package_digest)
+            .field("workspace_id", &"<redacted>")
+            .field("generation", &self.generation)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Default)]
@@ -149,17 +197,11 @@ impl ExtensionPermission {
         match value {
             "model.invoke" => Ok(Self::ModelInvoke),
             "process.exec" => Ok(Self::ProcessExec),
-            "session.read" => Ok(Self::SessionRead),
-            "session.write" => Ok(Self::SessionWrite),
             "ui.interact" => Ok(Self::UiInteract),
             "workspace.read" => Ok(Self::WorkspaceRead),
             "workspace.write" => Ok(Self::WorkspaceWrite),
             other => Err(ExtensionGrantError::UnsupportedPermission(other.into())),
         }
-    }
-
-    fn requires_session(self) -> bool {
-        matches!(self, Self::SessionRead | Self::SessionWrite)
     }
 }
 
@@ -168,8 +210,6 @@ impl From<CodingAgentExtensionPermission> for ExtensionPermission {
         match value {
             CodingAgentExtensionPermission::ModelInvoke => Self::ModelInvoke,
             CodingAgentExtensionPermission::ProcessExec => Self::ProcessExec,
-            CodingAgentExtensionPermission::SessionRead => Self::SessionRead,
-            CodingAgentExtensionPermission::SessionWrite => Self::SessionWrite,
             CodingAgentExtensionPermission::UiInteract => Self::UiInteract,
             CodingAgentExtensionPermission::WorkspaceRead => Self::WorkspaceRead,
             CodingAgentExtensionPermission::WorkspaceWrite => Self::WorkspaceWrite,
@@ -435,9 +475,41 @@ impl ExtensionGrantRegistry {
         }
         Ok(())
     }
+
+    pub(crate) fn validate_registration(
+        &self,
+        registration: &ExtensionRegistrationHandle,
+    ) -> Result<(), ExtensionGrantError> {
+        if registration.revoked.is_cancelled() {
+            return Err(ExtensionGrantError::Revoked);
+        }
+        let state = self.state.lock().expect("extension grant lock poisoned");
+        let active = state
+            .active
+            .get(&(
+                registration.workspace_id.clone(),
+                registration.identity.id.clone(),
+            ))
+            .ok_or(ExtensionGrantError::StaleGeneration)?;
+        if active.generation != registration.generation
+            || active.record.extension.package_digest != registration.identity.package_digest
+        {
+            return Err(ExtensionGrantError::StaleGeneration);
+        }
+        Ok(())
+    }
 }
 
 impl ExtensionInstanceGrant {
+    pub(crate) fn registration_handle(&self) -> ExtensionRegistrationHandle {
+        ExtensionRegistrationHandle {
+            identity: self.record.extension.clone(),
+            workspace_id: self.record.scope.workspace_id.clone(),
+            generation: self.generation,
+            revoked: self.revoked.clone(),
+        }
+    }
+
     fn mint_lease(
         &self,
         operation_id: String,
@@ -484,7 +556,7 @@ impl OperationCapabilityLease {
         if operation_id != self.operation_id {
             return Err(ExtensionGrantError::IdentityMismatch);
         }
-        if scope != &self.scope || (permission.requires_session() && scope.session_id.is_none()) {
+        if scope != &self.scope {
             return Err(ExtensionGrantError::ScopeDenied);
         }
         if !self.permissions.contains(&permission) {
@@ -504,6 +576,16 @@ impl OperationCapabilityLease {
             return Err(ExtensionGrantError::DeadlineExceeded);
         }
         Ok(())
+    }
+
+    pub(crate) async fn cancelled(&self) -> ExtensionGrantError {
+        tokio::select! {
+            _ = self.instance_revoked.cancelled() => ExtensionGrantError::Revoked,
+            _ = self.operation_cancelled.cancelled() => ExtensionGrantError::Cancelled,
+            _ = tokio::time::sleep_until(tokio::time::Instant::from_std(self.deadline)) => {
+                ExtensionGrantError::DeadlineExceeded
+            }
+        }
     }
 }
 
@@ -554,11 +636,8 @@ mod tests {
                 workspace_id: "workspace-1".into(),
                 session_ids: BTreeSet::from(["session-1".into()]),
             },
-            ["workspace.read", "session.read"],
-            [
-                ExtensionPermission::WorkspaceRead,
-                ExtensionPermission::SessionRead,
-            ],
+            ["workspace.read"],
+            [ExtensionPermission::WorkspaceRead],
             "pi:extension/extension@0.1.0".into(),
         )
         .unwrap()
@@ -596,6 +675,10 @@ mod tests {
         for forbidden in ["token", "secret", "credential", "authorizationSubject"] {
             assert!(!text.contains(forbidden));
         }
+        let debug = format!("{record:?}");
+        assert!(debug.contains("<redacted>"));
+        assert!(!debug.contains(&"b".repeat(64)));
+        assert!(!debug.contains("workspace.read"));
     }
 
     #[test]
@@ -644,11 +727,16 @@ mod tests {
             )
             .unwrap();
 
+        let debug = format!("{lease:?}");
+        assert!(debug.contains("scope: \"<redacted>\""));
+        assert!(!debug.contains("session-1"));
+        assert!(!debug.contains("workspace.read"));
+
         lease
-            .authorize("op-1", &scope(), ExtensionPermission::SessionRead)
+            .authorize("op-1", &scope(), ExtensionPermission::WorkspaceRead)
             .unwrap();
         assert_eq!(
-            lease.authorize("op-other", &scope(), ExtensionPermission::SessionRead),
+            lease.authorize("op-other", &scope(), ExtensionPermission::WorkspaceRead),
             Err(ExtensionGrantError::IdentityMismatch)
         );
         assert_eq!(
@@ -657,7 +745,7 @@ mod tests {
         );
         cancelled.cancel();
         assert_eq!(
-            lease.authorize("op-1", &scope(), ExtensionPermission::SessionRead),
+            lease.authorize("op-1", &scope(), ExtensionPermission::WorkspaceRead),
             Err(ExtensionGrantError::Cancelled)
         );
     }
@@ -719,7 +807,31 @@ mod tests {
             .unwrap();
 
         registry.validate_late_result(&old).unwrap();
-        old.authorize("op-1", &scope(), ExtensionPermission::SessionRead)
+        old.authorize("op-1", &scope(), ExtensionPermission::WorkspaceRead)
             .unwrap();
+    }
+
+    #[test]
+    fn registration_handle_closes_on_revoke() {
+        let registry = ExtensionGrantRegistry::default();
+        let grant = registry.install(record()).unwrap();
+        let registration = grant.registration_handle();
+        registry.validate_registration(&registration).unwrap();
+
+        registry.revoke("workspace-1", "example.review").unwrap();
+
+        assert_eq!(
+            registry.validate_registration(&registration),
+            Err(ExtensionGrantError::Revoked)
+        );
+    }
+
+    #[tokio::test]
+    async fn lease_wait_wakes_on_revoke() {
+        let registry = ExtensionGrantRegistry::default();
+        let lease = lease(&registry);
+        registry.revoke("workspace-1", "example.review").unwrap();
+
+        assert_eq!(lease.cancelled().await, ExtensionGrantError::Revoked);
     }
 }

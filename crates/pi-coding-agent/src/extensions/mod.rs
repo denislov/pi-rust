@@ -2,6 +2,8 @@ mod activation;
 mod api;
 #[allow(dead_code)]
 mod grant;
+#[allow(dead_code)]
+mod host;
 mod lock;
 mod manifest;
 mod package;

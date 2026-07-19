@@ -94,6 +94,10 @@ validate_fixture() {
   test -s "$GENERATED/activation-v1.d.ts"
   jq -e '[.outputs[].imports[]] | length == 0' "$BUILD/esbuild-meta.json" >/dev/null
   grep -F 'import pi:extension/host-diagnostics@0.1.0;' "$BUILD/embedded.wit" >/dev/null
+  grep -F 'import pi:extension/host-workspace@0.1.0;' "$BUILD/embedded.wit" >/dev/null
+  grep -F 'import pi:extension/host-model@0.1.0;' "$BUILD/embedded.wit" >/dev/null
+  grep -F 'import pi:extension/host-process@0.1.0;' "$BUILD/embedded.wit" >/dev/null
+  grep -F 'import pi:extension/host-ui@0.1.0;' "$BUILD/embedded.wit" >/dev/null
   grep -F 'export pi:extension/guest@0.1.0;' "$BUILD/embedded.wit" >/dev/null
   if grep -F 'wasi:' "$BUILD/embedded.wit" >/dev/null; then
     echo "fixture Component contains forbidden ambient WASI imports" >&2

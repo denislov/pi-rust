@@ -70,11 +70,13 @@ closed on cancel, revoke, update, session close, or shutdown.
 The original offline prototype proves operation binding, deadline checks,
 stale-generation rejection, and absence of implicit dependency authority.
 `0.4.2` `EKR-003` now has production-owned GrantRecord, instance-generation,
-operation-lease, immutable activation, revoke token, and late-result fence types.
-The public trusted-host lifecycle proves installation, explicit activation, and
-restart recovery without dependency permission transfer. Typed Host API handles
-and their complete per-call conformance matrix remain before this ADR's
-implementation is complete.
+operation-lease, immutable activation, revoke token, registration closure, and
+late-result fence types. The public trusted-host lifecycle proves installation,
+explicit activation, idempotent reload, and restart recovery without dependency
+permission transfer. Lease-only workspace/model/structured-process/UI handles
+apply operation, scope, permission, deadline, cancellation, revoke, bounds, and
+redaction checks before returning an authorization DTO. `EKR-003` is complete;
+the isolated guest dispatcher consumes these handles in `EKR-004`.
 
 ## Verification
 

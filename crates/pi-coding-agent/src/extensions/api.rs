@@ -9,10 +9,6 @@ pub enum CodingAgentExtensionPermission {
     ModelInvoke,
     #[serde(rename = "process.exec")]
     ProcessExec,
-    #[serde(rename = "session.read")]
-    SessionRead,
-    #[serde(rename = "session.write")]
-    SessionWrite,
     #[serde(rename = "ui.interact")]
     UiInteract,
     #[serde(rename = "workspace.read")]
@@ -36,7 +32,7 @@ pub enum CodingAgentExtensionTrustLevel {
     Verified,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CodingAgentExtensionGrantRequest {
     pub package_digest: String,
@@ -47,6 +43,20 @@ pub struct CodingAgentExtensionGrantRequest {
     pub session_ids: BTreeSet<String>,
     #[serde(default)]
     pub permissions: BTreeSet<CodingAgentExtensionPermission>,
+}
+
+impl std::fmt::Debug for CodingAgentExtensionGrantRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CodingAgentExtensionGrantRequest")
+            .field("package_digest", &self.package_digest)
+            .field("source_channel", &self.source_channel)
+            .field("source_digest", &"<redacted>")
+            .field("trust", &self.trust)
+            .field("session_scope_count", &self.session_ids.len())
+            .field("permission_count", &self.permissions.len())
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

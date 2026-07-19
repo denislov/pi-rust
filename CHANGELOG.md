@@ -24,13 +24,16 @@
   bundles, componentizes with ambient WASI disabled, validates embedded WIT and
   forbidden loading behavior, and hashes all inputs/outputs under project
   `target/extension-sdk/`.
-- Started `EKR-003` with independently versioned GrantRecord/workspace activation
+- Completed `EKR-003` with independently versioned GrantRecord/workspace activation
   contracts, a host-owned permission catalog, per-instance generations and
   operation leases, revoke/cancel/deadline/scope/late-result checks, and durable
   grant-backed activation over immutable packages. Trusted embedding APIs now
   provide store-owned staging, installation, and activation; PluginLoad restores
   the bounded `0600` activation record on restart without transferring dependency
-  permissions. This closes `EKR-D009`.
+  permissions. Lease-only workspace/model/structured-process/UI Host handles,
+  generation-bound registration closure, active revoke cancellation, late-result
+  fencing, bounded inputs, and redacted Debug surfaces complete the authorization
+  boundary. This closes `EKR-D009`; `EKR-004` owns real guest dispatch.
 - Workspace packages remain at `0.4.1` until all 0.4.2 implementation, debt,
   conformance, and release gates close.
 

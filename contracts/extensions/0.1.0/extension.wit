@@ -40,6 +40,37 @@ interface host-diagnostics {
   emit: func(level: level, code: string, message: string) -> result<_, string>;
 }
 
+interface host-workspace {
+  use types.{extension-error};
+
+  read-text: func(relative-path: string) -> result<string, extension-error>;
+  write-text: func(relative-path: string, text: string) -> result<_, extension-error>;
+}
+
+interface host-model {
+  use types.{extension-error};
+
+  invoke: func(prompt: string) -> result<string, extension-error>;
+}
+
+interface host-process {
+  use types.{extension-error};
+
+  record output {
+    status: s32,
+    stdout: string,
+    stderr: string,
+  }
+
+  exec: func(program: string, arguments: list<string>) -> result<output, extension-error>;
+}
+
+interface host-ui {
+  use types.{extension-error};
+
+  interact: func(action-id: string, input: list<u8>) -> result<list<u8>, extension-error>;
+}
+
 interface guest {
   use types.{registration, invocation, invocation-output, extension-error};
 
@@ -49,5 +80,9 @@ interface guest {
 
 world extension {
   import host-diagnostics;
+  import host-workspace;
+  import host-model;
+  import host-process;
+  import host-ui;
   export guest;
 }

@@ -25,6 +25,44 @@ struct MethodExpectation {
 }
 
 #[test]
+fn extension_host_handles_are_lease_only_and_service_free() {
+    let source =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/extensions/host.rs"))
+            .expect("read extension Host API handles");
+
+    assert!(source.contains("OperationCapabilityLease"));
+    for family in [
+        "WorkspaceHostHandle",
+        "ModelHostHandle",
+        "ProcessHostHandle",
+        "UiHostHandle",
+    ] {
+        assert!(
+            source.contains(family),
+            "missing typed Host API family {family}"
+        );
+    }
+    for forbidden in [
+        "SessionService",
+        "RuntimeService",
+        "PluginService",
+        "EventService",
+        "AiClient",
+        "Repository",
+        "OperationControl",
+        "FlowService",
+        "Sender<",
+        "Receiver<",
+        "Arc<dyn",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "extension Host API handles must not expose raw authority: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn session_store_failure_controls_remain_test_only() {
     let scan = SourceScan::new();
     let store_path = scan.crate_root.join("src/session/repository.rs");

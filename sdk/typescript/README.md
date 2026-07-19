@@ -11,6 +11,10 @@ runtime code generation, and ambient WASI are unsupported. Installed packages
 contain only the resulting Wasm Component, manifest, lock, and declared data
 resources.
 
+Host workspace, model, structured-process, and UI families are capability
+imports. Session association is an operation lease scope; generic extension
+session state and facts are intentionally deferred to `0.4.3`.
+
 Run the offline internal workflow from the workspace root:
 
 ```bash
