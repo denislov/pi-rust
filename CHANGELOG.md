@@ -52,6 +52,9 @@
   workflow now uses explicit read/propose/validate/apply/check/repair/record
   steps in both service and tool paths. The generic graph remains
   compatibility-only.
+- Fixed the canonical navigation workflow stack overflow introduced by the
+  converged operation dispatch future: the operation match now crosses an
+  explicit heap boundary, and the default-stack durability regression passes.
 
 ## 0.4.0 - 2026-07-19
 

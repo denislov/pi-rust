@@ -342,7 +342,7 @@ impl CodingAgentSession {
         }
 
         let result =
-            async {
+            Box::pin(async {
                 match operation {
                     Operation::Prompt(options) => {
                         let has_existing_prompt_control = self
@@ -625,7 +625,7 @@ impl CodingAgentSession {
                     .await
                     .map(|_| OperationOutcome::DelegationApproval),
                 }
-            }
+            })
             .await;
         let decision = self
             .runtime_host
