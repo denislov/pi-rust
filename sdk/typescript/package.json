@@ -1,0 +1,16 @@
+{
+  "name": "@pi-rust/extension-sdk",
+  "version": "0.1.0-candidate.1",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@bytecodealliance/componentize-js": "0.21.0",
+    "@bytecodealliance/jco": "1.25.2",
+    "esbuild": "0.25.12",
+    "json-schema-to-typescript": "15.0.4",
+    "typescript": "7.0.2"
+  }
+}

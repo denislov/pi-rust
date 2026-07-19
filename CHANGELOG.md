@@ -19,6 +19,11 @@
   permission/activation checks are owned by `EKR-003`, while Wasm Component
   import/export validation is owned by `EKR-004`; the accepted ADR-007
   fail-closed pipeline remains unchanged across those owners.
+- Completed `EKR-002` with a locked private TypeScript SDK precursor and an
+  offline harness that generates WIT/schema declarations, strict-typechecks,
+  bundles, componentizes with ambient WASI disabled, validates embedded WIT and
+  forbidden loading behavior, and hashes all inputs/outputs under project
+  `target/extension-sdk/`.
 - Workspace packages remain at `0.4.1` until all 0.4.2 implementation, debt,
   conformance, and release gates close.
 
