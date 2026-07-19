@@ -65,6 +65,13 @@
 - Advanced every workspace package to `0.4.2`; focused Extension conformance,
   architecture/API boundaries, the frozen 0.4.2 API snapshot, strict Clippy,
   full workspace tests, and TUI smoke passed on 2026-07-20.
+- Closed the reduced 0.4.x train at `0.4.2`: the `0.4.0` through `0.4.2`
+  releases are complete, while the reserved `0.4.3` through `0.4.5` Extension
+  release plans and all of their tasks are explicitly Skipped without empty
+  package releases or implied implementation evidence.
+- Added an architecture-gate check that rejects active task rows, inconsistent
+  plan statuses, post-0.4.2 workspace versions, or changelog releases for the
+  skipped `0.4.3` through `0.4.5` plans.
 
 ## 0.4.1 - 2026-07-19
 

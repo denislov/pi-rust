@@ -19,6 +19,8 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
 - `pi-ai` and `pi-tui` have no workspace dependencies.
 - `pi-mom`, `pi-pods`, and `pi-web-ui` are placeholder crates.
 - All workspace packages inherit version `0.4.2` from the root manifest.
+- The reduced 0.4.x train ends at `0.4.2`; reserved Extension release plans
+  `0.4.3` through `0.4.5` are Skip records and did not produce package versions.
 - `pi-rust` is a placeholder binary; `pi-coding-agent` is user-facing.
 
 ## Runtime And Operations

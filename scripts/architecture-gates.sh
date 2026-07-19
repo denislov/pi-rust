@@ -10,6 +10,7 @@ run() {
 }
 
 run cargo fmt --all --check
+run scripts/0.4x-plan-gate.sh
 run cargo check --workspace --all-targets --all-features
 run cargo test -p pi-ai --test api_boundary_guards --all-features
 run cargo test -p pi-agent-core --test api_contract --all-features api_boundary_guards
