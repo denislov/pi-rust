@@ -39,12 +39,18 @@ pub(crate) struct AgentRuntimeBuild {
     pub(crate) diagnostics: Vec<CodingDiagnostic>,
     #[cfg(test)]
     tool_names: Vec<String>,
+    #[cfg(test)]
+    compaction_enabled: bool,
 }
 
 #[cfg(test)]
 impl AgentRuntimeBuild {
     pub(crate) fn tool_names_for_tests(&self) -> Vec<String> {
         self.tool_names.clone()
+    }
+
+    pub(crate) fn compaction_enabled_for_tests(&self) -> bool {
+        self.compaction_enabled
     }
 }
 
@@ -195,14 +201,16 @@ impl RuntimeService {
             resources,
             runtime.settings(),
         );
-        if matches!(
+        let persistent_session = matches!(
             runtime
                 .session_run_options()
                 .map(|session_options| &session_options.mode),
             Some(SessionMode::Enabled)
-        ) && runtime.settings().is_none()
-        {
-            config.compaction = Some(pi_agent_core::api::agent::CompactionConfig::default());
+        );
+        if persistent_session && config.compaction.take().is_some() {
+            diagnostics.push(CodingDiagnostic::info(
+                "automatic runtime compaction is disabled for persistent sessions; use durable manual compaction",
+            ));
         }
         config.provider_streamer = Some(provider_streamer);
         config.tool_execution_scope = Some(snapshot.operation_id.clone());
@@ -231,6 +239,8 @@ impl RuntimeService {
             }));
         }
 
+        #[cfg(test)]
+        let compaction_enabled = config.compaction.is_some();
         let agent = Agent::new(config);
         for tool in tools.into_iter().chain(policy_tools) {
             if !snapshot.tools.allows(&tool.name) {
@@ -247,6 +257,8 @@ impl RuntimeService {
             diagnostics,
             #[cfg(test)]
             tool_names,
+            #[cfg(test)]
+            compaction_enabled,
         })
     }
 
@@ -507,6 +519,7 @@ mod tests {
     use super::*;
     use crate::app::bootstrap::{PromptInvocation, SessionRunOptions};
     use crate::app::cli::prompt_options::PromptRunOptions;
+    use crate::config::settings::{PartialCompaction, PartialSettings};
     use crate::session::event::DiagnosticLevel;
     use crate::session::replay::{
         MessageStatus, ReplayDiagnostic, SessionReplay, ToolCallStatus, TranscriptItem,
@@ -532,6 +545,41 @@ mod tests {
 
     fn runtime_snapshot(api: &str) -> RuntimeSnapshot {
         runtime_snapshot_with_auth_diagnostics(api, Vec::new())
+    }
+
+    fn runtime_snapshot_with_compaction(api: &str, persistent: bool) -> RuntimeSnapshot {
+        let settings = PartialSettings {
+            compaction: Some(PartialCompaction {
+                enabled: Some(true),
+                reserve_tokens: Some(1024),
+                keep_recent_tokens: Some(2048),
+            }),
+            ..Default::default()
+        }
+        .resolve();
+        RuntimeSnapshot::from_prompt_run_options(PromptRunOptions {
+            prompt: "hello".into(),
+            model: model(api),
+            api_key: Some("key".into()),
+            auth_diagnostics: Vec::new(),
+            system_prompt: Some("system".into()),
+            max_turns: Some(2),
+            tools: Vec::new(),
+            register_builtins: false,
+            ai_client: None,
+            session: Some(if persistent {
+                SessionRunOptions::enabled(".".into())
+            } else {
+                SessionRunOptions::disabled(".".into())
+            }),
+            session_target: None,
+            session_name: None,
+            thinking_level: None,
+            tool_execution: Some(ToolExecutionMode::Sequential),
+            resources: AgentResources::default(),
+            settings: Some(settings),
+            invocation: PromptInvocation::Text("hello".into()),
+        })
     }
 
     fn runtime_snapshot_with_auth_diagnostics(
@@ -592,6 +640,43 @@ mod tests {
             settings: None,
             invocation: PromptInvocation::Text("hello".into()),
         })
+    }
+
+    #[test]
+    fn persistent_runtime_disables_ephemeral_automatic_compaction() {
+        let build = RuntimeService::new()
+            .build_agent_runtime_with_capabilities(
+                &runtime_snapshot_with_compaction("runtime-persistent-compaction", true),
+                &PluginService::new(),
+                &OperationCapabilitySnapshot::permissive("op_persistent_compaction"),
+            )
+            .unwrap();
+
+        assert!(!build.compaction_enabled_for_tests());
+        assert!(
+            build
+                .diagnostics
+                .iter()
+                .any(|diagnostic| { diagnostic.message.contains("use durable manual compaction") })
+        );
+    }
+
+    #[test]
+    fn non_persistent_runtime_retains_ephemeral_automatic_compaction() {
+        let build = RuntimeService::new()
+            .build_agent_runtime_with_capabilities(
+                &runtime_snapshot_with_compaction("runtime-ephemeral-compaction", false),
+                &PluginService::new(),
+                &OperationCapabilitySnapshot::permissive("op_ephemeral_compaction"),
+            )
+            .unwrap();
+
+        assert!(build.compaction_enabled_for_tests());
+        assert!(
+            build.diagnostics.iter().all(|diagnostic| {
+                !diagnostic.message.contains("use durable manual compaction")
+            })
+        );
     }
 
     #[test]

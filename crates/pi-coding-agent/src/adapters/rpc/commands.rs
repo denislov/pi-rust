@@ -568,6 +568,22 @@ impl RpcState {
                 custom_instructions,
             } => self.handle_compact(id, custom_instructions, writer).await,
             RpcCommand::SetAutoCompaction { id, enabled } => {
+                if enabled
+                    && matches!(
+                        self.options.session.mode,
+                        crate::app::bootstrap::SessionMode::Enabled
+                    )
+                {
+                    return write_rpc_response(
+                        writer,
+                        RpcResponse::error(
+                            id,
+                            "set_auto_compaction",
+                            "automatic compaction is unavailable for persistent sessions; use compact",
+                        ),
+                    )
+                    .await;
+                }
                 self.auto_compaction_enabled = enabled;
                 write_rpc_response(
                     writer,

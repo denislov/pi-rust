@@ -3676,7 +3676,7 @@ async fn rpc_queue_mode_setters_change_provider_queue_drain_behavior() {
 }
 
 #[tokio::test]
-async fn rpc_auto_compaction_setter_changes_provider_call_behavior() {
+async fn rpc_persistent_session_rejects_ephemeral_auto_compaction() {
     let temp = tempfile::tempdir().unwrap();
     let cwd = temp.path().join("project");
     let sessions = temp.path().join("sessions");
@@ -3695,7 +3695,6 @@ async fn rpc_auto_compaction_setter_changes_provider_call_behavior() {
             responses: Mutex::new(VecDeque::from([
                 ("seed answer".into(), near_limit_usage.clone()),
                 ("disabled answer".into(), near_limit_usage),
-                ("summary of near-limit history".into(), Usage::default()),
                 ("enabled answer".into(), Usage::default()),
             ])),
         }),
@@ -3768,7 +3767,13 @@ async fn rpc_auto_compaction_setter_changes_provider_call_behavior() {
         value["id"] == "compact-on"
     })
     .await;
-    assert_eq!(enabled["success"], true, "{enabled}");
+    assert_eq!(enabled["success"], false, "{enabled}");
+    assert!(
+        enabled["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("use compact")),
+        "{enabled}"
+    );
     input_writer
         .write_all(b"{\"id\":\"compact-enabled-prompt\",\"type\":\"prompt\",\"message\":\"with compaction\"}\n")
         .await
@@ -3785,16 +3790,13 @@ async fn rpc_auto_compaction_setter_changes_provider_call_behavior() {
     task.await.unwrap();
 
     let contexts = contexts.lock().unwrap();
-    assert_eq!(contexts.len(), 4, "{contexts:#?}");
-    assert_eq!(contexts[2].messages.len(), 1, "{:#?}", contexts[2]);
-    assert!(matches!(contexts[2].messages[0], Message::User { .. }));
-    assert!(contexts[3].messages.iter().any(|message| matches!(
+    assert_eq!(contexts.len(), 3, "{contexts:#?}");
+    assert!(contexts[2].messages.iter().any(|message| matches!(
         message,
         Message::User { content }
             if content.iter().any(|block| matches!(
                 block,
-                ContentBlock::Text { text, .. }
-                    if text.contains("summary of near-limit history")
+                ContentBlock::Text { text, .. } if text == "with compaction"
             ))
     )));
 }

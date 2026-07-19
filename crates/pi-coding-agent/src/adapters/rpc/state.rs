@@ -1,6 +1,6 @@
 use crate::adapters::rpc::event_queue::{RpcProductEventQueue, RpcProductEventReceiver};
 use crate::adapters::rpc::events::RpcCodingEventAdapter;
-use crate::app::bootstrap::CliRunOptions;
+use crate::app::bootstrap::{CliRunOptions, SessionMode};
 use crate::app::cli::error::CliError;
 use crate::app::cli::request::{render_diagnostics, resolve_runtime_defaults};
 use crate::operations::prompt::context::QueuedPromptInput;
@@ -111,6 +111,7 @@ impl RpcState {
             model.id.clone(),
         );
         let (background_completion_tx, background_completion_rx) = mpsc::unbounded_channel();
+        let auto_compaction_enabled = !matches!(options.session.mode, SessionMode::Enabled);
         Ok(Self {
             recovery_auth_token: std::env::var("PI_RUST_RPC_AUTH_TOKEN")
                 .ok()
@@ -122,7 +123,7 @@ impl RpcState {
             thinking_level: ThinkingLevel::Off,
             steering_mode: QueueMode::OneAtATime,
             follow_up_mode: QueueMode::OneAtATime,
-            auto_compaction_enabled: true,
+            auto_compaction_enabled,
             session_name: None,
             active_session_path: None,
             active_leaf_id: None,

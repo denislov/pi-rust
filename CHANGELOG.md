@@ -56,6 +56,11 @@
   pipelines, AgentTeam member work is bounded structured concurrency, and
   workflow-owned contexts/ProductEvents remain the observation boundary instead
   of introducing a replacement generic step observer.
+- Completed `AWC-006` compaction convergence: persistent sessions now disable
+  ephemeral runtime automatic compaction and direct callers to durable manual
+  compaction; non-persistent runtimes retain core automatic compaction. Persistent
+  RPC sessions reject `set_auto_compaction=true`, while durable summaries remain
+  transaction/outbox backed and restart-hydratable.
 - Fixed the canonical navigation workflow stack overflow introduced by the
   converged operation dispatch future: the operation match now crosses an
   explicit heap boundary, and the default-stack durability regression passes.
