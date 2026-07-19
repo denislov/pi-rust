@@ -759,8 +759,21 @@ const SELF_HEALING_EDIT_NODE_SPECS: &[SelfHealingEditNodeSpec] = &[
     },
 ];
 
+#[allow(dead_code)]
 pub(crate) struct SelfHealingEditFlow {
     flow: Flow<SelfHealingEditContext>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SelfHealingEditStep {
+    Start,
+    ReadTarget,
+    ProposePatch,
+    ValidatePatch,
+    ApplyPatch,
+    RunCheck,
+    RepairPatch,
+    RecordResult,
 }
 
 impl SelfHealingEditFlow {
@@ -776,6 +789,7 @@ impl SelfHealingEditFlow {
         Ok(Self { flow })
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn run(
         &self,
         ctx: &mut SelfHealingEditContext,
@@ -783,6 +797,7 @@ impl SelfHealingEditFlow {
         self.flow.run(ctx).await.map_err(flow_error)
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn run_with_cancellation(
         &self,
         ctx: &mut SelfHealingEditContext,
@@ -803,6 +818,49 @@ impl SelfHealingEditFlow {
             ctx.fail(error.clone());
         }
         result
+    }
+
+    pub(crate) async fn run_typed(
+        &self,
+        ctx: &mut SelfHealingEditContext,
+        cancellation: Option<CancellationToken>,
+    ) -> Result<(), CodingSessionError> {
+        let mut step = SelfHealingEditStep::Start;
+        loop {
+            if cancellation
+                .as_ref()
+                .is_some_and(|token| token.is_cancelled())
+            {
+                let error = CodingSessionError::Cancelled;
+                ctx.fail(error.clone());
+                return Err(error);
+            }
+            let result = match step {
+                SelfHealingEditStep::Start => ctx.start_edit_workflow(),
+                SelfHealingEditStep::ReadTarget => ctx.read_target().await,
+                SelfHealingEditStep::ProposePatch => ctx.propose_patch(),
+                SelfHealingEditStep::ValidatePatch => ctx.validate_patch(),
+                SelfHealingEditStep::ApplyPatch => ctx.apply_patch().await,
+                SelfHealingEditStep::RunCheck => ctx.run_check().await,
+                SelfHealingEditStep::RepairPatch => ctx.repair_patch().await,
+                SelfHealingEditStep::RecordResult => ctx.record_result(),
+            };
+            if let Err(error) = result {
+                return Err(CodingSessionError::Flow {
+                    message: ctx.fail(error),
+                });
+            }
+            step = match step {
+                SelfHealingEditStep::Start => SelfHealingEditStep::ReadTarget,
+                SelfHealingEditStep::ReadTarget => SelfHealingEditStep::ProposePatch,
+                SelfHealingEditStep::ProposePatch => SelfHealingEditStep::ValidatePatch,
+                SelfHealingEditStep::ValidatePatch => SelfHealingEditStep::ApplyPatch,
+                SelfHealingEditStep::ApplyPatch => SelfHealingEditStep::RunCheck,
+                SelfHealingEditStep::RunCheck => SelfHealingEditStep::RepairPatch,
+                SelfHealingEditStep::RepairPatch => SelfHealingEditStep::RecordResult,
+                SelfHealingEditStep::RecordResult => return Ok(()),
+            };
+        }
     }
 }
 

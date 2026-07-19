@@ -49,6 +49,10 @@
   summaries now use explicit replay/range/prompt/model/record/finalization steps,
   with provider cancellation propagated through the typed runner. The generic
   graph remains compatibility-only.
+- Added the SelfHealingEdit typed pipeline vertical slice: the filesystem edit
+  workflow now uses explicit read/propose/validate/apply/check/repair/record
+  steps in both service and tool paths. The generic graph remains
+  compatibility-only.
 
 ## 0.4.0 - 2026-07-19
 

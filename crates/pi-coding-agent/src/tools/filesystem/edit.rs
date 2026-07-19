@@ -321,7 +321,7 @@ async fn edit_tool_execute_with_operations(
         SelfHealingEditOptions::new(cwd.to_path_buf(), path, replacements).with_operations(ops);
     let mut context = SelfHealingEditContext::new(options);
     let flow = SelfHealingEditFlow::new().map_err(|error| error.to_string())?;
-    match flow.run(&mut context).await {
+    match flow.run_typed(&mut context, None).await {
         Ok(_) => context
             .finish_success()
             .map(self_healing_outcome_to_tool_output)

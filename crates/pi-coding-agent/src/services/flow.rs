@@ -93,6 +93,7 @@ impl FlowService {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn run_self_healing_edit_graph(
         &self,
         ctx: &mut SelfHealingEditContext,
@@ -104,7 +105,7 @@ impl FlowService {
         &self,
         ctx: &mut SelfHealingEditContext,
     ) -> Result<SelfHealingEditOutcome, CodingSessionError> {
-        match self.run_self_healing_edit_graph(ctx).await {
+        match self.self_healing_edit_flow()?.run_typed(ctx, None).await {
             Ok(_) => ctx.finish_success(),
             Err(error) => Err(ctx.take_failure_error().unwrap_or(error)),
         }
@@ -117,7 +118,7 @@ impl FlowService {
     ) -> Result<SelfHealingEditOutcome, CodingSessionError> {
         match self
             .self_healing_edit_flow()?
-            .run_with_cancellation(ctx, cancellation)
+            .run_typed(ctx, Some(cancellation))
             .await
         {
             Ok(_) => ctx.finish_success(),
