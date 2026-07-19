@@ -45,6 +45,10 @@
   now uses explicit discovery, validation, loading, capability registration,
   diagnostics, and finalization steps with boundary cancellation checks. The
   generic graph remains compatibility-only.
+- Added the BranchSummary typed pipeline vertical slice: production branch
+  summaries now use explicit replay/range/prompt/model/record/finalization steps,
+  with provider cancellation propagated through the typed runner. The generic
+  graph remains compatibility-only.
 
 ## 0.4.0 - 2026-07-19
 

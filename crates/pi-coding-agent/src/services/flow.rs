@@ -254,6 +254,7 @@ impl FlowService {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn run_branch_summary_graph(
         &self,
         ctx: &mut BranchSummaryContext,
@@ -265,7 +266,7 @@ impl FlowService {
         &self,
         ctx: &mut BranchSummaryContext,
     ) -> Result<BranchSummaryOutcome, CodingSessionError> {
-        match self.run_branch_summary_graph(ctx).await {
+        match self.branch_summary_flow()?.run_typed(ctx, None).await {
             Ok(_) => ctx.finish_success(),
             Err(error) => Err(ctx.take_failure_error().unwrap_or(error)),
         }
@@ -278,7 +279,7 @@ impl FlowService {
     ) -> Result<BranchSummaryOutcome, CodingSessionError> {
         match self
             .branch_summary_flow()?
-            .run_with_cancellation(ctx, cancellation)
+            .run_typed(ctx, Some(cancellation))
             .await
         {
             Ok(_) => ctx.finish_success(),

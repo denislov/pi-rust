@@ -510,8 +510,20 @@ impl BranchSummaryContext {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) struct BranchSummaryFlow {
     flow: Flow<BranchSummaryContext>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BranchSummaryStep {
+    Start,
+    LoadEvents,
+    SelectRange,
+    PreparePrompt,
+    RunModel,
+    Record,
+    Finalize,
 }
 
 impl BranchSummaryFlow {
@@ -525,6 +537,7 @@ impl BranchSummaryFlow {
         Ok(Self { flow })
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn run(
         &self,
         ctx: &mut BranchSummaryContext,
@@ -532,6 +545,7 @@ impl BranchSummaryFlow {
         self.flow.run(ctx).await.map_err(flow_error)
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn run_with_cancellation(
         &self,
         ctx: &mut BranchSummaryContext,
@@ -553,6 +567,50 @@ impl BranchSummaryFlow {
             ctx.fail(error.clone());
         }
         result
+    }
+
+    pub(crate) async fn run_typed(
+        &self,
+        ctx: &mut BranchSummaryContext,
+        cancellation: Option<CancellationToken>,
+    ) -> Result<(), CodingSessionError> {
+        if let Some(token) = cancellation.clone() {
+            ctx.set_cancellation(token);
+        }
+        let mut step = BranchSummaryStep::Start;
+        loop {
+            if cancellation
+                .as_ref()
+                .is_some_and(|token| token.is_cancelled())
+            {
+                let error = CodingSessionError::Cancelled;
+                ctx.fail(error.clone());
+                return Err(error);
+            }
+            let result = match step {
+                BranchSummaryStep::Start => ctx.start_branch_summary(),
+                BranchSummaryStep::LoadEvents => ctx.load_branch_events(),
+                BranchSummaryStep::SelectRange => ctx.select_abandoned_range(),
+                BranchSummaryStep::PreparePrompt => ctx.prepare_summary_prompt(),
+                BranchSummaryStep::RunModel => ctx.run_summary_model().await,
+                BranchSummaryStep::Record => ctx.record_branch_summary(),
+                BranchSummaryStep::Finalize => ctx.finalize_branch_summary(),
+            };
+            if let Err(error) = result {
+                return Err(CodingSessionError::Flow {
+                    message: ctx.fail(error),
+                });
+            }
+            step = match step {
+                BranchSummaryStep::Start => BranchSummaryStep::LoadEvents,
+                BranchSummaryStep::LoadEvents => BranchSummaryStep::SelectRange,
+                BranchSummaryStep::SelectRange => BranchSummaryStep::PreparePrompt,
+                BranchSummaryStep::PreparePrompt => BranchSummaryStep::RunModel,
+                BranchSummaryStep::RunModel => BranchSummaryStep::Record,
+                BranchSummaryStep::Record => BranchSummaryStep::Finalize,
+                BranchSummaryStep::Finalize => return Ok(()),
+            };
+        }
     }
 }
 
