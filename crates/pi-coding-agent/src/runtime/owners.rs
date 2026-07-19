@@ -13,7 +13,6 @@ use crate::profiles::ProfileRegistry;
 use crate::services::authorization::AuthorizationService;
 use crate::services::capability::CapabilityService;
 use crate::services::event::EventService;
-use crate::services::plugin::PluginService;
 use crate::services::runtime::RuntimeService;
 use crate::services::workflow::WorkflowService;
 
@@ -30,7 +29,6 @@ pub(super) struct RuntimeHost {
     pub(super) runtime_service: RuntimeService,
     pub(super) workflow_service: WorkflowService,
     pub(super) capability_service: CapabilityService,
-    pub(super) plugin_service: PluginService,
     pub(super) profile_registry: ProfileRegistry,
     pub(super) default_plugin_load_options: PluginLoadOptions,
     pub(super) authorization_service: AuthorizationService,

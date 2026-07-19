@@ -5,7 +5,6 @@ use crate::runtime::capability::OperationCapabilitySnapshot;
 use crate::runtime::control::{OperationControl, PromptControlReceiver};
 use crate::runtime::facade::CodingSessionError;
 use crate::services::event::EventService;
-use crate::services::plugin::PluginService;
 use crate::services::workflow::WorkflowService;
 use runner::{AgentInvocationContext, AgentInvocationOptions, AgentInvocationOutcome};
 use tokio_util::sync::CancellationToken;
@@ -15,7 +14,6 @@ pub(crate) async fn run(
     scheduler_parent_operation_id: String,
     prompt_control_receiver: Option<PromptControlReceiver>,
     profile_registry: &ProfileRegistry,
-    plugin_service: &PluginService,
     event_service: &EventService,
     workflow_service: &WorkflowService,
     operation_control: &OperationControl,
@@ -25,7 +23,6 @@ pub(crate) async fn run(
     let mut context = AgentInvocationContext::new(
         options,
         profile_registry.clone(),
-        plugin_service.clone(),
         event_service.clone(),
         operation_control.clone(),
         scheduler_parent_operation_id,

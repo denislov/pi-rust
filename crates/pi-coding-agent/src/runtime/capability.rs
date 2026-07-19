@@ -3,7 +3,6 @@ use std::path::{Component, Path, PathBuf};
 
 use super::control::OperationKind;
 use super::snapshot::SnapshotCoordinator;
-use crate::plugins::PluginCapabilities;
 use crate::profiles::ProfileId;
 use crate::runtime::facade::CodingSessionError;
 use crate::session::event::PersistedRuntimeGenerationRef;
@@ -211,27 +210,6 @@ impl SessionWriteCapability {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct UiCapability;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct PluginCapabilitySet {
-    allow_all: bool,
-}
-
-impl PluginCapabilitySet {
-    pub(crate) fn permissive() -> Self {
-        Self { allow_all: true }
-    }
-
-    pub(crate) fn is_permissive(&self) -> bool {
-        self.allow_all
-    }
-}
-
-impl From<&PluginCapabilities> for PluginCapabilitySet {
-    fn from(_value: &PluginCapabilities) -> Self {
-        Self::default()
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct OperationCapabilitySnapshot {
     pub(crate) generation: CapabilityGeneration,
@@ -245,7 +223,6 @@ pub(crate) struct OperationCapabilitySnapshot {
     pub(crate) session_read: Option<SessionReadCapability>,
     pub(crate) session_write: Option<SessionWriteCapability>,
     pub(crate) ui: Option<UiCapability>,
-    pub(crate) plugin: PluginCapabilitySet,
 }
 
 impl OperationCapabilitySnapshot {
@@ -281,7 +258,6 @@ impl OperationCapabilitySnapshot {
             session_read: Some(SessionReadCapability { persistent: true }),
             session_write: Some(SessionWriteCapability { persistent: true }),
             ui: Some(UiCapability),
-            plugin: PluginCapabilitySet::permissive(),
         }
     }
 }
@@ -325,7 +301,6 @@ pub(crate) struct CapabilitySnapshotInput {
     pub(crate) actor: ActorId,
     pub(crate) uses_model: bool,
     pub(crate) model_profile_id: Option<ProfileId>,
-    pub(crate) plugin_capabilities: PluginCapabilities,
     pub(crate) persistent_session: bool,
     pub(crate) cwd: Option<PathBuf>,
     pub(crate) shell_path: Option<String>,
@@ -422,7 +397,6 @@ impl CapabilitySnapshotService {
                 persistent: input.persistent_session,
             }),
             ui: None,
-            plugin: PluginCapabilitySet::from(&input.plugin_capabilities),
         }
     }
 }
@@ -436,7 +410,6 @@ impl Default for CapabilitySnapshotService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugins::PluginCapabilities;
     use crate::profiles::ProfileId;
     use crate::runtime::control::OperationKind;
 
@@ -471,7 +444,6 @@ mod tests {
                     | OperationKind::SelfHealingEdit
             ),
             model_profile_id: Some(ProfileId::from("reviewer")),
-            plugin_capabilities: PluginCapabilities::new(),
             persistent_session: true,
             cwd: Some(std::path::PathBuf::from("/workspace")),
             shell_path: None,
@@ -503,7 +475,6 @@ mod tests {
         assert!(snapshot.shell.is_none());
         assert!(snapshot.session_read.is_some());
         assert!(snapshot.session_write.is_some());
-        assert!(!snapshot.plugin.is_permissive());
     }
 
     #[test]

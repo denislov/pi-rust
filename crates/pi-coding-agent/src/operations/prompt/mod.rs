@@ -11,7 +11,6 @@ use crate::runtime::control::OperationControl;
 use crate::runtime::facade::CodingSessionError;
 use crate::services::authorization::AuthorizationService;
 use crate::services::event::EventService;
-use crate::services::plugin::PluginService;
 use crate::services::session::apply_finalized_session_write;
 use crate::services::workflow::WorkflowService;
 use crate::session::event::PersistedDelegationStatus;
@@ -26,7 +25,6 @@ struct PromptOperation<'a> {
     persistence: &'a mut SessionPersistence,
     operation_control: &'a mut OperationControl,
     profile_registry: &'a ProfileRegistry,
-    plugin_service: &'a PluginService,
     event_service: &'a EventService,
     workflow_service: &'a WorkflowService,
     pending_delegation_confirmations: &'a mut PendingDelegationConfirmationQueue,
@@ -38,7 +36,6 @@ pub(crate) async fn run(
     persistence: &mut SessionPersistence,
     operation_control: &mut OperationControl,
     profile_registry: &ProfileRegistry,
-    plugin_service: &PluginService,
     event_service: &EventService,
     workflow_service: &WorkflowService,
     pending_delegation_confirmations: &mut PendingDelegationConfirmationQueue,
@@ -51,7 +48,6 @@ pub(crate) async fn run(
         persistence,
         operation_control,
         profile_registry,
-        plugin_service,
         event_service,
         workflow_service,
         pending_delegation_confirmations,
@@ -181,7 +177,6 @@ impl PromptOperation<'_> {
                             crate::operations::delegation::execution::execute_agent(
                                 self.workflow_service,
                                 self.profile_registry.clone(),
-                                self.plugin_service.clone(),
                                 self.event_service.clone(),
                                 self.operation_control.clone(),
                                 request,
@@ -196,7 +191,6 @@ impl PromptOperation<'_> {
                             crate::operations::delegation::execution::execute_team(
                                 self.workflow_service,
                                 self.profile_registry.clone(),
-                                self.plugin_service.clone(),
                                 self.event_service.clone(),
                                 self.operation_control.clone(),
                                 request,
@@ -291,7 +285,6 @@ impl PromptOperation<'_> {
                 let turn_id = transaction.turn_id().to_owned();
                 let mut context =
                     PromptTurnContext::new(PromptTurnIds::new(operation_id, turn_id), options);
-                context.set_plugin_service(self.plugin_service.clone());
                 context.set_authorization_service(self.authorization_service.clone());
                 context.set_authorization_event_writer(session_service.event_writer());
                 context.set_session_id(session_service.session_id().to_owned());
@@ -313,7 +306,6 @@ impl PromptOperation<'_> {
                     PromptTurnIds::new(snapshot.operation_id.clone(), ids.next_turn_id()),
                     options,
                 );
-                context.set_plugin_service(self.plugin_service.clone());
                 context.set_authorization_service(self.authorization_service.clone());
                 context
                     .set_non_persistent_session(state.runtime_id.clone(), state.transcript.clone());

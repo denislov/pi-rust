@@ -3683,7 +3683,7 @@ mod tests {
     fn prompt_transaction_persists_admitted_snapshot_generation() {
         use crate::runtime::capability::{
             ActorId, CapabilityGeneration, ModelCapability, OperationCapabilitySnapshot,
-            PluginCapabilitySet, ToolCapabilitySet,
+            ToolCapabilitySet,
         };
 
         let temp = tempfile::tempdir().unwrap();
@@ -3706,7 +3706,6 @@ mod tests {
             session_read: None,
             session_write: None,
             ui: None,
-            plugin: PluginCapabilitySet::default(),
         };
         let mut transaction = service.begin_prompt_transaction_with_snapshot(&snapshot);
         let operation_id = transaction.operation_id().to_owned();

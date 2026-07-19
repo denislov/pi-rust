@@ -4,7 +4,6 @@ use pi_agent_core::api::agent::{AgentEvent, AgentMessage, AgentStream};
 use super::CodingSessionError;
 use super::context::{CodingDiagnostic, PromptTurnContext, QueuedPromptInput};
 use crate::app::bootstrap::PromptInvocation;
-use crate::plugins::PromptHookPoint;
 use crate::runtime::control::PromptControlCommand;
 use crate::services::runtime::RuntimeService;
 
@@ -86,11 +85,7 @@ fn resolve_request(ctx: &mut PromptTurnContext) -> Result<(), String> {
 }
 
 fn prepare_input(ctx: &mut PromptTurnContext) -> Result<(), String> {
-    ctx.run_prompt_hook(PromptHookPoint::BeforePromptPrepare)
-        .map_err(|error| error.to_string())?;
     ctx.prepare_input().map_err(|error| error.to_string())?;
-    ctx.run_prompt_hook(PromptHookPoint::AfterInputPrepared)
-        .map_err(|error| error.to_string())?;
     step_complete()
 }
 
@@ -102,8 +97,6 @@ fn resolve_runtime(ctx: &mut PromptTurnContext) -> Result<(), String> {
 
 fn load_resources(ctx: &mut PromptTurnContext) -> Result<(), String> {
     ctx.load_resources_from_runtime()
-        .map_err(|error| error.to_string())?;
-    ctx.run_prompt_hook(PromptHookPoint::AfterResourcesLoaded)
         .map_err(|error| error.to_string())?;
     step_complete()
 }
@@ -172,12 +165,7 @@ fn build_agent_runtime(ctx: &mut PromptTurnContext) -> Result<(), String> {
     let service = RuntimeService::new();
     let authorization = ctx.authorization_hook_context();
     let build = service
-        .build_agent_runtime_with_authorization(
-            &runtime,
-            ctx.plugin_service(),
-            snapshot,
-            authorization,
-        )
+        .build_agent_runtime_with_authorization(&runtime, snapshot, authorization)
         .map_err(|error| error.to_string())?;
     for diagnostic in build.diagnostics {
         ctx.record_diagnostic(diagnostic);
@@ -207,8 +195,6 @@ fn record_user_input(ctx: &mut PromptTurnContext) -> Result<(), String> {
 }
 
 async fn run_agent_turn(ctx: &mut PromptTurnContext) -> Result<(), String> {
-    ctx.run_prompt_hook(PromptHookPoint::BeforeAgentTurn)
-        .map_err(|error| error.to_string())?;
     let agent = ctx.agent().cloned().ok_or_else(|| {
         CodingSessionError::Session {
             message: "prompt turn has no agent runtime".into(),
@@ -287,9 +273,6 @@ async fn run_agent_turn(ctx: &mut PromptTurnContext) -> Result<(), String> {
         }
         .to_string());
     }
-
-    ctx.run_prompt_hook(PromptHookPoint::AfterAgentTurn)
-        .map_err(|error| error.to_string())?;
     step_complete()
 }
 
@@ -337,8 +320,6 @@ fn finalize_turn(ctx: &mut PromptTurnContext) -> Result<(), String> {
             }
             .to_string());
         }
-        ctx.run_prompt_hook(PromptHookPoint::BeforeSessionCommit)
-            .map_err(|error| error.to_string())?;
         return step_complete();
     }
 
@@ -350,8 +331,6 @@ fn finalize_turn(ctx: &mut PromptTurnContext) -> Result<(), String> {
             }
             .to_string());
         }
-        ctx.run_prompt_hook(PromptHookPoint::BeforeSessionCommit)
-            .map_err(|error| error.to_string())?;
         return step_complete();
     }
 
@@ -363,8 +342,6 @@ fn finalize_turn(ctx: &mut PromptTurnContext) -> Result<(), String> {
 
 fn emit_completion(ctx: &mut PromptTurnContext) -> Result<(), String> {
     ctx.record_prompt_completed()
-        .map_err(|error| error.to_string())?;
-    ctx.run_prompt_hook(PromptHookPoint::AfterSessionCommit)
         .map_err(|error| error.to_string())?;
     step_complete()
 }

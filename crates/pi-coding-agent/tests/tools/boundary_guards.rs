@@ -9,7 +9,7 @@ fn runtime_service_validates_tools_before_provider_visibility() {
     let source = fs::read_to_string(crate_root.join("src/services/runtime.rs"))
         .expect("read runtime service source");
     let start = source
-        .find("fn build_agent_runtime_with_plugins_and_diagnostics(")
+        .find("fn build_agent_runtime_with_diagnostics(")
         .expect("runtime builder should exist");
     let end = source[start..]
         .find("fn apply_tool_policy(")

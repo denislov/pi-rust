@@ -30,7 +30,6 @@ use crate::operations::prompt::context::{CodingDiagnostic, RuntimeSnapshot};
 use crate::runtime::capability::{ModelCapability, OperationCapabilitySnapshot};
 use crate::runtime::facade::CodingSessionError;
 use crate::services::authorization::{AuthorizationHookContext, ToolAuthorizationInventory};
-use crate::services::plugin::PluginService;
 use crate::session::event::PersistedContentBlock;
 use crate::session::replay::{MessageStatus, SessionReplay, ToolCallStatus, TranscriptItem};
 
@@ -119,43 +118,29 @@ impl RuntimeService {
         &self,
         runtime: &RuntimeSnapshot,
     ) -> Result<Agent, CodingSessionError> {
-        self.build_agent_runtime_with_plugins(runtime, &PluginService::new())
+        Ok(self.build_agent_runtime_with_diagnostics(runtime)?.agent)
     }
 
     #[cfg(test)]
-    pub(crate) fn build_agent_runtime_with_plugins(
+    pub(crate) fn build_agent_runtime_with_diagnostics(
         &self,
         runtime: &RuntimeSnapshot,
-        plugin_service: &PluginService,
-    ) -> Result<Agent, CodingSessionError> {
-        Ok(self
-            .build_agent_runtime_with_plugins_and_diagnostics(runtime, plugin_service)?
-            .agent)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn build_agent_runtime_with_plugins_and_diagnostics(
-        &self,
-        runtime: &RuntimeSnapshot,
-        plugin_service: &PluginService,
     ) -> Result<AgentRuntimeBuild, CodingSessionError> {
         let snapshot = OperationCapabilitySnapshot::permissive("op_test_runtime");
-        self.build_agent_runtime_with_capabilities(runtime, plugin_service, &snapshot)
+        self.build_agent_runtime_with_capabilities(runtime, &snapshot)
     }
 
     pub(crate) fn build_agent_runtime_with_capabilities(
         &self,
         runtime: &RuntimeSnapshot,
-        plugin_service: &PluginService,
         snapshot: &OperationCapabilitySnapshot,
     ) -> Result<AgentRuntimeBuild, CodingSessionError> {
-        self.build_agent_runtime_with_authorization(runtime, plugin_service, snapshot, None)
+        self.build_agent_runtime_with_authorization(runtime, snapshot, None)
     }
 
     pub(crate) fn build_agent_runtime_with_authorization(
         &self,
         runtime: &RuntimeSnapshot,
-        plugin_service: &PluginService,
         snapshot: &OperationCapabilitySnapshot,
         authorization: Option<AuthorizationHookContext>,
     ) -> Result<AgentRuntimeBuild, CodingSessionError> {
@@ -170,7 +155,7 @@ impl RuntimeService {
             runtime.profile_delegation_policy(),
             runtime.delegation_target_inventory(),
         );
-        let plugin_tools = plugin_service.collect_tools_with_capabilities(&snapshot.plugin);
+        let plugin_tools = Vec::<AgentTool>::new();
         let authorization_inventory =
             ToolAuthorizationInventory::new(&plugin_tools, runtime.tools());
         let tools = apply_tool_policy(runtime, plugin_tools, &policy_tools, &mut diagnostics)
@@ -645,7 +630,6 @@ mod tests {
         let build = RuntimeService::new()
             .build_agent_runtime_with_capabilities(
                 &runtime_snapshot_with_compaction("runtime-persistent-compaction", true),
-                &PluginService::new(),
                 &OperationCapabilitySnapshot::permissive("op_persistent_compaction"),
             )
             .unwrap();
@@ -664,7 +648,6 @@ mod tests {
         let build = RuntimeService::new()
             .build_agent_runtime_with_capabilities(
                 &runtime_snapshot_with_compaction("runtime-ephemeral-compaction", false),
-                &PluginService::new(),
                 &OperationCapabilitySnapshot::permissive("op_ephemeral_compaction"),
             )
             .unwrap();
@@ -722,8 +705,7 @@ mod tests {
     #[test]
     fn runtime_build_rejects_missing_model_capability() {
         use crate::runtime::capability::{
-            ActorId, CapabilityGeneration, OperationCapabilitySnapshot, PluginCapabilitySet,
-            ToolCapabilitySet,
+            ActorId, CapabilityGeneration, OperationCapabilitySnapshot, ToolCapabilitySet,
         };
         let runtime = runtime_snapshot("test-api");
         let snapshot = OperationCapabilitySnapshot {
@@ -738,14 +720,11 @@ mod tests {
             session_read: None,
             session_write: None,
             ui: None,
-            plugin: PluginCapabilitySet::default(),
         };
 
-        let error = match RuntimeService::new().build_agent_runtime_with_capabilities(
-            &runtime,
-            &PluginService::new(),
-            &snapshot,
-        ) {
+        let error = match RuntimeService::new()
+            .build_agent_runtime_with_capabilities(&runtime, &snapshot)
+        {
             Ok(_) => panic!("expected missing model capability to be rejected"),
             Err(error) => error,
         };
@@ -761,7 +740,7 @@ mod tests {
         let snapshot = OperationCapabilitySnapshot::test_with_tools("op_runtime", ["read"]);
 
         let build = RuntimeService::new()
-            .build_agent_runtime_with_capabilities(&runtime, &PluginService::new(), &snapshot)
+            .build_agent_runtime_with_capabilities(&runtime, &snapshot)
             .unwrap();
 
         assert_eq!(build.tool_names_for_tests(), vec!["read".to_string()]);

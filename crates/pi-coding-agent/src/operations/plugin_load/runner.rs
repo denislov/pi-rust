@@ -2,7 +2,12 @@ use tokio_util::sync::CancellationToken;
 
 use crate::plugins::PluginCapabilities;
 use crate::runtime::facade::CodingSessionError;
-use crate::services::plugin::PluginDiagnostic;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PluginDiagnostic {
+    pub(crate) plugin_id: Option<String>,
+    pub(crate) message: String,
+}
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct PluginLoadOptions;

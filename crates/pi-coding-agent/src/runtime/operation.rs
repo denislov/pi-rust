@@ -272,7 +272,6 @@ pub(crate) enum OperationOutcome {
     Prompt(PromptTurnOutcome),
     ManualCompaction(PromptTurnOutcome),
     PluginLoad(PluginLoadOutcome),
-    PluginCommand(String),
     DelegationApproval,
     DelegationRejection,
     BranchSummary(PromptTurnOutcome),
@@ -680,7 +679,7 @@ mod tests {
     fn operation_admission_carries_frozen_capability_snapshot() {
         use crate::runtime::capability::{
             ActorId, CapabilityGeneration, ModelCapability, OperationCapabilitySnapshot,
-            PluginCapabilitySet, ToolCapabilitySet,
+            ToolCapabilitySet,
         };
 
         let descriptor = Operation::Prompt(PromptTurnOptions::new(PromptInvocation::Text(
@@ -699,7 +698,6 @@ mod tests {
             session_read: None,
             session_write: None,
             ui: None,
-            plugin: PluginCapabilitySet::default(),
         };
 
         let admission = OperationExecution::root(

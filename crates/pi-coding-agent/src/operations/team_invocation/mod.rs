@@ -5,7 +5,6 @@ use crate::runtime::capability::OperationCapabilitySnapshot;
 use crate::runtime::control::OperationControl;
 use crate::runtime::facade::CodingSessionError;
 use crate::services::event::EventService;
-use crate::services::plugin::PluginService;
 use crate::services::workflow::WorkflowService;
 use runner::{AgentTeamContext, AgentTeamOptions, AgentTeamOutcome};
 use tokio_util::sync::CancellationToken;
@@ -14,7 +13,6 @@ pub(crate) async fn run(
     options: AgentTeamOptions,
     scheduler_parent_operation_id: String,
     profile_registry: &ProfileRegistry,
-    plugin_service: &PluginService,
     event_service: &EventService,
     workflow_service: &WorkflowService,
     operation_control: &OperationControl,
@@ -24,7 +22,6 @@ pub(crate) async fn run(
     let mut context = AgentTeamContext::new(
         options,
         profile_registry.clone(),
-        plugin_service.clone(),
         event_service.clone(),
         operation_control.clone(),
         scheduler_parent_operation_id,

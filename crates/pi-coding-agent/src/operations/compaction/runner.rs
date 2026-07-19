@@ -11,7 +11,6 @@ use crate::operations::prompt::context::{
 use crate::runtime::capability::ModelCapability;
 use crate::runtime::capability::OperationCapabilitySnapshot;
 use crate::runtime::facade::CodingSessionError;
-use crate::services::plugin::PluginService;
 use crate::services::runtime::{RuntimeService, scoped_provider_streamer_for_runtime};
 #[cfg(test)]
 use crate::session::event::SessionEventEnvelope;
@@ -300,7 +299,6 @@ impl ManualCompactionContext {
         let service = RuntimeService::new();
         let build = service.build_agent_runtime_with_capabilities(
             self.options.runtime(),
-            &PluginService::new(),
             &self.capability_snapshot,
         )?;
         let agent = build.agent;

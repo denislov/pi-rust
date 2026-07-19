@@ -145,7 +145,6 @@ pub(crate) fn capability_snapshot_for_delegated_profile(
         session_read: None,
         session_write: None,
         ui: None,
-        plugin: parent.plugin.clone(),
     }
 }
 

@@ -125,7 +125,6 @@ impl CodingAgentSession {
         operation: &Operation,
         operation_runtime: Option<&crate::operations::prompt::context::RuntimeSnapshot>,
     ) -> CapabilitySnapshotInput {
-        let plugin_capabilities = self.runtime_host.plugin_service.capabilities();
         let runtime_tools = self.operation_runtime_tool_names(operation_runtime);
         let profile_tools = match self.active_agent_profile() {
             Some(profile) if !profile.tools.is_empty() => profile.tools.clone(),
@@ -138,7 +137,6 @@ impl CodingAgentSession {
             actor: ActorId::Client,
             uses_model: operation_runtime.is_some(),
             model_profile_id: operation_runtime.and_then(|runtime| runtime.profile_id().cloned()),
-            plugin_capabilities,
             persistent_session: matches!(
                 self.runtime_host.session_coordinator.persistence,
                 SessionPersistence::Persistent(_)
@@ -165,13 +163,6 @@ impl CodingAgentSession {
         if let Some(runtime) = operation_runtime {
             names.extend(runtime.tools().iter().map(|tool| tool.name.clone()));
         }
-        names.extend(
-            self.runtime_host
-                .plugin_service
-                .collect_tools()
-                .into_iter()
-                .map(|tool| tool.name),
-        );
         if let Some(profile) = self.active_agent_profile() {
             names.extend(
                 crate::operations::delegation::delegation_tool_names(&profile.delegation)

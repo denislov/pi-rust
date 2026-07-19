@@ -3,7 +3,6 @@ use crate::runtime::capability::{OperationCapabilitySnapshot, SessionWriteCapabi
 use crate::runtime::control::OperationCancellationHandle;
 use crate::runtime::facade::CodingSessionError;
 use crate::services::event::EventService;
-use crate::services::plugin::PluginDiagnostic;
 use crate::services::workflow::WorkflowService;
 use crate::session::event::PersistedPluginDiagnostic;
 use crate::session::service::{SessionPersistence, SessionService};
@@ -11,7 +10,7 @@ use tokio_util::sync::CancellationToken;
 
 pub(crate) mod runner;
 
-use runner::{PluginLoadContext, PluginLoadOptions, PluginLoadOutcome};
+use runner::{PluginDiagnostic, PluginLoadContext, PluginLoadOptions, PluginLoadOutcome};
 
 pub(crate) struct PluginLoadExecution {
     pub(crate) outcome: PluginLoadOutcome,

@@ -15,7 +15,8 @@
   bindings, lease checks, epoch/fuel/memory/deadline/output limits, and an offline
   TypeScript-to-Wasm invocation gate. The crate now requires Rust 1.94.
 - Removed the Lua/`mlua` and native Rust contribution-provider extension paths.
-  The retained Extension surface is the minimum Wasm framework only.
+  The retained Extension surface is the minimum Wasm framework only; no empty
+  PluginService, prompt-hook forwarding, or plugin capability set remains.
 - Removed generic Flow wrappers from product operations and renamed their owner
   to `WorkflowService`; fixed operations now expose only typed runners.
 

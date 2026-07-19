@@ -88,6 +88,7 @@ fn legacy_extension_and_generic_flow_implementations_cannot_return() {
     for removed in [
         "crates/pi-agent-core/src/flow",
         "crates/pi-coding-agent/src/services/flow.rs",
+        "crates/pi-coding-agent/src/services/plugin.rs",
     ] {
         assert!(
             !repo_root.join(removed).exists(),
@@ -1128,11 +1129,7 @@ fn runtime_service_production_paths_require_capability_snapshot() {
     assert_fn_is_test_gated(&runtime_service_source, "fn build_agent_runtime(");
     assert_fn_is_test_gated(
         &runtime_service_source,
-        "fn build_agent_runtime_with_plugins(",
-    );
-    assert_fn_is_test_gated(
-        &runtime_service_source,
-        "fn build_agent_runtime_with_plugins_and_diagnostics(",
+        "fn build_agent_runtime_with_diagnostics(",
     );
     assert_fn_is_not_test_gated(
         &runtime_service_source,
@@ -1146,8 +1143,7 @@ fn runtime_service_production_paths_require_capability_snapshot() {
         &["crates/pi-coding-agent/src/services/runtime.rs"],
         &mut violations,
         |line| {
-            line.contains(".build_agent_runtime_with_plugins_and_diagnostics(")
-                || line.contains(".build_agent_runtime_with_plugins(")
+            line.contains(".build_agent_runtime_with_diagnostics(")
                 || line.contains(".build_agent_runtime(")
         },
     );
@@ -1263,22 +1259,6 @@ fn product_events_use_operation_bound_capability_generation() {
 }
 
 #[test]
-fn plugin_command_paths_use_capability_aware_execution() {
-    let scan = SourceScan::new();
-    let source = fs::read_to_string(scan.crate_root.join("src/runtime/execution.rs"))
-        .expect("read runtime-owned operation execution source");
-
-    assert!(
-        source.contains("run_command_with_capabilities("),
-        "plugin command execution must use run_command_with_capabilities"
-    );
-    assert!(
-        !source.contains(".run_command(\""),
-        "plugin command execution must not bypass capability-aware dispatch with bare .run_command( calls"
-    );
-}
-
-#[test]
 fn agent_tools_receive_the_admitted_operation_scope() {
     let scan = SourceScan::new();
     let runtime = fs::read_to_string(scan.crate_root.join("src/services/runtime.rs"))
@@ -1337,17 +1317,6 @@ fn session_mutating_operation_owners_require_frozen_write_capability() {
             "{relative} must guard each session-mutating operation entry with the frozen write capability"
         );
     }
-}
-
-#[test]
-fn prompt_hooks_execute_only_through_the_frozen_plugin_capability() {
-    let scan = SourceScan::new();
-    let source = fs::read_to_string(scan.crate_root.join("src/operations/prompt/context.rs"))
-        .expect("read prompt operation context");
-
-    assert!(source.contains("run_prompt_hook_with_capabilities("));
-    assert!(!source.contains("self.plugin_service.run_prompt_hook("));
-    assert!(source.contains("capability_snapshot"));
 }
 
 fn assert_fn_is_test_gated(source: &str, signature: &str) {

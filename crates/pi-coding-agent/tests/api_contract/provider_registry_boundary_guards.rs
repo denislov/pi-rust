@@ -782,7 +782,7 @@ fn product_agent_runtime_build_installs_scoped_ai_client_streamer() {
         .expect("read runtime service source");
 
     let start = runtime_service
-        .find("fn build_agent_runtime_with_plugins_and_diagnostics(")
+        .find("fn build_agent_runtime_with_authorization(")
         .expect("runtime build function should exist");
     let end = runtime_service[start..]
         .find("fn apply_tool_policy(")

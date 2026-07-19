@@ -14,7 +14,6 @@ use crate::runtime::session_coordinator::{
     SessionCoordinator, SessionWriterCommand, SessionWriterReply,
 };
 use crate::services::event::EventService;
-use crate::services::plugin::PluginService;
 use crate::services::runtime::RuntimeService;
 use crate::services::workflow::WorkflowService;
 
@@ -33,7 +32,6 @@ pub(crate) struct ApprovedDelegationExecutionOutcome {
 pub(crate) async fn execute_agent(
     workflow_service: &WorkflowService,
     profile_registry: ProfileRegistry,
-    plugin_service: PluginService,
     event_service: EventService,
     operation_control: OperationControl,
     request: &DelegationRequest,
@@ -52,7 +50,6 @@ pub(crate) async fn execute_agent(
         .with_delegation_depth(child_delegation_depth)
         .with_delegation_lineage(delegation_lineage),
         profile_registry,
-        plugin_service,
         event_service.clone(),
         operation_control.clone(),
         child_operation_id.clone(),
@@ -125,7 +122,6 @@ pub(crate) async fn execute_agent(
 pub(crate) async fn execute_team(
     workflow_service: &WorkflowService,
     profile_registry: ProfileRegistry,
-    plugin_service: PluginService,
     event_service: EventService,
     operation_control: OperationControl,
     request: &DelegationRequest,
@@ -144,7 +140,6 @@ pub(crate) async fn execute_team(
         .with_delegation_depth(child_delegation_depth)
         .with_delegation_lineage(delegation_lineage),
         profile_registry,
-        plugin_service,
         event_service.clone(),
         operation_control.clone(),
         child_operation_id.clone(),
@@ -217,7 +212,6 @@ pub(crate) async fn approve(
     runtime_service: &RuntimeService,
     workflow_service: &WorkflowService,
     profile_registry: &ProfileRegistry,
-    plugin_service: &PluginService,
     event_service: &EventService,
     operation_control: &OperationControl,
     operation_id: String,
@@ -249,7 +243,6 @@ pub(crate) async fn approve(
             execute_agent(
                 workflow_service,
                 profile_registry.clone(),
-                plugin_service.clone(),
                 event_service.clone(),
                 operation_control.clone(),
                 &pending.request,
@@ -264,7 +257,6 @@ pub(crate) async fn approve(
             execute_team(
                 workflow_service,
                 profile_registry.clone(),
-                plugin_service.clone(),
                 event_service.clone(),
                 operation_control.clone(),
                 &pending.request,

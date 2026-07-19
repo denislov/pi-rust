@@ -19,7 +19,6 @@ use crate::runtime::control::{OperationControl, OperationKind};
 use crate::runtime::facade::{CodingSessionError, PendingDelegationConfirmationState};
 use crate::runtime::scheduler::OperationScheduler;
 use crate::services::event::EventService;
-use crate::services::plugin::PluginService;
 use crate::services::workflow::WorkflowService;
 use crate::session::id::{Clock, IdGenerator, SystemClock, SystemIdGenerator};
 
@@ -166,7 +165,6 @@ impl AgentTeamRunner {
 pub(crate) struct AgentTeamContext {
     options: AgentTeamOptions,
     registry: ProfileRegistry,
-    plugin_service: PluginService,
     event_service: EventService,
     operation_control: OperationControl,
     operation_id: String,
@@ -187,7 +185,6 @@ impl AgentTeamContext {
     pub(crate) fn new(
         options: AgentTeamOptions,
         registry: ProfileRegistry,
-        plugin_service: PluginService,
         event_service: EventService,
         operation_control: OperationControl,
         operation_id: String,
@@ -195,7 +192,6 @@ impl AgentTeamContext {
         Self {
             options,
             registry,
-            plugin_service,
             event_service,
             operation_control,
             operation_id,
@@ -448,7 +444,6 @@ impl AgentTeamContext {
             PromptTurnIds::new(child_operation_id.clone(), turn_id),
             prompt_options,
         );
-        child_context.set_plugin_service(self.plugin_service.clone());
         child_context
             .set_non_persistent_session(format!("agent_team_{}", child_operation_id), Vec::new());
         child_context.enable_live_events(self.event_service.clone());
@@ -630,7 +625,6 @@ impl AgentTeamContext {
         let outcome = Box::pin(crate::operations::delegation::execution::execute_agent(
             &WorkflowService::new(),
             self.registry.clone(),
-            self.plugin_service.clone(),
             self.event_service.clone(),
             self.operation_control.clone(),
             request,
@@ -654,7 +648,6 @@ impl AgentTeamContext {
         let outcome = Box::pin(crate::operations::delegation::execution::execute_team(
             &WorkflowService::new(),
             self.registry.clone(),
-            self.plugin_service.clone(),
             self.event_service.clone(),
             self.operation_control.clone(),
             request,
@@ -762,7 +755,6 @@ mod tests {
         let mut context = AgentTeamContext::new(
             options,
             ProfileRegistry::default(),
-            PluginService::new(),
             event_service,
             OperationControl::new(),
             "op_team".into(),

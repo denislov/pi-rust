@@ -948,7 +948,6 @@ impl CodingAgentOperationOutcome {
             OperationOutcome::Prompt(outcome) => Self::Prompt(outcome),
             OperationOutcome::ManualCompaction(outcome) => Self::Compact(outcome),
             OperationOutcome::PluginLoad(outcome) => Self::PluginLoad(outcome.into()),
-            OperationOutcome::PluginCommand(output) => Self::PluginCommand(output),
             OperationOutcome::DelegationApproval => Self::DelegationApproved,
             OperationOutcome::DelegationRejection => Self::DelegationRejected,
             OperationOutcome::BranchSummary(outcome) => Self::BranchSummary(outcome),
@@ -999,11 +998,11 @@ mod tests {
     use super::*;
     use crate::app::bootstrap::PromptInvocation;
     use crate::operations::export::runner::ExportOutcome;
+    use crate::operations::plugin_load::runner::PluginDiagnostic;
     use crate::plugins::PluginCapabilities;
     use crate::runtime::control::OperationKind;
     use crate::runtime::facade::context::CodingAgentSessionSummary;
     use crate::runtime::operation::OperationDispatchMode;
-    use crate::services::plugin::PluginDiagnostic;
     use pi_ai::api::conversation::AssistantMessage;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1369,7 +1368,7 @@ mod tests {
         }
     }
 
-    fn operation_outcome_projection_cases() -> [OutcomeProjectionCase; 16] {
+    fn operation_outcome_projection_cases() -> [OutcomeProjectionCase; 15] {
         [
             OutcomeProjectionCase {
                 internal_outcome: "Prompt",
@@ -1407,11 +1406,6 @@ mod tests {
                 internal_outcome: "PluginLoad",
                 build_outcome: || OperationOutcome::PluginLoad(plugin_load_outcome_fixture()),
                 expected_outcome: ExpectedPublicOutcomeFamily::PluginLoad,
-            },
-            OutcomeProjectionCase {
-                internal_outcome: "PluginCommand",
-                build_outcome: || OperationOutcome::PluginCommand("command output".into()),
-                expected_outcome: ExpectedPublicOutcomeFamily::PluginCommand,
             },
             OutcomeProjectionCase {
                 internal_outcome: "SetDefaultAgentProfile",
@@ -1964,7 +1958,7 @@ mod tests {
     #[test]
     fn operation_outcome_projection_covers_all_families() {
         let cases = operation_outcome_projection_cases();
-        let contract_outcomes = operation_contract_cases()
+        let mut contract_outcomes = operation_contract_cases()
             .iter()
             .map(|case| case.expected_outcome)
             .collect::<HashSet<_>>();
@@ -1973,7 +1967,8 @@ mod tests {
             .map(|case| case.expected_outcome)
             .collect::<HashSet<_>>();
 
-        assert_eq!(cases.len(), 16);
+        contract_outcomes.remove(&ExpectedPublicOutcomeFamily::PluginCommand);
+        assert_eq!(cases.len(), 15);
         assert_eq!(projection_outcomes, contract_outcomes);
         for case in cases {
             let projected = CodingAgentOperationOutcome::from_internal((case.build_outcome)());

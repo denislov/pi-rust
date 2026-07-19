@@ -35,7 +35,7 @@ impl CodingAgentSession {
             &self.runtime_host.operation_supervisor.control,
             QueryIntent::Capabilities,
         );
-        let plugin_capabilities = self.runtime_host.plugin_service.capabilities();
+        let plugin_capabilities = crate::plugins::PluginCapabilities::new();
         let persistent = matches!(
             self.runtime_host.session_coordinator.persistence,
             SessionPersistence::Persistent(_)
@@ -55,7 +55,6 @@ impl CodingAgentSession {
         let _ = (
             &self.runtime_host.runtime_service,
             &self.runtime_host.workflow_service,
-            &self.runtime_host.plugin_service,
         );
         match &self.runtime_host.session_coordinator.persistence {
             SessionPersistence::Persistent(session_service) => session_service.view(),
@@ -141,18 +140,18 @@ impl CodingAgentSession {
     }
 
     pub(crate) fn plugin_commands(&self) -> Vec<CommandDefinition> {
-        self.runtime_host.plugin_service.collect_commands()
+        Vec::new()
     }
 
     pub(crate) fn plugin_ui_actions(&self) -> Vec<UiActionDefinition> {
-        self.runtime_host.plugin_service.collect_ui_actions()
+        Vec::new()
     }
 
     pub(crate) fn plugin_ui_dialogs(&self) -> Vec<UiDialogDefinition> {
-        self.runtime_host.plugin_service.collect_ui_dialogs()
+        Vec::new()
     }
 
     pub(crate) fn plugin_keybindings(&self) -> Vec<KeybindDefinition> {
-        self.runtime_host.plugin_service.collect_keybindings()
+        Vec::new()
     }
 }

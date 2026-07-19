@@ -15,7 +15,6 @@ use crate::runtime::control::{OperationControl, OperationKind, PromptControlRece
 use crate::runtime::facade::{CodingSessionError, PendingDelegationConfirmationState};
 use crate::runtime::scheduler::OperationScheduler;
 use crate::services::event::EventService;
-use crate::services::plugin::PluginService;
 use crate::services::workflow::WorkflowService;
 use crate::session::id::{Clock, IdGenerator, SystemClock, SystemIdGenerator};
 
@@ -154,7 +153,6 @@ impl AgentInvocationRunner {
 pub(crate) struct AgentInvocationContext {
     options: AgentInvocationOptions,
     registry: ProfileRegistry,
-    plugin_service: PluginService,
     event_service: EventService,
     operation_control: OperationControl,
     operation_id: String,
@@ -176,7 +174,6 @@ impl AgentInvocationContext {
     pub(crate) fn new(
         options: AgentInvocationOptions,
         registry: ProfileRegistry,
-        plugin_service: PluginService,
         event_service: EventService,
         operation_control: OperationControl,
         operation_id: String,
@@ -185,7 +182,6 @@ impl AgentInvocationContext {
         Self {
             options,
             registry,
-            plugin_service,
             event_service,
             operation_control,
             operation_id,
@@ -338,7 +334,6 @@ impl AgentInvocationContext {
             PromptTurnIds::new(self.child_operation_id.clone(), self.turn_id.clone()),
             prompt_options,
         );
-        child_context.set_plugin_service(self.plugin_service.clone());
         child_context.set_non_persistent_session(
             format!("agent_invocation_{}", self.child_operation_id),
             Vec::new(),
@@ -513,7 +508,6 @@ impl AgentInvocationContext {
         let outcome = Box::pin(crate::operations::delegation::execution::execute_agent(
             &WorkflowService::new(),
             self.registry.clone(),
-            self.plugin_service.clone(),
             self.event_service.clone(),
             self.operation_control.clone(),
             request,
@@ -537,7 +531,6 @@ impl AgentInvocationContext {
         let outcome = crate::operations::delegation::execution::execute_team(
             &WorkflowService::new(),
             self.registry.clone(),
-            self.plugin_service.clone(),
             self.event_service.clone(),
             self.operation_control.clone(),
             request,

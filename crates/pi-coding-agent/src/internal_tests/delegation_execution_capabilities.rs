@@ -43,7 +43,6 @@ fn delegated_operation_receives_released_tool_capabilities_only() {
     assert!(child.shell.is_none());
     assert!(child.session_read.is_none());
     assert!(child.session_write.is_none());
-    assert_eq!(child.plugin, parent.plugin);
 }
 
 #[test]

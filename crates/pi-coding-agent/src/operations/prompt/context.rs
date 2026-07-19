@@ -17,7 +17,6 @@ use crate::app::cli::prompt_options::{PromptRunOptions, assistant_text};
 use crate::app::cli::request::ResolvedPromptRequest;
 use crate::app::session::ResolvedSessionTarget;
 use crate::config::Settings;
-use crate::plugins::{PromptHookContext, PromptHookPoint};
 
 use crate::events::prompt_stream::PromptStreamEvent;
 use crate::operations::delegation::{
@@ -30,7 +29,6 @@ use crate::runtime::control::PromptControlReceiver;
 use crate::runtime::facade::CodingSessionError;
 use crate::services::authorization::{AuthorizationHookContext, AuthorizationService};
 use crate::services::event::{AgentEventMappingContext, EventService, map_agent_event};
-use crate::services::plugin::PluginService;
 use crate::session::event::{
     DiagnosticLevel, PersistedContentBlock, PersistedDelegationStatus, PersistedToolResult,
 };
@@ -634,7 +632,6 @@ pub(crate) struct PromptTurnContext {
     live_event_service: Option<EventService>,
     prompt_control_receiver: Option<PromptControlReceiver>,
     operation_cancellation: Option<CancellationToken>,
-    plugin_service: PluginService,
     authorization_service: Option<AuthorizationService>,
     authorization_event_writer: Option<SessionEventWriter>,
     tool_session_call_ids: HashMap<String, String>,
@@ -667,7 +664,6 @@ impl PromptTurnContext {
             live_event_service: None,
             prompt_control_receiver: None,
             operation_cancellation: None,
-            plugin_service: PluginService::new(),
             authorization_service: None,
             authorization_event_writer: None,
             tool_session_call_ids: HashMap::new(),
@@ -687,14 +683,6 @@ impl PromptTurnContext {
 
     pub(crate) fn options(&self) -> &PromptTurnOptions {
         &self.options
-    }
-
-    pub(crate) fn set_plugin_service(&mut self, plugin_service: PluginService) {
-        self.plugin_service = plugin_service;
-    }
-
-    pub(crate) fn plugin_service(&self) -> &PluginService {
-        &self.plugin_service
     }
 
     pub(crate) fn set_authorization_service(&mut self, service: AuthorizationService) {
@@ -722,35 +710,6 @@ impl PromptTurnContext {
 
     pub(crate) fn capability_snapshot(&self) -> Option<&OperationCapabilitySnapshot> {
         self.capability_snapshot.as_ref()
-    }
-
-    pub(crate) fn run_prompt_hook(
-        &mut self,
-        point: PromptHookPoint,
-    ) -> Result<(), CodingSessionError> {
-        let plugin_capabilities = self
-            .capability_snapshot
-            .as_ref()
-            .ok_or_else(|| CodingSessionError::UnsupportedCapability {
-                capability: "prompt hook execution requires an operation capability snapshot"
-                    .into(),
-            })?
-            .plugin
-            .clone();
-        let hook_context = PromptHookContext {
-            operation_id: self.operation_id().to_owned(),
-            turn_id: self.turn_id().to_owned(),
-            session_id: self.session_id.clone(),
-            point,
-        };
-        for diagnostic in self.plugin_service.run_prompt_hook_with_capabilities(
-            point,
-            hook_context,
-            &plugin_capabilities,
-        )? {
-            self.record_diagnostic(diagnostic);
-        }
-        Ok(())
     }
 
     pub(crate) fn set_runtime(&mut self, runtime: RuntimeSnapshot) {

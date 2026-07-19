@@ -122,7 +122,6 @@ impl CodingAgentSession {
             None
         };
         let profile_registry = self.runtime_host.profile_registry.clone();
-        let plugin_service = self.runtime_host.plugin_service.clone();
         let event_service = self.runtime_host.event_hub.service.clone();
         let operation_control = self.runtime_host.operation_supervisor.control.clone();
         let operation_finalizer = self.runtime_host.operation_supervisor.finalizer;
@@ -130,6 +129,7 @@ impl CodingAgentSession {
         let task = runtime.spawn(async move {
             let result = match operation {
                 Operation::PluginCommand { command_id, args } => {
+                    drop(args);
                     if operation_cancellation
                         .as_ref()
                         .is_some_and(tokio_util::sync::CancellationToken::is_cancelled)
@@ -137,9 +137,9 @@ impl CodingAgentSession {
                         Err(CodingSessionError::Cancelled)
                     } else {
                         execution_cancellation_handle.close()?;
-                        let result = plugin_service
-                            .run_command_with_capabilities(&command_id, args, &snapshot.plugin)
-                            .map(OperationOutcome::PluginCommand);
+                        let result = Err(CodingSessionError::UnsupportedCapability {
+                            capability: format!("extension command is unavailable: {command_id}"),
+                        });
                         if operation_cancellation
                             .as_ref()
                             .is_some_and(tokio_util::sync::CancellationToken::is_cancelled)
@@ -156,7 +156,6 @@ impl CodingAgentSession {
                         snapshot.operation_id.clone(),
                         prompt_control_receiver,
                         &profile_registry,
-                        &plugin_service,
                         &event_service,
                         &WorkflowService::new(),
                         &operation_control,
@@ -170,7 +169,6 @@ impl CodingAgentSession {
                     options,
                     snapshot.operation_id.clone(),
                     &profile_registry,
-                    &plugin_service,
                     &event_service,
                     &WorkflowService::new(),
                     &operation_control,

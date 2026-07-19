@@ -2923,7 +2923,7 @@ mod tests {
         );
         let outcome = crate::operations::plugin_load::runner::PluginLoadOutcome {
             loaded_plugin_ids: vec!["example.extension".into()],
-            diagnostics: vec![crate::services::plugin::PluginDiagnostic {
+            diagnostics: vec![crate::operations::plugin_load::runner::PluginDiagnostic {
                 plugin_id: Some("example.extension".into()),
                 message: "loaded with warning".into(),
             }],

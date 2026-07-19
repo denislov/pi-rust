@@ -50,7 +50,9 @@
   explicitly Skipped.
 - Completed `EKR-007`: removed `mlua`, Lua discovery/execution, runtime/source
   selection, native Rust contribution-provider traits and registries, and their
-  compatibility fixtures. PluginLoad now reloads only durable Wasm activation.
+  compatibility fixtures. PluginLoad now reloads only durable Wasm activation;
+  the empty PluginService, prompt-hook plumbing, and plugin capability set are
+  also gone.
 - Completed `CLC-042-001`: removed the generic `pi-agent-core` Flow engine and
   public facade, replaced the remaining agent action with `AgentTurnDecision`,
   renamed product operation modules to typed runners, and converged

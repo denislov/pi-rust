@@ -434,8 +434,7 @@ mod tests {
     #[test]
     fn operation_permit_exposes_the_frozen_snapshot_for_execution() {
         use crate::runtime::capability::{
-            ActorId, CapabilityGeneration, OperationCapabilitySnapshot, PluginCapabilitySet,
-            ToolCapabilitySet,
+            ActorId, CapabilityGeneration, OperationCapabilitySnapshot, ToolCapabilitySet,
         };
         use crate::runtime::operation::OperationOrigin;
 
@@ -457,7 +456,6 @@ mod tests {
             session_read: None,
             session_write: None,
             ui: None,
-            plugin: PluginCapabilitySet::default(),
         };
         let admission = OperationExecution::root(
             OperationKind::Export,
@@ -479,8 +477,7 @@ mod tests {
     #[test]
     fn operation_permit_exposes_frozen_snapshot_for_guarded_execution() {
         use crate::runtime::capability::{
-            ActorId, CapabilityGeneration, OperationCapabilitySnapshot, PluginCapabilitySet,
-            ToolCapabilitySet,
+            ActorId, CapabilityGeneration, OperationCapabilitySnapshot, ToolCapabilitySet,
         };
         use crate::runtime::operation::OperationOrigin;
 
@@ -502,7 +499,6 @@ mod tests {
             session_read: None,
             session_write: None,
             ui: None,
-            plugin: PluginCapabilitySet::default(),
         };
         let admission = OperationExecution::root(
             OperationKind::PluginCommand,
