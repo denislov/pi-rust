@@ -1,5 +1,15 @@
 # Changes
 
+## 0.4.2 - Unreleased
+
+### Extension Kernel Replacement
+
+- Started `EKR-001`: accepted ADR-007 package quarantine and ADR-008 independent
+  contract versioning, published hashed Manifest v2/contribution/WIT candidates,
+  and added a strict internal Manifest v2 parser and offline contract gate.
+- Workspace packages remain at `0.4.1` until all 0.4.2 implementation, debt,
+  conformance, and release gates close.
+
 ## 0.4.1 - 2026-07-19
 
 ### Agent And Workflow Convergence

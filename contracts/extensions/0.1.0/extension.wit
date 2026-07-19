@@ -1,0 +1,53 @@
+package pi:extension@0.1.0;
+
+interface types {
+  record registration {
+    kind: string,
+    id: string,
+    schema-revision: u32,
+    definition: list<u8>,
+  }
+
+  record invocation {
+    operation-id: string,
+    handler-id: string,
+    input-schema-revision: u32,
+    input: list<u8>,
+  }
+
+  record invocation-output {
+    output-schema-revision: u32,
+    output: list<u8>,
+  }
+
+  variant extension-error {
+    invalid-input(string),
+    denied(string),
+    cancelled,
+    deadline-exceeded,
+    output-limit,
+    internal(string),
+  }
+}
+
+interface host-diagnostics {
+  enum level {
+    info,
+    warning,
+    error,
+  }
+
+  emit: func(level: level, code: string, message: string) -> result<_, string>;
+}
+
+interface guest {
+  use types.{registration, invocation, invocation-output, extension-error};
+
+  activate: func() -> result<list<registration>, extension-error>;
+  invoke: func(request: invocation) -> result<invocation-output, extension-error>;
+}
+
+world extension {
+  import host-diagnostics;
+  export guest;
+}

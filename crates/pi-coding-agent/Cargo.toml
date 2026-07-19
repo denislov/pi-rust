@@ -21,6 +21,7 @@ pi-agent-core = { path = "../pi-agent-core" }
 pi-ai = { path = "../pi-ai" }
 pi-tui = { path = "../pi-tui" }
 regex = "1"
+semver = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

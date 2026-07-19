@@ -7,6 +7,7 @@ mod adapters;
 mod app;
 mod authorization;
 mod events;
+mod extensions;
 mod operations;
 mod plugins;
 mod profiles;

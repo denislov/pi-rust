@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pi-rust.local/contracts/extensions/contributions-v1.schema.json",
+  "title": "Pi Extension Contributions v1 Candidate",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "tools": { "$ref": "#/$defs/handlers" },
+    "commands": { "$ref": "#/$defs/handlers" },
+    "promptHooks": { "$ref": "#/$defs/handlers" },
+    "uiActions": { "$ref": "#/$defs/handlers" },
+    "dialogs": { "$ref": "#/$defs/handlers" },
+    "keybindings": { "$ref": "#/$defs/handlers" }
+  },
+  "$defs": {
+    "handlers": {
+      "type": "array",
+      "maxItems": 256,
+      "items": { "$ref": "#/$defs/handler" }
+    },
+    "handler": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "handler", "schemaRevision", "definition"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "maxLength": 128
+        },
+        "handler": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "maxLength": 128
+        },
+        "schemaRevision": { "const": 1 },
+        "optional": { "type": "boolean", "default": false },
+        "definition": {
+          "type": "object",
+          "maxProperties": 64
+        }
+      }
+    }
+  }
+}

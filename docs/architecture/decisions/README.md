@@ -24,8 +24,8 @@ failure/security consequences, compatibility, and verification.
 | [ADR-004](ADR-004-extension-state-and-facts.md) | extension state/fact scopes and transaction boundaries | Accepted 2026-07-18 | `0.4.0`, complete `0.4.3` | offline state/outbox/activation prototype passed | `ESS-001`–`ESS-003`, `ESS-006` |
 | [ADR-005](ADR-005-workbench-protocol.md) | Workbench retained snapshot/patch/state protocol | Accepted 2026-07-18 | `0.4.0`, freeze `0.4.4` | two-view revision/gap/resync prototype passed | `WAP-001`, `WAP-002` |
 | ADR-006 | Application Profile composition | Scheduled | `0.4.4` before `WAP-002` | base/overlay/conflict/degraded matrix | `WAP-001`, `WAP-004` |
-| ADR-007 | package quarantine and coordinated update | Scheduled | accept `0.4.2`, complete `0.4.3` | phase-crash/fencing/recovery prototype | `EKR-001`, `ESS-001`, `ESS-006` |
-| ADR-008 | Manifest/WIT/Host API/schema versioning | Scheduled | accept `0.4.2`, complete `0.4.3` | generated hash and compatibility fixture | `EKR-001`, `ESS-001` |
+| [ADR-007](ADR-007-extension-package-quarantine.md) | package quarantine and coordinated update | Accepted 2026-07-19 | `0.4.2`, update completion `0.4.3` | quarantine/integrity matrix; phase recovery remains `ESS-006` | `EKR-001`, `ESS-001`, `ESS-006` |
+| [ADR-008](ADR-008-extension-contract-versioning.md) | Manifest/WIT/Host API/schema versioning | Accepted 2026-07-19 | `0.4.2`, service evolution `0.4.3` | generated binding/hash/compatibility fixtures | `EKR-001`, `ESS-001` |
 | ADR-009 | performance baselines and budgets | Scheduled | baseline `0.4.0`, accept `0.4.5` | reproducible baselines from every release | `RIF-010`, `DXH-005` |
 | ADR-010 | audit/trace/log/diagnostic contract | Scheduled | `0.4.3` before service implementation | redaction, correlation, rate/retention fixture | `ESS-001`, `ESS-007` |
 | [ADR-011](ADR-011-recovery-pending-management.md) | `RecoveryPending` ownership and resolution | Accepted 2026-07-18 | `0.4.0` | restart/retry/operator/subsequent-work matrix | `RIF-002`, `RIF-009` |
