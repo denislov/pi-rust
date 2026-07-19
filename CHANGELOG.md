@@ -1,8 +1,12 @@
 # Changes
 
-## 0.4.1 - Unreleased
+## 0.4.1 - 2026-07-19
 
 ### Agent And Workflow Convergence
+
+Workspace packages are versioned `0.4.1`; architecture, API snapshot, full
+workspace, strict Clippy, provisional runtime baseline, and offline TUI release
+gates passed on 2026-07-19.
 
 - Started the 0.4.1 workflow convergence plan and completed `AWC-001` active
   cancellation semantics. Provider streams, provider/context hooks, sequential

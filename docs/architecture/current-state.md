@@ -5,7 +5,8 @@
 Baseline version: `0.3.1`, released as annotated tag `v0.3.1`.
 
 Source baseline: commit `870d4bb`; dated release record: `180f219`; post-baseline
-`0.4.0` commits are recorded below. Last refreshed: 2026-07-19.
+`0.4.0` and `0.4.1` convergence commits are recorded below. Last refreshed:
+2026-07-19.
 
 This file records implementation facts, not desired behavior. Cargo manifests,
 compiled source, tests, and CodeGraph call paths outrank this summary when they
@@ -17,11 +18,17 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   `pi-coding-agent -> {pi-agent-core, pi-ai, pi-tui}`.
 - `pi-ai` and `pi-tui` have no workspace dependencies.
 - `pi-mom`, `pi-pods`, and `pi-web-ui` are placeholder crates.
-- All workspace packages inherit version `0.3.1` from the root manifest.
+- All workspace packages inherit version `0.4.1` from the root manifest.
 - `pi-rust` is a placeholder binary; `pi-coding-agent` is user-facing.
 
 ## Runtime And Operations
 
+- Production Agent turns and fixed product workflows use typed state/pipeline
+  runners; generic `Flow<C>` remains compatibility/test-only for these paths.
+- AgentTeam member execution is bounded to two structured child contexts and
+  restores results in profile order.
+- Persistent sessions disable ephemeral core automatic compaction and use the
+  durable ManualCompaction transaction/outbox path.
 - `CodingAgentSession` is a facade over one `RuntimeHost` composition root.
   Admission/capability authority resides in `OperationSupervisor`, session state
   in `SessionCoordinator`, product-event fan-out in `EventHub`, and client
