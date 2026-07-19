@@ -4,6 +4,8 @@ use semver::{Version, VersionReq};
 use serde::Deserialize;
 use thiserror::Error;
 
+use crate::contributions::ContributionKind;
+
 const MANIFEST_SCHEMA_VERSION: u32 = 2;
 const COMPONENT_PATH: &str = "component.wasm";
 const LOCK_PATH: &str = "extension.lock.json";
@@ -87,6 +89,12 @@ struct ContributionHandler {
     definition: serde_json::Map<String, serde_json::Value>,
 }
 
+pub(super) struct ManifestContributionRef<'a> {
+    pub(super) kind: ContributionKind,
+    pub(super) handler_id: &'a str,
+    pub(super) schema_revision: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ExtensionLimits {
@@ -138,6 +146,42 @@ impl ExtensionManifestV2 {
 
     pub(super) fn contract_world(&self) -> &str {
         &self.component.world
+    }
+
+    pub(super) fn contribution_handlers(
+        &self,
+    ) -> impl Iterator<Item = ManifestContributionRef<'_>> {
+        [
+            (ContributionKind::Tool, self.contributions.tools.as_slice()),
+            (
+                ContributionKind::Command,
+                self.contributions.commands.as_slice(),
+            ),
+            (
+                ContributionKind::PromptHook,
+                self.contributions.prompt_hooks.as_slice(),
+            ),
+            (
+                ContributionKind::UiAction,
+                self.contributions.ui_actions.as_slice(),
+            ),
+            (
+                ContributionKind::Dialog,
+                self.contributions.dialogs.as_slice(),
+            ),
+            (
+                ContributionKind::Keybinding,
+                self.contributions.keybindings.as_slice(),
+            ),
+        ]
+        .into_iter()
+        .flat_map(|(kind, handlers)| {
+            handlers.iter().map(move |handler| ManifestContributionRef {
+                kind,
+                handler_id: &handler.handler,
+                schema_revision: handler.schema_revision,
+            })
+        })
     }
 
     fn validate(&self) -> Result<(), ExtensionManifestError> {

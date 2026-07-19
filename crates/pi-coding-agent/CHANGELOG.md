@@ -1,5 +1,16 @@
 # Changes
 
+## 0.4.2 - Unreleased
+
+### Extension Kernel Replacement
+
+- Added strict Manifest/package/lock quarantine, immutable installation,
+  generated TypeScript SDK conformance, grant-backed activation, revocable
+  operation leases, and lease-only Host API handles for the replacement kernel.
+- Added the ADR-012 core/extension handler target boundary. Validated extension
+  inventories now project package-bound data-only handler references and cannot
+  deserialize or address built-in Rust handlers.
+
 ## 0.4.0 - Unreleased
 
 ### Runtime Integrity

@@ -12,8 +12,9 @@ use super::grant::{
     ExtensionGrantError, ExtensionGrantIdentity, ExtensionGrantRegistry, ExtensionPermission,
     GrantRecord,
 };
-use super::package::ValidatedPackageDirectory;
+use super::package::{ExtensionPackageError, ValidatedPackageDirectory};
 use super::store::{ExtensionPackageStore, PackageStoreError};
+use crate::contributions::HandlerTarget;
 
 const ACTIVATION_SCHEMA_VERSION: u32 = 1;
 const ACTIVATION_FILE: &str = "activation-v1.json";
@@ -36,12 +37,15 @@ pub(crate) struct WorkspaceActivationSnapshot {
     pub(crate) roots: Vec<String>,
     pub(crate) packages: BTreeMap<String, ExtensionGrantIdentity>,
     pub(crate) activation_digest: String,
+    pub(crate) handlers: Vec<HandlerTarget>,
 }
 
 #[derive(Debug, Error)]
 pub(crate) enum ExtensionActivationError {
     #[error(transparent)]
     Package(#[from] PackageStoreError),
+    #[error(transparent)]
+    PackageContents(#[from] ExtensionPackageError),
     #[error(transparent)]
     Grant(#[from] ExtensionGrantError),
     #[error("extension activation I/O failed at {path}: {message}")]
@@ -61,7 +65,7 @@ pub(crate) enum ExtensionActivationError {
 impl ExtensionActivationError {
     pub(crate) fn safe_code(&self) -> &'static str {
         match self {
-            Self::Package(_) => "package_validation",
+            Self::Package(_) | Self::PackageContents(_) => "package_validation",
             Self::Grant(_) => "grant_denied",
             Self::Io { .. } => "state_io",
             Self::Invalid(_) => "invalid_record",
@@ -107,9 +111,15 @@ impl<'a> ExtensionActivationCoordinator<'a> {
             grants: grants.clone(),
         };
         let activation_digest = activation_digest(&record)?;
+        let snapshot = snapshot(
+            workspace_id.clone(),
+            roots.clone(),
+            resolved,
+            activation_digest,
+        )?;
         persist_record(state_directory, &record)?;
         self.grants.replace_workspace(&workspace_id, grants)?;
-        Ok(snapshot(workspace_id, roots, resolved, activation_digest))
+        Ok(snapshot)
     }
 
     pub(crate) fn load(
@@ -135,14 +145,15 @@ impl<'a> ExtensionActivationCoordinator<'a> {
         }
         validate_grants(&record.workspace_id, &resolved, &record.grants)?;
         let activation_digest = activation_digest(&record)?;
-        self.grants
-            .replace_workspace(&record.workspace_id, record.grants)?;
-        Ok(snapshot(
-            record.workspace_id,
-            record.roots,
+        let snapshot = snapshot(
+            record.workspace_id.clone(),
+            record.roots.clone(),
             resolved,
             activation_digest,
-        ))
+        )?;
+        self.grants
+            .replace_workspace(&record.workspace_id, record.grants)?;
+        Ok(snapshot)
     }
 
     fn resolve(
@@ -242,8 +253,21 @@ fn snapshot(
     roots: Vec<String>,
     packages: BTreeMap<String, ValidatedPackageDirectory>,
     activation_digest: String,
-) -> WorkspaceActivationSnapshot {
-    WorkspaceActivationSnapshot {
+) -> Result<WorkspaceActivationSnapshot, ExtensionActivationError> {
+    let handlers = packages
+        .values()
+        .map(ValidatedPackageDirectory::handler_refs)
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    for target in &handlers {
+        target.dispatch(
+            |_| Err(invalid("extension package cannot project a core handler")),
+            |_| Ok(()),
+        )?;
+    }
+    Ok(WorkspaceActivationSnapshot {
         workspace_id,
         roots,
         packages: packages
@@ -251,7 +275,8 @@ fn snapshot(
             .map(|(id, package)| (id, package_identity(&package)))
             .collect(),
         activation_digest,
-    }
+        handlers,
+    })
 }
 
 fn activation_digest(
@@ -399,6 +424,24 @@ mod tests {
         permissions: &[&str],
         dependencies: &[InstalledExtensionPackage],
     ) -> InstalledExtensionPackage {
+        install_package_with_contributions(
+            store,
+            id,
+            version,
+            permissions,
+            dependencies,
+            serde_json::json!({}),
+        )
+    }
+
+    fn install_package_with_contributions(
+        store: &ExtensionPackageStore,
+        id: &str,
+        version: &str,
+        permissions: &[&str],
+        dependencies: &[InstalledExtensionPackage],
+        contributions: serde_json::Value,
+    ) -> InstalledExtensionPackage {
         let staging = store.create_staging_directory().unwrap();
         let component = format!("component:{id}:{version}");
         fs::write(staging.join("component.wasm"), &component).unwrap();
@@ -437,7 +480,7 @@ mod tests {
                 "dependencies": manifest_dependencies,
                 "activation": ["workspace"],
                 "permissions": permissions,
-                "contributions": {},
+                "contributions": contributions,
                 "resources": [],
                 "limits": {
                     "memoryBytes": 65536,
@@ -460,6 +503,49 @@ mod tests {
         )
         .unwrap();
         store.install_staged(staging).unwrap()
+    }
+
+    #[test]
+    fn activation_projects_manifest_handlers_to_immutable_extension_refs() {
+        let directory = TempDir::new().unwrap();
+        let store = ExtensionPackageStore::open(directory.path().join("store")).unwrap();
+        let package = install_package_with_contributions(
+            &store,
+            "example.review",
+            "1.0.0",
+            &[],
+            &[],
+            serde_json::json!({
+                "tools": [{
+                    "id": "review-tool",
+                    "handler": "review.run",
+                    "schemaRevision": 1,
+                    "definition": {}
+                }]
+            }),
+        );
+        let grants = ExtensionGrantRegistry::default();
+        let coordinator = ExtensionActivationCoordinator::new(&store, &grants);
+
+        let snapshot = coordinator
+            .activate(
+                &directory.path().join("state"),
+                "workspace-1".into(),
+                vec![package.package_digest().into()],
+                vec![grant(&package, &[], &[])],
+            )
+            .unwrap();
+
+        assert_eq!(snapshot.handlers.len(), 1);
+        let handler = snapshot.handlers[0].dispatch(
+            |_| panic!("extension package projected a core handler"),
+            Clone::clone,
+        );
+        assert_eq!(handler.extension_id, "example.review");
+        assert_eq!(handler.package_digest, package.package_digest());
+        assert_eq!(handler.kind, crate::contributions::ContributionKind::Tool);
+        assert_eq!(handler.handler_id, "review.run");
+        assert_eq!(handler.schema_revision, 1);
     }
 
     fn grant(

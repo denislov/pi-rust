@@ -63,6 +63,49 @@ fn extension_host_handles_are_lease_only_and_service_free() {
 }
 
 #[test]
+fn extension_handler_targets_are_data_only_and_cannot_decode_core_authority() {
+    let crate_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let target_source = fs::read_to_string(crate_root.join("src/contributions/mod.rs"))
+        .expect("read contribution target source");
+    let manifest_source = fs::read_to_string(crate_root.join("src/extensions/manifest.rs"))
+        .expect("read extension manifest source");
+    let wit = fs::read_to_string(crate_root.join("../../contracts/extensions/0.1.0/extension.wit"))
+        .expect("read extension WIT");
+
+    assert!(target_source.contains("Core(CoreHandlerRef)"));
+    assert!(target_source.contains("Extension(ExtensionHandlerRef)"));
+    assert!(!target_source.contains("Deserialize"));
+    for forbidden in [
+        "Arc<dyn",
+        "Box<dyn",
+        "SessionService",
+        "PluginService",
+        "Repository",
+        "AiClient",
+        "Sender<",
+        "Receiver<",
+    ] {
+        assert!(
+            !target_source.contains(forbidden),
+            "handler target leaked executable authority: {forbidden}"
+        );
+    }
+    for extension_controlled in [&manifest_source, &wit] {
+        for forbidden in [
+            "CoreHandlerRef",
+            "core_handler",
+            "core-handler",
+            "coreHandler",
+        ] {
+            assert!(
+                !extension_controlled.contains(forbidden),
+                "extension contract can address core handlers: {forbidden}"
+            );
+        }
+    }
+}
+
+#[test]
 fn session_store_failure_controls_remain_test_only() {
     let scan = SourceScan::new();
     let store_path = scan.crate_root.join("src/session/repository.rs");

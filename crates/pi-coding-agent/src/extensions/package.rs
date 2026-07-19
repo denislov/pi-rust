@@ -7,6 +7,7 @@ use thiserror::Error;
 
 use super::lock::ExtensionLockV1;
 use super::manifest::ExtensionManifestV2;
+use crate::contributions::{ExtensionHandlerRef, HandlerTarget, HandlerTargetError};
 
 const MANIFEST_PATH: &str = "extension.json";
 const LOCK_PATH: &str = "extension.lock.json";
@@ -40,6 +41,8 @@ pub(crate) enum ExtensionPackageError {
     Lock(String),
     #[error("component digest does not match extension manifest")]
     ComponentDigestMismatch,
+    #[error(transparent)]
+    HandlerTarget(#[from] HandlerTargetError),
 }
 
 impl ValidatedPackageDirectory {
@@ -120,6 +123,23 @@ impl ValidatedPackageDirectory {
 
     pub(super) fn contract_world(&self) -> &str {
         self.manifest.contract_world()
+    }
+
+    pub(super) fn handler_refs(&self) -> Result<Vec<HandlerTarget>, ExtensionPackageError> {
+        self.manifest
+            .contribution_handlers()
+            .map(|handler| {
+                ExtensionHandlerRef::new(
+                    self.id(),
+                    self.package_digest(),
+                    handler.kind,
+                    handler.handler_id,
+                    handler.schema_revision,
+                )
+                .map(HandlerTarget::extension)
+                .map_err(Into::into)
+            })
+            .collect()
     }
 }
 

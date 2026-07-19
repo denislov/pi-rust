@@ -20,6 +20,7 @@ extern crate self as pi_coding_agent;
 mod internal_tests;
 
 mod config;
+mod contributions;
 mod protocol;
 mod resources;
 mod session;

@@ -208,8 +208,12 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
 - The production Agent turn still uses the generic string-action Flow engine;
   `0.4.1` owns typed state-machine convergence.
 - Product fixed workflows still include Flow-based implementations.
-- The current extension implementation includes first-party Rust contribution
-  providers and Lua through `mlua`; the TypeScript/Wasm/WIT kernel does not exist.
+- The legacy extension implementation still includes Rust contribution-provider
+  traits and Lua through `mlua`. The replacement path now has candidate
+  Manifest/WIT/schema contracts, immutable packages, grant-backed activation,
+  lease-only Host handles, an offline TypeScript Component harness, and the
+  accepted core/extension handler target boundary; production Wasm invocation
+  and contribution migration remain `0.4.2` work.
 - PluginLoad uses the admitted snapshot operation ID and typed
   Completed/Failed/Aborted root terminal evidence. Its terminal draft now
   persists through the coordinator outbox and publishes only after commit.

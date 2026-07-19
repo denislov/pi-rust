@@ -34,6 +34,12 @@
   generation-bound registration closure, active revoke cancellation, late-result
   fencing, bounded inputs, and redacted Debug surfaces complete the authorization
   boundary. This closes `EKR-D009`; `EKR-004` owns real guest dispatch.
+- Completed `EKR-006` and accepted ADR-012. Shared contribution projections now
+  distinguish product-owned `CoreHandlerRef` values from immutable,
+  package-bound `ExtensionHandlerRef` values. Manifest activation can only
+  produce extension targets, fails closed on malformed projection, and exposes
+  neither core-handler addressing nor raw Rust authority; `EKR-004` and
+  `EKR-005` consume the fixed boundary.
 - Workspace packages remain at `0.4.1` until all 0.4.2 implementation, debt,
   conformance, and release gates close.
 

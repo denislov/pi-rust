@@ -29,7 +29,7 @@ failure/security consequences, compatibility, and verification.
 | ADR-009 | performance baselines and budgets | Scheduled | baseline `0.4.0`, accept `0.4.5` | reproducible baselines from every release | `RIF-010`, `DXH-005` |
 | ADR-010 | audit/trace/log/diagnostic contract | Scheduled | `0.4.3` before service implementation | redaction, correlation, rate/retention fixture | `ESS-001`, `ESS-007` |
 | [ADR-011](ADR-011-recovery-pending-management.md) | `RecoveryPending` ownership and resolution | Accepted 2026-07-18 | `0.4.0` | restart/retry/operator/subsequent-work matrix | `RIF-002`, `RIF-009` |
-| ADR-012 | core versus extension handler boundary | Scheduled | `0.4.2` before contribution migration | DTO/dispatch vertical slice | `EKR-006`, then `EKR-005` |
+| [ADR-012](ADR-012-core-extension-handler-boundary.md) | core versus extension handler boundary | Accepted 2026-07-19 | `0.4.2` `EKR-006`; consume in `EKR-005` | DTO/dispatch slice and package-derived extension refs | `EKR-006`, then `EKR-005` |
 | [ADR-013](ADR-013-generic-flow-ownership.md) | generic Flow ownership and migration | Accepted 2026-07-19 | `0.4.1` | complete Flow inventory and cancellation/max-step/missing-transition matrix | `AWC-002`, `AWC-003` |
 
 ## Traceability
