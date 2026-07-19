@@ -171,6 +171,13 @@ impl PromptTurnFlow {
                 }
             };
             if let Err(message) = result {
+                if matches!(step, PromptTurnStep::RunAgentTurn)
+                    && let Some(provider_message) = message.strip_prefix("provider error: ")
+                {
+                    return Err(CodingSessionError::Provider {
+                        message: provider_message.to_owned(),
+                    });
+                }
                 return Err(CodingSessionError::Flow { message });
             }
             step = match step {

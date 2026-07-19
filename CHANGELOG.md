@@ -62,6 +62,9 @@
   stream to have been polled before Ctrl-C arrived.
 - Added heap boundaries around recursive delegated Agent/Team execution futures;
   the depth-budget delegation test now passes on the default stack.
+- Preserved provider error classification through the typed PromptTurn runner;
+  print mode continues to expose provider stop errors as `AgentFailure` rather
+  than a generic session failure.
 
 ## 0.4.0 - 2026-07-19
 
