@@ -55,6 +55,11 @@
 - Fixed the canonical navigation workflow stack overflow introduced by the
   converged operation dispatch future: the operation match now crosses an
   explicit heap boundary, and the default-stack durability regression passes.
+- Stabilized interactive Ctrl-C coverage for pre-start child cancellation:
+  AgentInvocation and AgentTeam now let child contexts consume an already
+  cancelled token at their execution boundary, while interactive tests assert
+  the observable cancelled/idle/terminal contract without requiring a provider
+  stream to have been polled before Ctrl-C arrived.
 
 ## 0.4.0 - 2026-07-19
 

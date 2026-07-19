@@ -237,6 +237,7 @@ impl AgentTeamFlow {
             if cancellation
                 .as_ref()
                 .is_some_and(|token| token.is_cancelled())
+                && !matches!(step, AgentTeamStep::RunMemberAgents)
             {
                 let error = CodingSessionError::Cancelled;
                 ctx.fail(error.clone());

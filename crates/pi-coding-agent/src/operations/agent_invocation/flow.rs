@@ -192,6 +192,7 @@ impl AgentInvocationFlow {
             if cancellation
                 .as_ref()
                 .is_some_and(|token| token.is_cancelled())
+                && !matches!(step, AgentInvocationStep::RunChildAgent)
             {
                 let error = CodingSessionError::Cancelled;
                 ctx.fail(error.clone());
@@ -201,7 +202,14 @@ impl AgentInvocationFlow {
                 AgentInvocationStep::Start => ctx.start_agent_invocation(),
                 AgentInvocationStep::ResolveProfile => ctx.resolve_agent_profile(),
                 AgentInvocationStep::PrepareChildPrompt => ctx.prepare_child_prompt(),
-                AgentInvocationStep::RunChildAgent => ctx.run_child_agent().await,
+                AgentInvocationStep::RunChildAgent => {
+                    if let Some(token) = cancellation.as_ref()
+                        && token.is_cancelled()
+                    {
+                        ctx.propagate_child_cancellation(token.clone());
+                    }
+                    ctx.run_child_agent().await
+                }
                 AgentInvocationStep::Finalize => ctx.finalize_agent_invocation(),
             };
             if let Err(error) = result {
@@ -565,6 +573,12 @@ impl AgentInvocationContext {
                 })?;
         self.prompt_outcome = Some(child_context.finish_success(runtime_id, None)?);
         Ok(())
+    }
+
+    fn propagate_child_cancellation(&mut self, cancellation: CancellationToken) {
+        if let Some(child_context) = self.child_context.as_mut() {
+            child_context.set_operation_cancellation(cancellation);
+        }
     }
 
     async fn execute_authorized_delegations(
