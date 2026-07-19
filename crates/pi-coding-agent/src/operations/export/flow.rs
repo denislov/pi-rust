@@ -141,10 +141,6 @@ impl ExportContext {
         }
     }
 
-    pub(crate) fn take_failure_error(&mut self) -> Option<CodingSessionError> {
-        self.failure_error.take()
-    }
-
     pub(crate) fn finish_success(&self) -> Result<ExportOutcome, CodingSessionError> {
         if self.options.writes_html() && self.written_path.is_none() {
             return Err(CodingSessionError::Session {
@@ -160,6 +156,10 @@ impl ExportContext {
                 })?,
             path: self.written_path.clone(),
         })
+    }
+
+    pub(crate) fn take_failure_error(&mut self) -> Option<CodingSessionError> {
+        self.failure_error.take()
     }
 
     fn fail(&mut self, error: CodingSessionError) -> String {
@@ -238,7 +238,18 @@ impl ExportContext {
 }
 
 pub(crate) struct ExportFlow {
+    #[allow(dead_code)]
     flow: Flow<ExportContext>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExportStep {
+    Start,
+    LoadReplay,
+    SelectView,
+    Render,
+    Write,
+    EmitCompletion,
 }
 
 impl ExportFlow {
@@ -252,8 +263,38 @@ impl ExportFlow {
         Ok(Self { flow })
     }
 
+    #[allow(dead_code)]
     pub(crate) fn run(&self, ctx: &mut ExportContext) -> Result<FlowOutcome, CodingSessionError> {
         futures::executor::block_on(self.flow.run(ctx)).map_err(flow_error)
+    }
+
+    pub(crate) fn run_typed(
+        &self,
+        ctx: &mut ExportContext,
+    ) -> Result<ExportOutcome, CodingSessionError> {
+        let mut step = ExportStep::Start;
+        loop {
+            let result = match step {
+                ExportStep::Start => ctx.start_export(),
+                ExportStep::LoadReplay => ctx.load_session_replay(),
+                ExportStep::SelectView => ctx.select_export_view(),
+                ExportStep::Render => ctx.render_export(),
+                ExportStep::Write => ctx.write_export(),
+                ExportStep::EmitCompletion => return ctx.finish_success(),
+            };
+            if let Err(error) = result {
+                let message = ctx.fail(error.clone());
+                return Err(CodingSessionError::Flow { message });
+            }
+            step = match step {
+                ExportStep::Start => ExportStep::LoadReplay,
+                ExportStep::LoadReplay => ExportStep::SelectView,
+                ExportStep::SelectView => ExportStep::Render,
+                ExportStep::Render => ExportStep::Write,
+                ExportStep::Write => ExportStep::EmitCompletion,
+                ExportStep::EmitCompletion => unreachable!(),
+            };
+        }
     }
 }
 

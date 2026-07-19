@@ -260,6 +260,10 @@ impl ManualCompactionContext {
         &self.options
     }
 
+    pub(crate) fn take_failure_error(&mut self) -> Option<CodingSessionError> {
+        self.failure_error.take()
+    }
+
     pub(crate) fn turn_id(&self) -> &str {
         &self.turn_id
     }

@@ -75,6 +75,7 @@ impl FlowService {
         SelfHealingEditFlow::new()
     }
 
+    #[allow(dead_code)]
     pub(crate) fn run_export_graph(
         &self,
         ctx: &mut ExportContext,
@@ -86,8 +87,8 @@ impl FlowService {
         &self,
         ctx: &mut ExportContext,
     ) -> Result<ExportOutcome, CodingSessionError> {
-        match self.run_export_graph(ctx) {
-            Ok(_) => ctx.finish_success(),
+        match self.export_flow()?.run_typed(ctx) {
+            Ok(outcome) => Ok(outcome),
             Err(error) => Err(ctx.take_failure_error().unwrap_or(error)),
         }
     }
@@ -287,7 +288,10 @@ impl FlowService {
         &self,
         ctx: &mut ManualCompactionContext,
     ) -> Result<ManualCompactionOutcome, CodingSessionError> {
-        self.manual_compaction_flow()?.run_typed(ctx).await
+        match self.manual_compaction_flow()?.run_typed(ctx).await {
+            Ok(outcome) => Ok(outcome),
+            Err(error) => Err(ctx.take_failure_error().unwrap_or(error)),
+        }
     }
 
     pub(crate) async fn run_prompt_turn_graph(

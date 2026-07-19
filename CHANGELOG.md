@@ -26,6 +26,9 @@
 - Started `AWC-003` with the ManualCompaction vertical slice: production manual
   compaction now runs through a typed eight-step pipeline with cancellation
   checks between steps while retaining the existing transaction boundary.
+- Added the Export typed pipeline vertical slice: production export now uses
+  explicit start/replay/view/render/write/completion steps while preserving
+  read-only admission and typed invalid-target errors.
 
 ## 0.4.0 - 2026-07-19
 
