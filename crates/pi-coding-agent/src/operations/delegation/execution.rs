@@ -87,11 +87,12 @@ pub(crate) async fn execute_agent(
     event_service.emit_delegation_started(request, child_operation_id.clone());
     let result = match child_admission.cancellation_token() {
         Some(cancellation) => {
-            flow_service
-                .run_agent_invocation_with_cancellation(&mut context, cancellation)
-                .await
+            Box::pin(
+                flow_service.run_agent_invocation_with_cancellation(&mut context, cancellation),
+            )
+            .await
         }
-        None => flow_service.run_agent_invocation(&mut context).await,
+        None => Box::pin(flow_service.run_agent_invocation(&mut context)).await,
     };
     let pending_confirmations = context.take_pending_delegation_confirmations();
     let outcome = match result {
@@ -177,11 +178,10 @@ pub(crate) async fn execute_team(
     event_service.emit_delegation_started(request, child_operation_id.clone());
     let result = match child_admission.cancellation_token() {
         Some(cancellation) => {
-            flow_service
-                .run_agent_team_with_cancellation(&mut context, cancellation)
+            Box::pin(flow_service.run_agent_team_with_cancellation(&mut context, cancellation))
                 .await
         }
-        None => flow_service.run_agent_team(&mut context).await,
+        None => Box::pin(flow_service.run_agent_team(&mut context)).await,
     };
     let pending_confirmations = context.take_pending_delegation_confirmations();
     let outcome = match result {

@@ -60,6 +60,8 @@
   cancelled token at their execution boundary, while interactive tests assert
   the observable cancelled/idle/terminal contract without requiring a provider
   stream to have been polled before Ctrl-C arrived.
+- Added heap boundaries around recursive delegated Agent/Team execution futures;
+  the depth-budget delegation test now passes on the default stack.
 
 ## 0.4.0 - 2026-07-19
 
