@@ -221,6 +221,7 @@ impl FlowService {
         self.prompt_turn_flow()?.run_typed(ctx).await
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn run_plugin_load_graph(
         &self,
         ctx: &mut PluginLoadContext,
@@ -232,7 +233,7 @@ impl FlowService {
         &self,
         ctx: &mut PluginLoadContext,
     ) -> Result<PluginLoadOutcome, CodingSessionError> {
-        match self.run_plugin_load_graph(ctx).await {
+        match self.plugin_load_flow()?.run_typed(ctx, None).await {
             Ok(_) => ctx.finish_success(),
             Err(error) => Err(ctx.take_failure_error().unwrap_or(error)),
         }
@@ -245,7 +246,7 @@ impl FlowService {
     ) -> Result<PluginLoadOutcome, CodingSessionError> {
         match self
             .plugin_load_flow()?
-            .run_with_cancellation(ctx, cancellation)
+            .run_typed(ctx, Some(cancellation))
             .await
         {
             Ok(_) => ctx.finish_success(),

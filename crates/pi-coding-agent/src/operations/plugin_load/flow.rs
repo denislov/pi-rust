@@ -425,8 +425,21 @@ impl PluginLoadContext {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) struct PluginLoadFlow {
     flow: Flow<PluginLoadContext>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PluginLoadStep {
+    Start,
+    Discover,
+    Validate,
+    LoadFirstParty,
+    LoadLua,
+    RegisterCapabilities,
+    EmitDiagnostics,
+    Finalize,
 }
 
 impl PluginLoadFlow {
@@ -442,6 +455,7 @@ impl PluginLoadFlow {
         Ok(Self { flow })
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn run(
         &self,
         ctx: &mut PluginLoadContext,
@@ -449,6 +463,7 @@ impl PluginLoadFlow {
         self.flow.run(ctx).await.map_err(flow_error)
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn run_with_cancellation(
         &self,
         ctx: &mut PluginLoadContext,
@@ -469,6 +484,49 @@ impl PluginLoadFlow {
             ctx.fail(error.clone());
         }
         result
+    }
+
+    pub(crate) async fn run_typed(
+        &self,
+        ctx: &mut PluginLoadContext,
+        cancellation: Option<CancellationToken>,
+    ) -> Result<(), CodingSessionError> {
+        let mut step = PluginLoadStep::Start;
+        loop {
+            if cancellation
+                .as_ref()
+                .is_some_and(|token| token.is_cancelled())
+            {
+                let error = CodingSessionError::Cancelled;
+                ctx.fail(error.clone());
+                return Err(error);
+            }
+            let result = match step {
+                PluginLoadStep::Start => ctx.start_plugin_load(),
+                PluginLoadStep::Discover => ctx.discover_plugins(),
+                PluginLoadStep::Validate => ctx.validate_manifests(),
+                PluginLoadStep::LoadFirstParty => ctx.load_first_party_plugins(),
+                PluginLoadStep::LoadLua => ctx.load_lua_plugins_later(),
+                PluginLoadStep::RegisterCapabilities => ctx.register_capabilities(),
+                PluginLoadStep::EmitDiagnostics => ctx.emit_diagnostics(),
+                PluginLoadStep::Finalize => ctx.finalize_plugin_load(),
+            };
+            if let Err(error) = result {
+                return Err(CodingSessionError::Flow {
+                    message: ctx.fail(error),
+                });
+            }
+            step = match step {
+                PluginLoadStep::Start => PluginLoadStep::Discover,
+                PluginLoadStep::Discover => PluginLoadStep::Validate,
+                PluginLoadStep::Validate => PluginLoadStep::LoadFirstParty,
+                PluginLoadStep::LoadFirstParty => PluginLoadStep::LoadLua,
+                PluginLoadStep::LoadLua => PluginLoadStep::RegisterCapabilities,
+                PluginLoadStep::RegisterCapabilities => PluginLoadStep::EmitDiagnostics,
+                PluginLoadStep::EmitDiagnostics => PluginLoadStep::Finalize,
+                PluginLoadStep::Finalize => return Ok(()),
+            };
+        }
     }
 }
 

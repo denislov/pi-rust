@@ -41,6 +41,10 @@
   finalization steps, with typed PromptTurn children. Existing sequential member
   ordering is preserved; bounded structured concurrency remains tracked as a
   separate AWC-003 task.
+- Added the PluginLoad typed pipeline vertical slice: production plugin loading
+  now uses explicit discovery, validation, loading, capability registration,
+  diagnostics, and finalization steps with boundary cancellation checks. The
+  generic graph remains compatibility-only.
 
 ## 0.4.0 - 2026-07-19
 
