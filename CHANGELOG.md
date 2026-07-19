@@ -52,6 +52,10 @@
   workflow now uses explicit read/propose/validate/apply/check/repair/record
   steps in both service and tool paths. The generic graph remains
   compatibility-only.
+- Completed `AWC-003`: all fixed product workflows now use typed production
+  pipelines, AgentTeam member work is bounded structured concurrency, and
+  workflow-owned contexts/ProductEvents remain the observation boundary instead
+  of introducing a replacement generic step observer.
 - Fixed the canonical navigation workflow stack overflow introduced by the
   converged operation dispatch future: the operation match now crosses an
   explicit heap boundary, and the default-stack durability regression passes.
