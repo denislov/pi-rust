@@ -691,7 +691,7 @@ impl AgentTeamContext {
         prompt_options: PromptTurnOptions,
         child_delegation_depth: usize,
     ) -> Result<(), CodingSessionError> {
-        let outcome = crate::operations::delegation::execution::execute_agent(
+        let outcome = Box::pin(crate::operations::delegation::execution::execute_agent(
             &FlowService::new(),
             self.registry.clone(),
             self.plugin_service.clone(),
@@ -702,7 +702,7 @@ impl AgentTeamContext {
             child_delegation_depth,
             delegation_lineage_for_request(self.options.delegation_lineage(), request),
             self.child_capability_snapshot.clone(),
-        )
+        ))
         .await;
         self.pending_delegation_confirmations
             .extend(outcome.pending_confirmations);

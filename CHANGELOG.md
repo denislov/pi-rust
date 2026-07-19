@@ -32,6 +32,10 @@
 - Added the PromptTurn typed pipeline vertical slice: production prompt turns
   now execute explicit request/input/runtime/session/Agent/finalization steps,
   while Agent execution remains delegated to the typed AWC-002 runner.
+- Added the AgentInvocation typed pipeline vertical slice: delegated-agent
+  production paths now use explicit profile/child-prompt/execution/finalization
+  steps, including cancellation-aware execution, and nested PromptTurn uses its
+  typed runner. The generic graph remains compatibility-only.
 
 ## 0.4.0 - 2026-07-19
 

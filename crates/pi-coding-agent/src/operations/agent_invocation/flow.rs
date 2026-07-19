@@ -147,8 +147,18 @@ enum AgentInvocationNodeKind {
     FinalizeAgentInvocation,
 }
 
+#[allow(dead_code)]
 pub(crate) struct AgentInvocationFlow {
     flow: Flow<AgentInvocationContext>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AgentInvocationStep {
+    Start,
+    ResolveProfile,
+    PrepareChildPrompt,
+    RunChildAgent,
+    Finalize,
 }
 
 impl AgentInvocationFlow {
@@ -164,6 +174,7 @@ impl AgentInvocationFlow {
         Ok(Self { flow })
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn run(
         &self,
         ctx: &mut AgentInvocationContext,
@@ -171,6 +182,44 @@ impl AgentInvocationFlow {
         self.flow.run(ctx).await.map_err(flow_error)
     }
 
+    pub(crate) async fn run_typed(
+        &self,
+        ctx: &mut AgentInvocationContext,
+        cancellation: Option<CancellationToken>,
+    ) -> Result<(), CodingSessionError> {
+        let mut step = AgentInvocationStep::Start;
+        loop {
+            if cancellation
+                .as_ref()
+                .is_some_and(|token| token.is_cancelled())
+            {
+                let error = CodingSessionError::Cancelled;
+                ctx.fail(error.clone());
+                return Err(error);
+            }
+            let result = match step {
+                AgentInvocationStep::Start => ctx.start_agent_invocation(),
+                AgentInvocationStep::ResolveProfile => ctx.resolve_agent_profile(),
+                AgentInvocationStep::PrepareChildPrompt => ctx.prepare_child_prompt(),
+                AgentInvocationStep::RunChildAgent => ctx.run_child_agent().await,
+                AgentInvocationStep::Finalize => ctx.finalize_agent_invocation(),
+            };
+            if let Err(error) = result {
+                return Err(CodingSessionError::Flow {
+                    message: ctx.fail(error),
+                });
+            }
+            step = match step {
+                AgentInvocationStep::Start => AgentInvocationStep::ResolveProfile,
+                AgentInvocationStep::ResolveProfile => AgentInvocationStep::PrepareChildPrompt,
+                AgentInvocationStep::PrepareChildPrompt => AgentInvocationStep::RunChildAgent,
+                AgentInvocationStep::RunChildAgent => AgentInvocationStep::Finalize,
+                AgentInvocationStep::Finalize => return Ok(()),
+            };
+        }
+    }
+
+    #[allow(dead_code)]
     pub(crate) async fn run_with_cancellation(
         &self,
         ctx: &mut AgentInvocationContext,
@@ -465,7 +514,7 @@ impl AgentInvocationContext {
                             .into(),
                     })?;
             match FlowService::new()
-                .run_prompt_subflow_for_agent_invocation(child_context)
+                .run_prompt_subflow_typed_for_agent_invocation(child_context)
                 .await
             {
                 Ok(_) => Some((
@@ -584,7 +633,7 @@ impl AgentInvocationContext {
         prompt_options: PromptTurnOptions,
         child_delegation_depth: usize,
     ) -> Result<(), CodingSessionError> {
-        let outcome = crate::operations::delegation::execution::execute_agent(
+        let outcome = Box::pin(crate::operations::delegation::execution::execute_agent(
             &FlowService::new(),
             self.registry.clone(),
             self.plugin_service.clone(),
@@ -595,7 +644,7 @@ impl AgentInvocationContext {
             child_delegation_depth,
             delegation_lineage_for_request(self.options.delegation_lineage(), request),
             self.child_capability_snapshot.clone(),
-        )
+        ))
         .await;
         self.pending_delegation_confirmations
             .extend(outcome.pending_confirmations);
