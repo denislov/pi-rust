@@ -1,9 +1,7 @@
 use super::emission::ProductEventDraft;
 use super::{
-    CodingAgentProductEventCheckOutput, CodingAgentProductEventDiagnostic,
     CodingAgentProductEventDurability, CodingAgentProductEventError, CodingAgentProductEventKind,
-    CodingAgentProductEventReplacement, CodingAgentProductEventTerminalStatus,
-    CodingAgentWorkflowProductEvent,
+    CodingAgentProductEventTerminalStatus, CodingAgentWorkflowProductEvent,
 };
 use crate::operations::self_healing_edit::runner::{
     SelfHealingEditCheckOutput, SelfHealingEditDiagnostic, SelfHealingEditReplacement,
@@ -82,20 +80,9 @@ impl SelfHealingEditEvent {
                     operation_id: operation_id.clone(),
                     path,
                     attempt,
-                    replacements: replacements
-                        .into_iter()
-                        .map(|replacement| CodingAgentProductEventReplacement {
-                            old_text: replacement.old_text,
-                            new_text: replacement.new_text,
-                        })
-                        .collect(),
-                    diagnostics: diagnostics
-                        .into_iter()
-                        .map(|diagnostic| CodingAgentProductEventDiagnostic {
-                            message: diagnostic.message,
-                        })
-                        .collect(),
-                    check_output: check_output.map(product_check_output),
+                    replacements: replacements.into_iter().map(Into::into).collect(),
+                    diagnostics: diagnostics.into_iter().map(Into::into).collect(),
+                    check_output: check_output.map(Into::into),
                 },
                 operation_id,
                 None,
@@ -112,7 +99,7 @@ impl SelfHealingEditEvent {
                     path,
                     attempts,
                     first_changed_line,
-                    check_output: check_output.map(product_check_output),
+                    check_output: check_output.map(Into::into),
                 },
                 operation_id,
                 Some(CodingAgentProductEventTerminalStatus::Completed),
@@ -125,10 +112,7 @@ impl SelfHealingEditEvent {
                 CodingAgentWorkflowProductEvent::SelfHealingEditFailed {
                     operation_id: operation_id.clone(),
                     path,
-                    error: CodingAgentProductEventError {
-                        code: error.code().to_owned(),
-                        message: error.to_string(),
-                    },
+                    error: error.into(),
                 },
                 operation_id,
                 Some(CodingAgentProductEventTerminalStatus::Failed),
@@ -154,15 +138,6 @@ impl SelfHealingEditEvent {
             terminal_status,
             durability: CodingAgentProductEventDurability::LiveOnly,
         }
-    }
-}
-
-fn product_check_output(value: SelfHealingEditCheckOutput) -> CodingAgentProductEventCheckOutput {
-    CodingAgentProductEventCheckOutput {
-        command: value.command,
-        stdout: value.stdout,
-        stderr: value.stderr,
-        exit_code: value.exit_code,
     }
 }
 

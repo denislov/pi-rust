@@ -1,9 +1,7 @@
 use crate::adapters::rpc::prompt::flush_session_product_events;
 use crate::adapters::rpc::state::RpcState;
 use crate::adapters::rpc::wire::{write_json_line, write_rpc_response};
-use crate::api::operation::{
-    CodingAgentOperation, CodingAgentOperationOutcome, CodingAgentPluginLoadOutcome,
-};
+use crate::api::operation::{CodingAgentOperation, CodingAgentPluginLoadOutcome};
 use crate::app::bootstrap::{PromptInvocation, SessionRunOptions};
 use crate::app::cli::error::CliError;
 use crate::app::cli::prompt_options::PromptRunOptions;
@@ -920,6 +918,10 @@ impl RpcState {
             .with_max_attempts(policy.max_attempts.unwrap_or(1))
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "RPC decoding keeps the versioned self-healing-edit fields explicit"
+    )]
     async fn handle_self_healing_edit<W>(
         &mut self,
         id: Option<String>,
@@ -1038,12 +1040,9 @@ impl RpcState {
         flush_session_product_events(event_flush).await;
         match result {
             Ok(operation_outcome) => {
-                let outcome = match operation_outcome {
-                    CodingAgentOperationOutcome::SelfHealingEdit(outcome) => outcome,
-                    _ => unreachable!(
-                        "self-healing edit operation returned a different public outcome"
-                    ),
-                };
+                let outcome = operation_outcome
+                    .into_self_healing_edit()
+                    .expect("self-healing edit operation returned a different public outcome");
                 let data = rpc_self_healing_edit_data(&outcome);
                 self.coding_session = Some(session);
                 write_rpc_response(
@@ -1281,23 +1280,23 @@ impl RpcState {
             .await;
         flush_session_product_events(event_flush).await;
         match result {
-            Ok(operation_outcome) => match operation_outcome {
-                CodingAgentOperationOutcome::DefaultAgentProfileChanged => {
-                    let data = serde_json::json!({ "defaultAgentProfileId": profile_id.as_str() });
-                    self.coding_session = Some(session);
-                    write_rpc_response(
-                        writer,
-                        RpcResponse::success(id, "set_default_agent_profile", Some(data)),
-                    )
-                    .await?;
-                    self.drain_session_product_events(writer).await?;
-                    self.mark_idempotency_complete(complete_key.as_ref());
-                    Ok(())
-                }
-                _ => unreachable!(
-                    "set default agent profile operation returned a different public outcome"
-                ),
-            },
+            Ok(operation_outcome) => {
+                operation_outcome
+                    .into_default_agent_profile_changed()
+                    .expect(
+                        "set default agent profile operation returned a different public outcome",
+                    );
+                let data = serde_json::json!({ "defaultAgentProfileId": profile_id.as_str() });
+                self.coding_session = Some(session);
+                write_rpc_response(
+                    writer,
+                    RpcResponse::success(id, "set_default_agent_profile", Some(data)),
+                )
+                .await?;
+                self.drain_session_product_events(writer).await?;
+                self.mark_idempotency_complete(complete_key.as_ref());
+                Ok(())
+            }
             Err(error) => {
                 self.coding_session = Some(session);
                 write_rpc_response(
@@ -1609,29 +1608,27 @@ impl RpcState {
             .await;
         flush_session_product_events(event_flush).await;
         match result {
-            Ok(operation_outcome) => match operation_outcome {
-                CodingAgentOperationOutcome::DelegationRejected => {
-                    self.coding_session = Some(session);
-                    write_rpc_response(
-                        writer,
-                        RpcResponse::success(
-                            id,
-                            "reject_delegation",
-                            Some(serde_json::json!({
-                                "delegation": rpc_pending_delegation_confirmation(&pending),
-                                "reason": reason,
-                            })),
-                        ),
-                    )
-                    .await?;
-                    self.drain_session_product_events(writer).await?;
-                    self.mark_idempotency_complete(complete_key.as_ref());
-                    Ok(())
-                }
-                _ => unreachable!(
-                    "delegation rejection operation returned a different public outcome"
-                ),
-            },
+            Ok(operation_outcome) => {
+                operation_outcome
+                    .into_delegation_rejected()
+                    .expect("delegation rejection operation returned a different public outcome");
+                self.coding_session = Some(session);
+                write_rpc_response(
+                    writer,
+                    RpcResponse::success(
+                        id,
+                        "reject_delegation",
+                        Some(serde_json::json!({
+                            "delegation": rpc_pending_delegation_confirmation(&pending),
+                            "reason": reason,
+                        })),
+                    ),
+                )
+                .await?;
+                self.drain_session_product_events(writer).await?;
+                self.mark_idempotency_complete(complete_key.as_ref());
+                Ok(())
+            }
             Err(error) => {
                 self.coding_session = Some(session);
                 write_rpc_response(
@@ -1681,14 +1678,14 @@ impl RpcState {
         };
 
         match session.run(CodingAgentOperation::PluginLoad).await {
-            Ok(operation_outcome) => match operation_outcome {
-                CodingAgentOperationOutcome::PluginLoad(outcome) => {
-                    let data = rpc_plugin_reload_data(&outcome);
-                    self.coding_session = Some(session);
-                    write_rpc_response(writer, RpcResponse::success(id, "reload", Some(data))).await
-                }
-                _ => unreachable!("plugin load operation returned a different public outcome"),
-            },
+            Ok(operation_outcome) => {
+                let outcome = operation_outcome
+                    .into_plugin_load()
+                    .expect("plugin load operation returned a different public outcome");
+                let data = rpc_plugin_reload_data(&outcome);
+                self.coding_session = Some(session);
+                write_rpc_response(writer, RpcResponse::success(id, "reload", Some(data))).await
+            }
             Err(error) => {
                 self.coding_session = Some(session);
                 write_rpc_response(writer, RpcResponse::error(id, "reload", error.to_string()))
@@ -1771,7 +1768,7 @@ fn rpc_self_healing_edit_error_data(error: &CodingSessionError) -> Option<serde_
                 .map(|diagnostic| serde_json::json!({ "message": diagnostic.message }))
                 .collect::<Vec<_>>(),
             "checkOutput": check_output
-                .as_ref()
+                .as_deref()
                 .map(rpc_self_healing_check_output_data),
             "repairAttempts": repair_attempts
                 .iter()

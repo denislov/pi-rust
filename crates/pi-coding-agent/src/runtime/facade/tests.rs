@@ -3003,10 +3003,7 @@ mod cases {
             .run(CodingAgentOperation::ExportCurrent)
             .await
             .unwrap();
-        assert!(matches!(
-            read_only_outcome,
-            CodingAgentOperationOutcome::Export(_)
-        ));
+        assert!(read_only_outcome.into_export().is_ok());
 
         let sync_mut_descriptor = CodingAgentOperation::SetDefaultAgentProfile {
             profile_id: ProfileId::from("reviewer"),
@@ -5963,14 +5960,12 @@ mod cases {
         );
         let output = temp.path().join("exports/session.html");
 
-        let exported = match session
+        let exported = session
             .run(CodingAgentOperation::ExportCurrentHtml(output.clone()))
             .await
             .unwrap()
-        {
-            CodingAgentOperationOutcome::ExportHtml(path) => path,
-            other => panic!("expected html export outcome, got {other:?}"),
-        };
+            .into_export_html()
+            .expect("expected html export outcome");
 
         assert_eq!(exported, output);
         let html = std::fs::read_to_string(&exported).unwrap();
@@ -6027,14 +6022,12 @@ mod cases {
             .unwrap();
         let output = temp.path().join("session.html");
 
-        let exported = match session
+        let exported = session
             .run(CodingAgentOperation::ExportCurrentHtml(output.clone()))
             .await
             .unwrap()
-        {
-            CodingAgentOperationOutcome::ExportHtml(path) => path,
-            other => panic!("expected html export outcome, got {other:?}"),
-        };
+            .into_export_html()
+            .expect("expected html export outcome");
 
         assert_eq!(exported, output);
         assert!(output.exists());

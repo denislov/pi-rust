@@ -174,11 +174,11 @@ where
         match arg.as_str() {
             "-p" | "--print" => {
                 parsed.print = true;
-                if let Some(next) = raw.get(i + 1) {
-                    if !next.starts_with('-') || next.starts_with("---") {
-                        prompt_parts.push(next.clone());
-                        i += 1;
-                    }
+                if let Some(next) = raw.get(i + 1)
+                    && (!next.starts_with('-') || next.starts_with("---"))
+                {
+                    prompt_parts.push(next.clone());
+                    i += 1;
                 }
             }
             "-h" | "--help" => parsed.help = true,

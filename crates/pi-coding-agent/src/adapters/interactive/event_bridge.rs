@@ -4,8 +4,9 @@ use crate::runtime::facade::{
     CodingAgentAgentProductEvent, CodingAgentDelegationProductEvent, CodingAgentImageContent,
     CodingAgentMessageProductEvent, CodingAgentProductEventKind,
     CodingAgentProductEventProfileKind, CodingAgentProductEventUsage,
-    CodingAgentRuntimeProductEvent, CodingAgentToolProductEvent, CodingAgentWorkflowProductEvent,
-    ProductEvent, ProductEventSequence, ProfileId, ProfileKind, UiContextProjection, UiSnapshot,
+    CodingAgentProfileProductEvent, CodingAgentRuntimeProductEvent, CodingAgentSessionView,
+    CodingAgentToolProductEvent, CodingAgentWorkflowProductEvent, ProductEvent,
+    ProductEventSequence, ProfileId, ProfileKind, UiContextProjection, UiSnapshot,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -86,6 +87,7 @@ pub(crate) struct UiProjection {
     pending: Vec<UiEvent>,
     context: UiContextProjection,
     capabilities: Option<crate::runtime::facade::CodingAgentCapabilities>,
+    session: Option<CodingAgentSessionView>,
 }
 
 impl Default for UiProjection {
@@ -102,6 +104,7 @@ impl UiProjection {
             pending: Vec::new(),
             context: UiContextProjection::default(),
             capabilities: None,
+            session: None,
         }
     }
 
@@ -112,6 +115,7 @@ impl UiProjection {
             pending: snapshot_hydration_events(&snapshot),
             context: snapshot.context,
             capabilities: Some(snapshot.capabilities),
+            session: Some(snapshot.session),
         }
     }
 
@@ -120,6 +124,13 @@ impl UiProjection {
             return;
         }
         self.last_sequence = event.sequence_internal();
+        if let CodingAgentProductEventKind::Profile(
+            CodingAgentProfileProductEvent::DefaultChanged { profile_id },
+        ) = event.event()
+            && let Some(session) = self.session.as_mut()
+        {
+            session.default_agent_profile_id = ProfileId::from(profile_id.clone());
+        }
         self.context.apply_product_event(event, None);
         self.pending.extend(self.bridge.push_product_event(event));
     }
@@ -134,6 +145,23 @@ impl UiProjection {
 
     pub(crate) fn capabilities(&self) -> Option<&crate::runtime::facade::CodingAgentCapabilities> {
         self.capabilities.as_ref()
+    }
+
+    pub(crate) fn session(&self) -> Option<&CodingAgentSessionView> {
+        self.session.as_ref()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn replace_context(&mut self, context: UiContextProjection) {
+        self.context = context;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn replace_capabilities(
+        &mut self,
+        capabilities: Option<crate::runtime::facade::CodingAgentCapabilities>,
+    ) {
+        self.capabilities = capabilities;
     }
 }
 
@@ -706,6 +734,17 @@ mod tests {
         )
     }
 
+    fn profile_event(sequence: u64, profile_id: &str) -> ProductEvent {
+        ProductEvent::from_draft_for_tests(
+            ProductEventSequence::new(sequence),
+            crate::events::profile::ProfileEvent::DefaultChanged {
+                profile_id: ProfileId::from(profile_id),
+            }
+            .into_product_draft(),
+            None,
+        )
+    }
+
     fn authorization_request(id: &str, requested_at: &str) -> ToolAuthorizationRequest {
         ToolAuthorizationRequest {
             authorization_id: id.into(),
@@ -869,6 +908,20 @@ mod tests {
         assert_eq!(projection.context().operations.len(), 1);
         assert_eq!(projection.context().operations[0].kind, "prompt");
         assert_eq!(projection.context().operations[0].updated_sequence, 8);
+    }
+
+    #[tokio::test]
+    async fn ui_projection_owns_snapshot_session_and_orders_profile_changes() {
+        let mut projection = UiProjection::from_snapshot(
+            snapshot(ProductEventSequence::new(7), "sess_profile").await,
+        );
+
+        projection.apply_product_event(&profile_event(8, "reviewer"));
+        projection.apply_product_event(&profile_event(6, "stale"));
+
+        let session = projection.session().expect("snapshot session projection");
+        assert_eq!(session.session_id, "sess_profile");
+        assert_eq!(session.default_agent_profile_id.as_str(), "reviewer");
     }
 
     #[tokio::test]

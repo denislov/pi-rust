@@ -104,7 +104,7 @@ impl Operation {
         }
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn kind(&self) -> OperationKind {
         self.static_kind()
             .expect("dynamic operation does not have a static kind")
@@ -115,12 +115,12 @@ impl Operation {
             .then_some(self.descriptor().submitted_kind)
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn origin(&self) -> OperationOrigin {
         OperationOrigin::ClientRoot
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn class(&self) -> OperationClass {
         self.descriptor().admission_class()
     }
@@ -166,10 +166,7 @@ impl OperationExecution {
             descriptor.lineage,
             crate::runtime::outcome::OperationLineage::Root
         );
-        debug_assert!(matches!(
-            origin,
-            OperationOrigin::ClientRoot | OperationOrigin::RuntimeInternal
-        ));
+        debug_assert!(matches!(origin, OperationOrigin::ClientRoot));
         Self {
             kind,
             descriptor,
@@ -241,15 +238,12 @@ impl OperationDispatchMode {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum OperationOrigin {
     ClientRoot,
     ParentChild,
-    RuntimeInternal,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum OperationClass {
     Query,
@@ -273,9 +267,7 @@ pub(crate) enum OperationOutcome {
     AgentInvocation(AgentInvocationOutcome),
     AgentTeam(AgentTeamOutcome),
     SetDefaultAgentProfile,
-    #[allow(dead_code)]
     ForkSession,
-    #[allow(dead_code)]
     SwitchActiveLeaf,
     SessionTreeLabelChanged {
         entry_id: String,
@@ -310,7 +302,7 @@ impl OperationIdempotencyKey {
         Ok(Self(value))
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn as_str(&self) -> &str {
         &self.0
     }

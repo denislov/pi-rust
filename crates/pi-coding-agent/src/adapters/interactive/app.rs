@@ -231,10 +231,10 @@ fn resolve_resolved_theme(
     theme_name: Option<&str>,
     selected: Option<&resources::ThemeResource>,
 ) -> crate::theme::ResolvedTheme {
-    if let Some(theme) = selected {
-        if let Ok(resolved) = theme.theme.resolve_colors() {
-            return resolved;
-        }
+    if let Some(theme) = selected
+        && let Ok(resolved) = theme.theme.resolve_colors()
+    {
+        return resolved;
     }
     let json = match theme_name {
         Some("light") => crate::theme::builtin_light(),
@@ -844,7 +844,7 @@ mod tests {
         );
         root.set_status(InteractiveStatus::Running);
 
-        root.editor.set_text("continue with tests");
+        root.local.editor.set_text("continue with tests");
         root.handle_input(&key_event("\x1b[13;2u"));
 
         assert_eq!(root.take_action(), InteractiveAction::FollowUp);
@@ -1169,7 +1169,7 @@ mod tests {
             "faux-model".to_string(),
             "no-session".to_string(),
         );
-        root.editor.set_text("/");
+        root.local.editor.set_text("/");
 
         let rendered = root.render(80).join("\n");
 
@@ -1275,7 +1275,7 @@ mod tests {
             original: "/settings".to_string(),
         });
 
-        assert!(root.selecting_settings);
+        assert!(root.local.selecting_settings);
         assert_eq!(
             root.editor_border_style().fg,
             pi_tui::api::render::Color::Rgb(40, 50, 60)
@@ -1761,7 +1761,7 @@ mod tests {
         assert!(text.contains("sk-test-login"), "{text}");
         assert!(last_system_text(&root).contains("Saved API key for anthropic"));
         assert_ne!(root.action, InteractiveAction::Submit);
-        assert!(root.pending_submit.is_none());
+        assert!(root.take_pending_submit().is_none());
     }
 
     #[test]
@@ -1793,7 +1793,7 @@ mod tests {
         assert!(!text.contains("[anthropic]"), "{text}");
         assert!(last_system_text(&root).contains("Removed stored auth for anthropic"));
         assert_ne!(root.action, InteractiveAction::Submit);
-        assert!(root.pending_submit.is_none());
+        assert!(root.take_pending_submit().is_none());
     }
 
     #[test]
@@ -1803,12 +1803,12 @@ mod tests {
             "faux-model".to_string(),
             "no-session".to_string(),
         );
-        root.editor.set_text("/mo");
+        root.local.editor.set_text("/mo");
         let filtered = root.render(80).join("\n");
         assert!(filtered.contains("model"), "{filtered}");
         assert!(!filtered.contains("settings"), "{filtered}");
 
-        root.editor.set_text("/model ");
+        root.local.editor.set_text("/model ");
         let with_argument_space = root.render(80).join("\n");
         assert!(
             !with_argument_space.contains("Select model"),
@@ -1827,7 +1827,7 @@ mod tests {
             "faux-model".to_string(),
             "no-session".to_string(),
         );
-        root.editor.set_text("/");
+        root.local.editor.set_text("/");
         root.handle_input(&key_event("\x1b[B"));
         root.handle_input(&key_event("\x1b[B"));
         let moved = root.render(80).join("\n");
@@ -1835,7 +1835,7 @@ mod tests {
 
         root.handle_input(&key_event("\t"));
 
-        assert_eq!(root.editor.text(), "/model ");
+        assert_eq!(root.local.editor.text(), "/model ");
         assert_eq!(root.take_action(), InteractiveAction::None);
         let rendered = root.render(80).join("\n");
         assert!(!rendered.contains("(2/29)"), "{rendered}");
@@ -1848,7 +1848,7 @@ mod tests {
             "faux-model".to_string(),
             "no-session".to_string(),
         );
-        root.editor.set_text("/");
+        root.local.editor.set_text("/");
 
         root.handle_input(&key_event("\x1b"));
         let cancelled = root.render(80).join("\n");
@@ -1910,7 +1910,7 @@ mod tests {
             original: "/resume".to_string(),
         });
 
-        assert!(root.selecting_session);
+        assert!(root.local.selecting_session);
         let rendered = root.render(80).join("\n");
         assert!(rendered.contains("Select session"), "{rendered}");
         assert!(rendered.contains("Project Alpha"), "{rendered}");
@@ -1923,7 +1923,7 @@ mod tests {
             .expect("session selection should be returned to loop");
         assert_eq!(selected.id, "session-alpha");
         assert_eq!(selected.path, PathBuf::from("/tmp/sessions/session-alpha"));
-        assert!(!root.selecting_session);
+        assert!(!root.local.selecting_session);
     }
 
     #[test]
@@ -1998,7 +1998,7 @@ mod tests {
             "faux-model".to_string(),
             "no-session".to_string(),
         );
-        root.editor.set_text("/");
+        root.local.editor.set_text("/");
 
         let before = root.render_state();
         root.handle_input(&key_event("\x1b[B"));
@@ -2013,7 +2013,7 @@ mod tests {
             "faux-model".to_string(),
             "no-session".to_string(),
         );
-        root.editor.set_text("/quit");
+        root.local.editor.set_text("/quit");
 
         root.handle_input(&key_event("\r"));
 
@@ -2027,7 +2027,7 @@ mod tests {
             "faux-model".to_string(),
             "no-session".to_string(),
         );
-        root.editor.set_text("hello history");
+        root.local.editor.set_text("hello history");
 
         root.handle_input(&key_event("\r"));
         assert_eq!(root.take_action(), InteractiveAction::Submit);
@@ -2035,7 +2035,7 @@ mod tests {
 
         root.handle_input(&key_event("\x1b[A"));
 
-        assert_eq!(root.editor.text(), "hello history");
+        assert_eq!(root.local.editor.text(), "hello history");
     }
 
     #[test]
@@ -2077,7 +2077,7 @@ mod tests {
             "no-session".to_string(),
         );
 
-        root.editor.set_text("@agent coder refactor module");
+        root.local.editor.set_text("@agent coder refactor module");
         root.handle_input(&key_event("\r"));
         assert_eq!(root.take_action(), InteractiveAction::Submit);
         assert_eq!(
@@ -2085,7 +2085,9 @@ mod tests {
             Some("@agent coder refactor module")
         );
 
-        root.editor.set_text("@team implementation ship feature");
+        root.local
+            .editor
+            .set_text("@team implementation ship feature");
         root.handle_input(&key_event("\r"));
         assert_eq!(root.take_action(), InteractiveAction::Submit);
         assert_eq!(
@@ -2153,7 +2155,7 @@ mod tests {
         assert!(text.contains("/model"), "{text}");
         assert!(text.contains("/reload"), "{text}");
         assert_ne!(root.action, InteractiveAction::Submit);
-        assert!(root.pending_submit.is_none());
+        assert!(root.take_pending_submit().is_none());
     }
 
     #[test]
@@ -2172,7 +2174,7 @@ mod tests {
         assert!(text.contains("/scoped-models"), "{text}");
         assert!(text.contains("not implemented"), "{text}");
         assert_ne!(root.action, InteractiveAction::Submit);
-        assert!(root.pending_submit.is_none());
+        assert!(root.take_pending_submit().is_none());
     }
 
     #[test]
@@ -2555,7 +2557,7 @@ mod tests {
             original: "/tree".to_string(),
         });
 
-        assert!(root.selecting_tree);
+        assert!(root.local.selecting_tree);
         let before = root.render_state();
         root.handle_input(&key_event("\x1b[B"));
         let after = root.render_state();
@@ -2749,7 +2751,7 @@ mod tests {
         let text = last_system_text(&root);
         assert!(text.contains("unknown command: /does-not-exist"), "{text}");
         assert_ne!(root.action, InteractiveAction::Submit);
-        assert!(root.pending_submit.is_none());
+        assert!(root.take_pending_submit().is_none());
     }
 
     // ── expand_skill_command ──────────────────────────────────────────
@@ -2848,7 +2850,7 @@ mod tests {
             "template expansion should trigger submit"
         );
         assert_eq!(
-            root.pending_submit.as_deref(),
+            root.take_pending_submit().as_deref(),
             Some("Review code tests"),
             "pending_submit should contain expanded template"
         );
@@ -2880,7 +2882,7 @@ mod tests {
             InteractiveAction::Submit,
             "skill expansion should trigger submit"
         );
-        let expanded = root.pending_submit.expect("has pending submit");
+        let expanded = root.take_pending_submit().expect("has pending submit");
         assert!(expanded.contains("<skill name=\"rust\""), "{expanded}");
         assert!(expanded.contains("write a fn"), "{expanded}");
     }
@@ -2908,7 +2910,7 @@ mod tests {
 
         // Should still show builtin help, not submit custom content
         assert_ne!(root.action, InteractiveAction::Submit);
-        assert!(root.pending_submit.is_none());
+        assert!(root.take_pending_submit().is_none());
         let text = last_system_text(&root);
         assert!(text.contains("/reload"), "{text}");
     }
@@ -3045,7 +3047,7 @@ display_name = "Coder"
         root.handle_input(&key_event("\r"));
         type_text(&mut root, "coder");
         root.handle_input(&key_event("\r"));
-        root.editor.set_text("refactor module");
+        root.local.editor.set_text("refactor module");
         root.handle_input(&key_event("\r"));
 
         assert_eq!(root.take_action(), InteractiveAction::AgentInvocation);
@@ -3186,7 +3188,7 @@ members = ["coder"]
         root.handle_input(&key_event("\x1b[B"));
         root.handle_input(&key_event("\r"));
         root.handle_input(&key_event("\r"));
-        root.editor.set_text("ship feature");
+        root.local.editor.set_text("ship feature");
         root.handle_input(&key_event("\r"));
 
         assert_eq!(root.take_action(), InteractiveAction::AgentTeam);
@@ -3364,7 +3366,7 @@ members = ["coder"]
         let rendered = root.render(80).join("\n");
         assert!(rendered.contains("Delegation confirmations"), "{rendered}");
         assert!(rendered.contains("review automatically"), "{rendered}");
-        assert_eq!(root.editor.text(), "draft remains");
+        assert_eq!(root.local.editor.text(), "draft remains");
 
         root.apply_events(vec![UiEvent::DelegationConfirmationResolved {
             operation_id: pending.operation_id,

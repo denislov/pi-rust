@@ -1,6 +1,7 @@
 use self::runner::{
-    ManualCompactionContext, ManualCompactionOptions, manual_compaction_failed_outcome,
-    manual_compaction_operation_id, manual_compaction_success_outcome,
+    ManualCompactionContext, ManualCompactionOptions, ManualCompactionRunner,
+    manual_compaction_failed_outcome, manual_compaction_operation_id,
+    manual_compaction_success_outcome,
 };
 use crate::operations::prompt::context::PromptTurnOutcome;
 use crate::runtime::capability::{
@@ -10,14 +11,12 @@ use crate::runtime::control::OperationCancellationHandle;
 use crate::runtime::facade::CodingSessionError;
 use crate::services::event::EventService;
 use crate::services::session::apply_finalized_session_write;
-use crate::services::workflow::WorkflowService;
 use crate::session::service::SessionService;
 
 pub(crate) mod runner;
 
 pub(crate) async fn run(
     session_service: &mut SessionService,
-    workflow_service: &WorkflowService,
     event_service: &EventService,
     options: ManualCompactionOptions,
     snapshot: &OperationCapabilitySnapshot,
@@ -31,7 +30,8 @@ pub(crate) async fn run(
     let operation_id = context.operation_id().to_owned();
     let turn_id = context.turn_id().to_owned();
 
-    match workflow_service.run_manual_compaction(&mut context).await {
+    let compaction_result = ManualCompactionRunner::new()?.run_typed(&mut context).await;
+    match compaction_result {
         Ok(compaction) => {
             if let Some(cancellation) = cancellation
                 && let Err(error) = cancellation.close()

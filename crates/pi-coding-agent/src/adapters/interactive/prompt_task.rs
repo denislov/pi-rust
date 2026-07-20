@@ -1,7 +1,6 @@
 use crate::adapters::interactive::event_bridge::CodingEventBridge;
 use crate::api::operation::{
-    BranchSummaryReusePolicy, CodingAgentOperation, CodingAgentOperationOutcome,
-    CodingAgentPluginLoadOutcome,
+    BranchSummaryReusePolicy, CodingAgentOperation, CodingAgentPluginLoadOutcome,
 };
 use crate::app::cli::error::CliError;
 use crate::app::cli::prompt_options::PromptRunOptions;
@@ -14,11 +13,19 @@ use crate::runtime::facade::{
 };
 use tokio::sync::{mpsc, oneshot};
 
+#[allow(
+    clippy::large_enum_variant,
+    reason = "single-owner task events preserve typed snapshot and product-event payloads"
+)]
 pub(super) enum PromptTaskEvent {
     Snapshot(UiSnapshot),
     Coding(ProductEvent),
 }
 
+#[allow(
+    clippy::large_enum_variant,
+    reason = "single-owner task completion preserves exhaustive typed operation outcomes"
+)]
 pub(super) enum PromptTaskResult {
     Coding(CodingPromptTaskResult),
     AgentInvocation(AgentInvocationTaskResult),
@@ -32,6 +39,10 @@ pub(super) enum PromptTaskResult {
     ForkSession(ForkSessionTaskResult),
 }
 
+#[allow(
+    clippy::large_enum_variant,
+    reason = "task completion is moved once and retains typed failure recovery state"
+)]
 pub(super) enum PromptTaskCompletion {
     Completed(PromptTaskResult),
     Failed(PromptTaskFailure),
@@ -887,10 +898,9 @@ async fn run_coding_prompt_task(
                     outcome = &mut prompt => {
                         break outcome
                             .map_err(CliError::from)
-                            .map(|operation_outcome| match operation_outcome {
-                                CodingAgentOperationOutcome::Prompt(outcome) => outcome,
-                                _ => unreachable!("prompt operation returned a different public outcome"),
-                            });
+                            .map(|operation_outcome| operation_outcome
+                                .into_prompt()
+                                .expect("prompt operation returned a different public outcome"));
                     }
                 }
             }
@@ -986,9 +996,10 @@ async fn run_coding_agent_invocation_task(
                 outcome = &mut invocation => {
                     break outcome
                         .map_err(CliError::from)
-                        .map(|operation_outcome| match operation_outcome {
-                            CodingAgentOperationOutcome::AgentInvocation(_) => (),
-                            _ => unreachable!("agent invocation operation returned a different public outcome"),
+                        .map(|operation_outcome| {
+                            operation_outcome
+                                .into_agent_invocation()
+                                .expect("agent invocation operation returned a different public outcome");
                         });
                 }
             }
@@ -1073,10 +1084,9 @@ async fn run_coding_agent_team_task(
                 outcome = &mut invocation => {
                     break outcome
                         .map_err(CliError::from)
-                        .map(|operation_outcome| match operation_outcome {
-                            CodingAgentOperationOutcome::AgentTeam(outcome) => outcome,
-                            _ => unreachable!("agent team operation returned a different public outcome"),
-                        });
+                        .map(|operation_outcome| operation_outcome
+                            .into_agent_team()
+                            .expect("agent team operation returned a different public outcome"));
                 }
             }
             }
@@ -1144,10 +1154,9 @@ async fn run_coding_delegation_approval_task(
                 outcome = &mut approval => {
                     break outcome
                         .map_err(CliError::from)
-                        .map(|operation_outcome| match operation_outcome {
-                            CodingAgentOperationOutcome::DelegationApproved => (),
-                            _ => unreachable!("delegation approval operation returned a different public outcome"),
-                        });
+                        .map(|operation_outcome| operation_outcome
+                            .into_delegation_approved()
+                            .expect("delegation approval operation returned a different public outcome"));
                 }
             }
         }?;
@@ -1190,12 +1199,9 @@ async fn run_coding_set_default_agent_profile_task(
                 outcome = &mut mutation => {
                     break outcome
                         .map_err(CliError::from)
-                        .map(|operation_outcome| match operation_outcome {
-                            CodingAgentOperationOutcome::DefaultAgentProfileChanged => (),
-                            _ => unreachable!(
-                                "set default agent profile operation returned a different public outcome"
-                            ),
-                        });
+                        .map(|operation_outcome| operation_outcome
+                            .into_default_agent_profile_changed()
+                            .expect("set default agent profile operation returned a different public outcome"));
                 }
             }
         }?;
@@ -1239,16 +1245,9 @@ async fn run_coding_session_tree_label_task(
                 outcome = &mut mutation => {
                     break outcome
                         .map_err(CliError::from)
-                        .map(|operation_outcome| match operation_outcome {
-                            CodingAgentOperationOutcome::SessionTreeLabelChanged {
-                                entry_id,
-                                label,
-                                updated_at,
-                            } => (entry_id, label, updated_at),
-                            _ => unreachable!(
-                                "session tree label operation returned a different public outcome"
-                            ),
-                        });
+                        .map(|operation_outcome| operation_outcome
+                            .into_session_tree_label_changed()
+                            .expect("session tree label operation returned a different public outcome"));
                 }
             }
         }?;
@@ -1305,12 +1304,9 @@ async fn run_coding_delegation_rejection_task(
                 outcome = &mut rejection => {
                     break outcome
                         .map_err(CliError::from)
-                        .map(|operation_outcome| match operation_outcome {
-                            CodingAgentOperationOutcome::DelegationRejected => (),
-                            _ => unreachable!(
-                                "delegation rejection operation returned a different public outcome"
-                            ),
-                        });
+                        .map(|operation_outcome| operation_outcome
+                            .into_delegation_rejected()
+                            .expect("delegation rejection operation returned a different public outcome"));
                 }
             }
         }?;
@@ -1381,10 +1377,9 @@ async fn run_coding_compact_task(
                 outcome = &mut compact => {
                     break outcome
                         .map_err(CliError::from)
-                        .map(|operation_outcome| match operation_outcome {
-                            CodingAgentOperationOutcome::Compact(outcome) => outcome,
-                            _ => unreachable!("manual compaction operation returned a different public outcome"),
-                        });
+                        .map(|operation_outcome| operation_outcome
+                            .into_compact()
+                            .expect("manual compaction operation returned a different public outcome"));
                 }
             }
         }
@@ -1457,10 +1452,9 @@ async fn run_coding_self_healing_edit_task(
                 outcome = &mut edit => {
                     break outcome
                         .map_err(CliError::from)
-                        .map(|operation_outcome| match operation_outcome {
-                            CodingAgentOperationOutcome::SelfHealingEdit(outcome) => outcome,
-                            _ => unreachable!("self-healing edit operation returned a different public outcome"),
-                        });
+                        .map(|operation_outcome| operation_outcome
+                            .into_self_healing_edit()
+                            .expect("self-healing edit operation returned a different public outcome"));
                 }
             }
         }
@@ -1523,10 +1517,9 @@ async fn run_coding_plugin_reload_task(
                 outcome = &mut reload => {
                     break outcome
                         .map_err(CliError::from)
-                        .map(|operation_outcome| match operation_outcome {
-                            CodingAgentOperationOutcome::PluginLoad(outcome) => outcome,
-                            _ => unreachable!("plugin load operation returned a different public outcome"),
-                        });
+                        .map(|operation_outcome| operation_outcome
+                            .into_plugin_load()
+                            .expect("plugin load operation returned a different public outcome"));
                 }
             }
         }
@@ -1547,6 +1540,10 @@ async fn run_coding_plugin_reload_task(
     })
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "branch-summary task startup keeps session ownership and cancellation inputs explicit"
+)]
 async fn run_coding_branch_summary_task(
     options: PromptRunOptions,
     existing_session: Option<CodingAgentSession>,
@@ -1604,10 +1601,9 @@ async fn run_coding_branch_summary_task(
                 outcome = &mut branch_summary => {
                     break outcome
                         .map_err(CliError::from)
-                        .map(|operation_outcome| match operation_outcome {
-                            CodingAgentOperationOutcome::BranchSummary(outcome) => outcome,
-                            _ => unreachable!("branch summary operation returned a different public outcome"),
-                        });
+                        .map(|operation_outcome| operation_outcome
+                            .into_branch_summary()
+                            .expect("branch summary operation returned a different public outcome"));
                 }
             }
         }
@@ -1688,10 +1684,9 @@ async fn run_coding_branch_summary_navigation_task(
                 outcome = &mut branch_summary => {
                     break outcome
                         .map_err(CliError::from)
-                        .map(|operation_outcome| match operation_outcome {
-                            CodingAgentOperationOutcome::BranchSummary(outcome) => outcome,
-                            _ => unreachable!("branch summary navigation operation returned a different public outcome"),
-                        });
+                        .map(|operation_outcome| operation_outcome
+                            .into_branch_summary()
+                            .expect("branch summary navigation operation returned a different public outcome"));
                 }
             }
         }
@@ -1722,10 +1717,9 @@ async fn run_coding_branch_summary_navigation_task(
                 outcome = &mut fork => {
                     break outcome
                         .map_err(CliError::from)
-                        .map(|operation_outcome| match operation_outcome {
-                            CodingAgentOperationOutcome::SessionForked => (),
-                            _ => unreachable!("navigation fork operation returned a different public outcome"),
-                        });
+                        .map(|operation_outcome| operation_outcome
+                            .into_session_forked()
+                            .expect("navigation fork operation returned a different public outcome"));
                 }
             }
         }
@@ -1797,12 +1791,9 @@ async fn run_coding_fork_session_task(
                 outcome = &mut fork => {
                     break outcome
                         .map_err(CliError::from)
-                        .map(|operation_outcome| match operation_outcome {
-                            CodingAgentOperationOutcome::SessionForked => (),
-                            _ => unreachable!(
-                                "fork session operation returned a different public outcome"
-                            ),
-                        });
+                        .map(|operation_outcome| operation_outcome
+                            .into_session_forked()
+                            .expect("fork session operation returned a different public outcome"));
                 }
             }
         }?;

@@ -1,9 +1,6 @@
 //! Internal owner tests for the interactive event bridge.
 
-use super::support::{
-    product_check_output, product_diagnostic, product_error, product_event, product_replacement,
-    product_usage,
-};
+use super::support::product_event;
 use pi_ai::api::conversation::{Cost, Usage};
 use pi_coding_agent::adapters::interactive::{
     CodingEventBridge, Transcript, TranscriptItem, UiEvent,
@@ -97,7 +94,7 @@ fn coding_event_bridge_maps_assistant_events() {
             message_id: Some("msg_1".to_string()),
             final_text: "hello".to_string(),
             images: Vec::new(),
-            usage: product_usage(Usage {
+            usage: Usage {
                 input: 100,
                 output: 50,
                 cache_read: 0,
@@ -110,7 +107,8 @@ fn coding_event_bridge_maps_assistant_events() {
                     cache_read: 0.0,
                     cache_write: 0.0,
                 },
-            }),
+            }
+            .into(),
         },
     )));
     assert_eq!(
@@ -139,7 +137,7 @@ fn coding_event_bridge_maps_assistant_events() {
             message_id: Some("msg_2".to_string()),
             final_text: "world".to_string(),
             images: Vec::new(),
-            usage: product_usage(Usage {
+            usage: Usage {
                 input: 30,
                 output: 20,
                 cache_read: 5,
@@ -152,7 +150,8 @@ fn coding_event_bridge_maps_assistant_events() {
                     cache_read: 0.0,
                     cache_write: 0.0,
                 },
-            }),
+            }
+            .into(),
         },
     )));
     assert_eq!(
@@ -182,7 +181,7 @@ fn coding_event_bridge_marks_zero_usage_context_unknown() {
             message_id: Some("msg_1".to_string()),
             final_text: "hello".to_string(),
             images: Vec::new(),
-            usage: product_usage(Usage::default()),
+            usage: Usage::default().into(),
         },
     )));
 
@@ -216,7 +215,7 @@ fn coding_event_bridge_projects_assistant_images_as_structured_blocks() {
             message_id: Some("msg_1".into()),
             final_text: "caption".into(),
             images: vec![image.clone()],
-            usage: product_usage(Usage::default()),
+            usage: Usage::default().into(),
         },
     )));
 
@@ -345,9 +344,10 @@ fn coding_event_bridge_maps_failure_abort_and_compaction() {
     let failed = bridge.handle_product_event(&product_event(
         CodingAgentProductEventKind::Workflow(CodingAgentWorkflowProductEvent::PromptFailed {
             operation_id: "op_1".to_string(),
-            error: product_error(CodingSessionError::Provider {
+            error: CodingSessionError::Provider {
                 message: "stream failed".to_string(),
-            }),
+            }
+            .into(),
         }),
     ));
     assert_eq!(
@@ -563,18 +563,22 @@ fn coding_event_bridge_maps_self_healing_edit_events() {
                 operation_id: "op_edit".to_string(),
                 path: "src/app.txt".to_string(),
                 attempt: 1,
-                replacements: vec![product_replacement(SelfHealingEditReplacement::new(
-                    "deux", "dos",
-                ))],
-                diagnostics: vec![product_diagnostic(SelfHealingEditDiagnostic {
-                    message: "compile error".to_string(),
-                })],
-                check_output: Some(product_check_output(SelfHealingEditCheckOutput {
-                    command: "cargo check".to_string(),
-                    stdout: "fixed".to_string(),
-                    stderr: String::new(),
-                    exit_code: 0,
-                })),
+                replacements: vec![SelfHealingEditReplacement::new("deux", "dos").into()],
+                diagnostics: vec![
+                    SelfHealingEditDiagnostic {
+                        message: "compile error".to_string(),
+                    }
+                    .into(),
+                ],
+                check_output: Some(
+                    SelfHealingEditCheckOutput {
+                        command: "cargo check".to_string(),
+                        stdout: "fixed".to_string(),
+                        stderr: String::new(),
+                        exit_code: 0,
+                    }
+                    .into(),
+                ),
             },
         )));
     let [UiEvent::SystemNotice { text }] = repair.as_slice() else {
@@ -605,9 +609,10 @@ fn coding_event_bridge_maps_self_healing_edit_events() {
             CodingAgentWorkflowProductEvent::SelfHealingEditFailed {
                 operation_id: "op_edit_failed".to_string(),
                 path: "src/bad.txt".to_string(),
-                error: product_error(CodingSessionError::Input {
+                error: CodingSessionError::Input {
                     message: "bad edit".to_string(),
-                }),
+                }
+                .into(),
             },
         )));
     let [UiEvent::SystemNotice { text }] = failed.as_slice() else {

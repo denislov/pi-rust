@@ -1,6 +1,6 @@
 //! RPC/print mode argument selection behavior.
 
-use pi_coding_agent::api::cli::command::{CliError, CliMode, parse_args};
+use crate::internal_tests::cli_fixture::command::{CliError, CliMode, parse_args};
 
 #[test]
 fn print_flag_selects_print_mode() {

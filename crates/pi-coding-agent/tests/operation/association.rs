@@ -3,9 +3,7 @@ use crate::support;
 use std::sync::Arc;
 
 use pi_agent_core::api::resources::AgentResources;
-use pi_ai::api::model::{Model, ModelCost, ModelInput};
 use pi_ai::api::testing::FauxProvider;
-use pi_coding_agent::api::cli::runtime::{PromptInvocation, PromptRunOptions};
 use pi_coding_agent::api::client::{
     CodingAgentClientId, CodingAgentSubmittedOperationStatus, CodingAgentSubmittedTerminalAnchor,
 };
@@ -16,32 +14,9 @@ use pi_coding_agent::api::event::{
 use pi_coding_agent::api::operation::{
     CodingAgentOperation, CodingAgentOperationOutcome, PromptTurnOptions,
 };
+use pi_coding_agent::api::operation::{PromptInvocation, PromptRunOptions};
 use pi_coding_agent::api::runtime::{CodingAgentSession, CodingAgentSessionOptions};
 use support::ProviderGuard;
-
-fn model(api: &str) -> Model {
-    Model {
-        id: "test-model".into(),
-        name: "Test Model".into(),
-        api: api.into(),
-        provider: "test".into(),
-        base_url: String::new(),
-        reasoning: false,
-        thinking_level_map: None,
-        input: vec![ModelInput::Text],
-        cost: ModelCost {
-            known: true,
-            input: 0.0,
-            output: 0.0,
-            cache_read: 0.0,
-            cache_write: 0.0,
-        },
-        context_window: 0,
-        max_tokens: 0,
-        headers: None,
-        compat: None,
-    }
-}
 
 fn options(api: &str, invocation: PromptInvocation) -> PromptTurnOptions {
     PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
@@ -49,7 +24,7 @@ fn options(api: &str, invocation: PromptInvocation) -> PromptTurnOptions {
             PromptInvocation::Text(text) => text.clone(),
             _ => String::new(),
         },
-        model: model(api),
+        model: support::model(api),
         api_key: None,
         auth_diagnostics: Vec::new(),
         system_prompt: Some("test".into()),

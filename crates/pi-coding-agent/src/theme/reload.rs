@@ -63,11 +63,6 @@ impl DebounceState {
 }
 
 impl ThemeWatcher {
-    /// Mirrors [`should_watch_target`] as an associated fn for ergonomic use.
-    pub fn should_watch(name: &str) -> Option<PathBuf> {
-        should_watch_target(name)
-    }
-
     /// Start watching `themes_dir` for changes to `<name>.json`.
     ///
     /// `debounce` is the coalescing window (TS uses 100ms). Reload signals are

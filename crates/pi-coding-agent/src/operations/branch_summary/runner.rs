@@ -167,7 +167,6 @@ pub(crate) struct BranchSummaryContext {
     summary_messages: Vec<AgentMessage>,
     stream_options: Option<StreamOptions>,
     outcome: Option<BranchSummaryOutcome>,
-    failure_error: Option<CodingSessionError>,
     cancellation: Option<CancellationToken>,
 }
 
@@ -193,7 +192,6 @@ impl BranchSummaryContext {
             summary_messages: Vec::new(),
             stream_options: None,
             outcome: None,
-            failure_error: None,
             cancellation: None,
         }
     }
@@ -223,10 +221,6 @@ impl BranchSummaryContext {
         self.transaction.take()
     }
 
-    pub(crate) fn take_failure_error(&mut self) -> Option<CodingSessionError> {
-        self.failure_error.take()
-    }
-
     pub(crate) fn set_cancellation(&mut self, cancellation: CancellationToken) {
         self.cancellation = Some(cancellation);
     }
@@ -237,12 +231,6 @@ impl BranchSummaryContext {
             .ok_or_else(|| CodingSessionError::Session {
                 message: "branch summary cannot finish without an outcome".into(),
             })
-    }
-
-    fn fail(&mut self, error: CodingSessionError) -> String {
-        let message = error.to_string();
-        self.failure_error = Some(error);
-        message
     }
 
     fn start_branch_summary(&mut self) -> Result<(), CodingSessionError> {
@@ -438,17 +426,6 @@ impl BranchSummaryContext {
 
 pub(crate) struct BranchSummaryRunner;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BranchSummaryStep {
-    Start,
-    LoadEvents,
-    SelectRange,
-    PreparePrompt,
-    RunModel,
-    Record,
-    Finalize,
-}
-
 impl BranchSummaryRunner {
     pub(crate) fn new() -> Result<Self, CodingSessionError> {
         Ok(Self)
@@ -462,40 +439,33 @@ impl BranchSummaryRunner {
         if let Some(token) = cancellation.clone() {
             ctx.set_cancellation(token);
         }
-        let mut step = BranchSummaryStep::Start;
-        loop {
-            if cancellation
-                .as_ref()
-                .is_some_and(|token| token.is_cancelled())
-            {
-                let error = CodingSessionError::Cancelled;
-                ctx.fail(error.clone());
-                return Err(error);
-            }
-            let result = match step {
-                BranchSummaryStep::Start => ctx.start_branch_summary(),
-                BranchSummaryStep::LoadEvents => ctx.load_branch_events(),
-                BranchSummaryStep::SelectRange => ctx.select_abandoned_range(),
-                BranchSummaryStep::PreparePrompt => ctx.prepare_summary_prompt(),
-                BranchSummaryStep::RunModel => ctx.run_summary_model().await,
-                BranchSummaryStep::Record => ctx.record_branch_summary(),
-                BranchSummaryStep::Finalize => ctx.finalize_branch_summary(),
-            };
-            if let Err(error) = result {
-                return Err(CodingSessionError::Workflow {
-                    message: ctx.fail(error),
-                });
-            }
-            step = match step {
-                BranchSummaryStep::Start => BranchSummaryStep::LoadEvents,
-                BranchSummaryStep::LoadEvents => BranchSummaryStep::SelectRange,
-                BranchSummaryStep::SelectRange => BranchSummaryStep::PreparePrompt,
-                BranchSummaryStep::PreparePrompt => BranchSummaryStep::RunModel,
-                BranchSummaryStep::RunModel => BranchSummaryStep::Record,
-                BranchSummaryStep::Record => BranchSummaryStep::Finalize,
-                BranchSummaryStep::Finalize => return Ok(()),
-            };
+        Self::check_cancellation(&cancellation)?;
+        ctx.start_branch_summary()?;
+        Self::check_cancellation(&cancellation)?;
+        ctx.load_branch_events()?;
+        Self::check_cancellation(&cancellation)?;
+        ctx.select_abandoned_range()?;
+        Self::check_cancellation(&cancellation)?;
+        ctx.prepare_summary_prompt()?;
+        Self::check_cancellation(&cancellation)?;
+        ctx.run_summary_model().await?;
+        Self::check_cancellation(&cancellation)?;
+        ctx.record_branch_summary()?;
+        Self::check_cancellation(&cancellation)?;
+        ctx.finalize_branch_summary()?;
+        Ok(())
+    }
+
+    fn check_cancellation(
+        cancellation: &Option<CancellationToken>,
+    ) -> Result<(), CodingSessionError> {
+        if cancellation
+            .as_ref()
+            .is_some_and(|token| token.is_cancelled())
+        {
+            return Err(CodingSessionError::Cancelled);
         }
+        Ok(())
     }
 }
 

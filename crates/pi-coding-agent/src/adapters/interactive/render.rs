@@ -612,6 +612,10 @@ impl TranscriptRenderCache {
             .collect()
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "render cache input dimensions are explicit parts of the cache contract"
+    )]
     fn render_block(
         &mut self,
         key: &TranscriptBlockCacheKey,
@@ -1293,6 +1297,10 @@ fn pad_to_width(text: &str, width: usize) -> String {
     line
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "tool rendering keeps independent presentation controls explicit"
+)]
 fn render_tool_block(
     name: &str,
     args: &serde_json::Value,
@@ -1670,6 +1678,10 @@ fn render_tool_arguments(
 
 /// Self-rendered `edit` block: no tool bg, diff lines colored by
 /// added/removed/context, mirroring TS `renderShell: "self"`.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "edit rendering keeps independent diff and disclosure controls explicit"
+)]
 fn render_edit_block(
     args: &serde_json::Value,
     result: Option<&str>,
@@ -1832,10 +1844,11 @@ pub(super) const WARNING: Style = Style::fg(Color::Yellow);
 
 pub(super) fn abbreviate_cwd(cwd: &Path) -> String {
     let display = cwd.display().to_string();
-    if let Ok(home) = std::env::var("HOME") {
-        if !home.is_empty() && display.starts_with(&home) {
-            return format!("~{}", &display[home.len()..]);
-        }
+    if let Ok(home) = std::env::var("HOME")
+        && !home.is_empty()
+        && display.starts_with(&home)
+    {
+        return format!("~{}", &display[home.len()..]);
     }
     display
 }

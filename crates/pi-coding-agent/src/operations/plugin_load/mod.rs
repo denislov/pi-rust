@@ -3,14 +3,15 @@ use crate::runtime::capability::{OperationCapabilitySnapshot, SessionWriteCapabi
 use crate::runtime::control::OperationCancellationHandle;
 use crate::runtime::facade::CodingSessionError;
 use crate::services::event::EventService;
-use crate::services::workflow::WorkflowService;
 use crate::session::event::PersistedPluginDiagnostic;
 use crate::session::service::{SessionPersistence, SessionService};
 use tokio_util::sync::CancellationToken;
 
 pub(crate) mod runner;
 
-use runner::{PluginDiagnostic, PluginLoadContext, PluginLoadOptions, PluginLoadOutcome};
+use runner::{
+    PluginDiagnostic, PluginLoadContext, PluginLoadOptions, PluginLoadOutcome, PluginLoadRunner,
+};
 
 pub(crate) struct PluginLoadExecution {
     pub(crate) outcome: PluginLoadOutcome,
@@ -18,7 +19,6 @@ pub(crate) struct PluginLoadExecution {
 
 pub(crate) async fn run(
     persistence: &mut SessionPersistence,
-    workflow_service: &WorkflowService,
     event_service: &EventService,
     options: PluginLoadOptions,
     snapshot: &OperationCapabilitySnapshot,
@@ -35,14 +35,14 @@ pub(crate) async fn run(
         SessionPersistence::NonPersistent(_) => None,
     };
     let mut context = PluginLoadContext::new(options);
-    let mut outcome = match match cancellation.as_ref() {
-        Some(cancellation) => {
-            workflow_service
-                .run_plugin_load_with_cancellation(&mut context, cancellation.clone())
-                .await
-        }
-        None => workflow_service.run_plugin_load(&mut context).await,
-    } {
+    let runner_result = match PluginLoadRunner::new()?
+        .run_typed(&mut context, cancellation.clone())
+        .await
+    {
+        Ok(()) => context.finish_success(),
+        Err(error) => Err(error),
+    };
+    let mut outcome = match runner_result {
         Ok(outcome) => outcome,
         Err(error) => {
             if let Some(transaction) = transaction.take()

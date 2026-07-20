@@ -9,20 +9,6 @@ use crate::runtime::facade::{
 use pi_ai::api::client::AiClient;
 use std::path::{Path, PathBuf};
 
-pub fn encode_cwd(path: &Path) -> String {
-    path.to_string_lossy()
-        .chars()
-        .map(|c| match c {
-            '/' | '\\' => '-',
-            '"' | '<' | '>' | ':' | '|' | '?' | '*' | '\'' => '-',
-            ' ' => '_',
-            _ => c,
-        })
-        .collect::<String>()
-        .trim_matches('-')
-        .to_string()
-}
-
 pub fn default_sessions_root() -> Result<PathBuf, CliError> {
     let global_dir = match std::env::var_os("PI_RUST_DIR") {
         Some(value) if !value.is_empty() => PathBuf::from(value),

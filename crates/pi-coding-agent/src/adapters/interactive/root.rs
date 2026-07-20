@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -25,6 +25,7 @@ use crate::adapters::interactive::delegation_confirmation_menu::{
     DelegationConfirmationMenuOutcome, DelegationConfirmationMenuRenderState,
     DelegationConfirmationMenuState,
 };
+use crate::adapters::interactive::event_bridge::UiProjection;
 use crate::adapters::interactive::git_branch::GitBranchProvider;
 use crate::adapters::interactive::input;
 use crate::adapters::interactive::keybindings;
@@ -52,8 +53,9 @@ use crate::authorization::{
 use crate::config::{AuthStore, Settings};
 use crate::runtime::facade::{
     CapabilityStatus, CodingAgentCapabilities, DelegationTargetInventory,
-    PendingDelegationConfirmation, ProfileId, ProfileRegistry, SelfHealingEditReplacement,
-    UiContextProjection, UiFileChangeProjection, UiOperationProjection,
+    PendingDelegationConfirmation, ProductEvent, ProfileId, ProfileRegistry,
+    SelfHealingEditReplacement, UiContextProjection, UiFileChangeProjection, UiOperationProjection,
+    UiSnapshot,
 };
 use crate::theme::{ResolvedTheme, ThemeColor};
 
@@ -92,6 +94,35 @@ pub(super) enum InteractiveAction {
     ReloadResources,
     Fork,
     Exit,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum PendingInteractiveCommand {
+    Submit(String),
+    FollowUp(String),
+    Compact { instructions: Option<String> },
+    BranchSummary(PendingBranchSummaryRequest),
+    Fork(PendingForkRequest),
+    AgentInvocation(PendingAgentInvocationRequest),
+    AgentTeam(PendingAgentTeamRequest),
+    SelfHealingEdit(PendingSelfHealingEditRequest),
+    UseAgentProfile(ProfileId),
+}
+
+impl PendingInteractiveCommand {
+    pub(super) const fn action(&self) -> InteractiveAction {
+        match self {
+            Self::Submit(_) => InteractiveAction::Submit,
+            Self::FollowUp(_) => InteractiveAction::FollowUp,
+            Self::Compact { .. } => InteractiveAction::CompactSession,
+            Self::BranchSummary(_) => InteractiveAction::BranchSummary,
+            Self::Fork(_) => InteractiveAction::Fork,
+            Self::AgentInvocation(_) => InteractiveAction::AgentInvocation,
+            Self::AgentTeam(_) => InteractiveAction::AgentTeam,
+            Self::SelfHealingEdit(_) => InteractiveAction::SelfHealingEdit,
+            Self::UseAgentProfile(_) => InteractiveAction::AgentProfileUse,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -294,25 +325,51 @@ struct PendingDelegationRejectionReason {
     selection: PendingDelegationConfirmationSelection,
 }
 
-pub(super) struct InteractiveRoot {
+pub(super) struct InteractiveLocalState {
+    transcript_view: TranscriptViewState,
+    pub(super) render_cache: TranscriptRenderCache,
+    pub(super) editor: Editor,
+    pub(super) keybindings: KeybindingsManager,
+    submitted: Arc<Mutex<Option<String>>>,
+    scroll_command: Arc<Mutex<Option<TranscriptScrollCommand>>>,
+    focus_ring: FocusRing<InteractiveRegion>,
+    context_tab: ContextTab,
+    context_selection: [usize; 4],
+    context_scroll: [usize; 4],
+    context_viewport_height: usize,
+    context_operation_timing: HashMap<String, OperationTiming>,
+    context_change_timing: HashMap<String, (u64, Instant)>,
+    context_detail: Option<ContextDetail>,
+    context_open: bool,
+    context_restore_focus: InteractiveRegion,
+    mouse_hits: HitMap<InteractiveHitTarget>,
+    pub(super) modal_overlay: TransientOverlayBridge,
+    support_overlay: TransientOverlayBridge,
+    modal_overlay_handle: Option<OverlayHandle>,
+    support_overlay_handle: Option<OverlayHandle>,
     pub(super) selecting_tree: bool,
     pub(super) tree_selector: Option<TreeSelectorState>,
     pub(super) selected_tree_entry_id: Option<String>,
     pub(super) pending_tree_label_change: Option<(String, Option<String>)>,
+    pub(super) selected_model: Option<Model>,
+    pub(super) selected_thinking_level: Option<pi_agent_core::api::agent::ThinkingLevel>,
+    pub(super) selecting_model: bool,
+    pub(super) model_selection_selected: usize,
+    pub(super) selected_session: Option<SessionChoice>,
+    pub(super) selected_session_hydrate: bool,
+    pub(super) selecting_session: bool,
+    pub(super) session_selection_selected: usize,
+    pub(super) selecting_settings: bool,
+    settings_list: SettingsList,
+    settings_update: Option<Settings>,
+    settings_delta: crate::config::settings::PartialSettings,
+    auth_update: Option<AuthStore>,
+}
+
+pub(super) struct InteractiveRoot {
     pub(super) transcript: Transcript,
-    transcript_view: TranscriptViewState,
-    render_cache: TranscriptRenderCache,
-    pub(super) editor: Editor,
-    pub(super) keybindings: KeybindingsManager,
-    pub(super) submitted: Arc<Mutex<Option<String>>>,
-    pub(super) scroll_command: Arc<Mutex<Option<TranscriptScrollCommand>>>,
-    pub(super) pending_submit: Option<String>,
-    pub(super) pending_compact_instructions: Option<String>,
-    pub(super) pending_branch_summary_request: Option<PendingBranchSummaryRequest>,
-    pub(super) pending_fork_request: Option<PendingForkRequest>,
-    pub(super) pending_agent_invocation_request: Option<PendingAgentInvocationRequest>,
-    pub(super) pending_agent_team_request: Option<PendingAgentTeamRequest>,
-    pub(super) pending_self_healing_edit_request: Option<PendingSelfHealingEditRequest>,
+    pub(super) local: InteractiveLocalState,
+    pending_command: Option<PendingInteractiveCommand>,
     pub(super) pending_delegation_confirmation_command:
         Option<PendingDelegationConfirmationCommand>,
     delegation_confirmation_menu: Option<DelegationConfirmationMenuState>,
@@ -323,37 +380,18 @@ pub(super) struct InteractiveRoot {
         Option<(ToolAuthorizationRequest, ToolAuthorizationDecision)>,
     profile_menu: Option<ProfileMenuState>,
     pending_profile_task: Option<PendingProfileTask>,
-    pub(super) selected_agent_profile_id: Option<ProfileId>,
     pub(super) action: InteractiveAction,
     pub(super) status: InteractiveStatus,
     pub(super) viewport_width: usize,
     pub(super) viewport_height: usize,
     fullscreen_viewport: bool,
     terminal_capabilities: TerminalCapabilities,
-    focus_ring: FocusRing<InteractiveRegion>,
-    context_tab: ContextTab,
-    context_projection: UiContextProjection,
-    capabilities: Option<CodingAgentCapabilities>,
-    context_selection: [usize; 4],
-    context_scroll: [usize; 4],
-    context_viewport_height: usize,
-    context_operation_timing: HashMap<String, OperationTiming>,
-    context_change_timing: HashMap<String, (u64, Instant)>,
-    context_detail: Option<ContextDetail>,
-    context_open: bool,
-    context_restore_focus: InteractiveRegion,
+    shared_projection: UiProjection,
     conversation_viewport_width: usize,
     conversation_viewport_height: usize,
-    mouse_hits: HitMap<InteractiveHitTarget>,
-    modal_overlay: TransientOverlayBridge,
-    support_overlay: TransientOverlayBridge,
-    modal_overlay_handle: Option<OverlayHandle>,
-    support_overlay_handle: Option<OverlayHandle>,
     pub(super) cwd: PathBuf,
     pub(super) model_id: String,
     pub(super) session_label: String,
-    pub(super) selected_model: Option<Model>,
-    pub(super) selected_thinking_level: Option<pi_agent_core::api::agent::ThinkingLevel>,
     /// Currently active model for footer display. Distinct from
     /// `selected_model`, which is consumed to apply pending changes.
     pub(super) model: Option<Model>,
@@ -361,23 +399,12 @@ pub(super) struct InteractiveRoot {
     pub(super) thinking_level: pi_agent_core::api::agent::ThinkingLevel,
     pub(super) available_models: Vec<Model>,
     pub(super) model_rotation: Vec<Model>,
-    pub(super) selecting_model: bool,
-    pub(super) model_selection_selected: usize,
     pub(super) session_choices: Vec<SessionChoice>,
-    pub(super) selected_session: Option<SessionChoice>,
-    pub(super) selected_session_hydrate: bool,
     pub(super) active_session: Option<SessionChoice>,
     pub(super) active_session_path: Option<PathBuf>,
     pub(super) active_leaf_id: Option<String>,
-    pub(super) selecting_session: bool,
-    pub(super) session_selection_selected: usize,
-    pub(super) selecting_settings: bool,
     pub(super) settings: Settings,
-    settings_list: SettingsList,
-    settings_update: Option<Settings>,
-    settings_delta: crate::config::settings::PartialSettings,
     pub(super) auth: AuthStore,
-    auth_update: Option<AuthStore>,
     pub(super) git_branch: GitBranchProvider,
     pub(super) stats: FooterStats,
     pub(super) tool_output_expanded: bool,
@@ -519,24 +546,48 @@ impl InteractiveRoot {
         let support_overlay = TransientOverlayBridge::default();
 
         Self {
-            selecting_tree: false,
-            tree_selector: None,
-            selected_tree_entry_id: None,
-            pending_tree_label_change: None,
             transcript,
-            transcript_view: TranscriptViewState::default(),
-            render_cache: TranscriptRenderCache::new(),
-            editor,
-            keybindings,
-            submitted,
-            scroll_command,
-            pending_submit: None,
-            pending_compact_instructions: None,
-            pending_branch_summary_request: None,
-            pending_fork_request: None,
-            pending_agent_invocation_request: None,
-            pending_agent_team_request: None,
-            pending_self_healing_edit_request: None,
+            local: InteractiveLocalState {
+                transcript_view: TranscriptViewState::default(),
+                render_cache: TranscriptRenderCache::new(),
+                editor,
+                keybindings,
+                submitted,
+                scroll_command,
+                focus_ring,
+                context_tab: ContextTab::Ops,
+                context_selection: [0; 4],
+                context_scroll: [0; 4],
+                context_viewport_height: 1,
+                context_operation_timing: HashMap::new(),
+                context_change_timing: HashMap::new(),
+                context_detail: None,
+                context_open: false,
+                context_restore_focus: InteractiveRegion::Composer,
+                mouse_hits: HitMap::new(),
+                modal_overlay,
+                support_overlay,
+                modal_overlay_handle: None,
+                support_overlay_handle: None,
+                selecting_tree: false,
+                tree_selector: None,
+                selected_tree_entry_id: None,
+                pending_tree_label_change: None,
+                selected_model: None,
+                selected_thinking_level: None,
+                selecting_model: false,
+                model_selection_selected: 0,
+                selected_session: None,
+                selected_session_hydrate: false,
+                selecting_session: false,
+                session_selection_selected: 0,
+                selecting_settings: false,
+                settings_list,
+                settings_update: None,
+                settings_delta: crate::config::settings::PartialSettings::default(),
+                auth_update: None,
+            },
+            pending_command: None,
             pending_delegation_confirmation_command: None,
             delegation_confirmation_menu: None,
             pending_delegation_rejection_reason: None,
@@ -545,7 +596,6 @@ impl InteractiveRoot {
             pending_tool_authorization_decision: None,
             profile_menu: None,
             pending_profile_task: None,
-            selected_agent_profile_id: None,
             action: InteractiveAction::None,
             status: InteractiveStatus::Idle,
             viewport_width: 80,
@@ -556,52 +606,23 @@ impl InteractiveRoot {
                 true_color: false,
                 hyperlinks: false,
             },
-            focus_ring,
-            context_tab: ContextTab::Ops,
-            context_projection: UiContextProjection::default(),
-            capabilities: None,
-            context_selection: [0; 4],
-            context_scroll: [0; 4],
-            context_viewport_height: 1,
-            context_operation_timing: HashMap::new(),
-            context_change_timing: HashMap::new(),
-            context_detail: None,
-            context_open: false,
-            context_restore_focus: InteractiveRegion::Composer,
+            shared_projection: UiProjection::new(),
             conversation_viewport_width: 1,
             conversation_viewport_height: 1,
-            mouse_hits: HitMap::new(),
-            modal_overlay,
-            support_overlay,
-            modal_overlay_handle: None,
-            support_overlay_handle: None,
             git_branch: GitBranchProvider::new(&cwd),
             cwd,
             model_id,
             session_label,
-            selected_model: None,
-            selected_thinking_level: None,
             model: None,
             thinking_level: pi_agent_core::api::agent::ThinkingLevel::default(),
             available_models,
             model_rotation: Vec::new(),
-            selecting_model: false,
-            model_selection_selected: 0,
             session_choices: Vec::new(),
-            selected_session: None,
-            selected_session_hydrate: false,
             active_session: None,
             active_session_path: None,
             active_leaf_id: None,
-            selecting_session: false,
-            session_selection_selected: 0,
-            selecting_settings: false,
             settings,
-            settings_list,
-            settings_update: None,
-            settings_delta: crate::config::settings::PartialSettings::default(),
             auth,
-            auth_update: None,
             stats: FooterStats::default(),
             tool_output_expanded: false,
             spinner_frame: 0,
@@ -646,8 +667,8 @@ impl InteractiveRoot {
         crate::adapters::interactive::transient_overlay::TransientOverlay,
     ) {
         (
-            self.support_overlay.component(),
-            self.modal_overlay.component(),
+            self.local.support_overlay.component(),
+            self.local.modal_overlay.component(),
         )
     }
 
@@ -656,12 +677,15 @@ impl InteractiveRoot {
         support: OverlayHandle,
         modal: OverlayHandle,
     ) {
-        self.support_overlay_handle = Some(support);
-        self.modal_overlay_handle = Some(modal);
+        self.local.support_overlay_handle = Some(support);
+        self.local.modal_overlay_handle = Some(modal);
     }
 
     pub(super) fn transient_overlay_handles(&self) -> Option<(OverlayHandle, OverlayHandle)> {
-        Some((self.support_overlay_handle?, self.modal_overlay_handle?))
+        Some((
+            self.local.support_overlay_handle?,
+            self.local.modal_overlay_handle?,
+        ))
     }
 
     pub(super) fn prepare_transient_overlays(
@@ -676,8 +700,8 @@ impl InteractiveRoot {
         }
         let modal_visible = !modal_lines.is_empty();
         let support_visible = !support_lines.is_empty();
-        self.modal_overlay.set_lines(modal_lines);
-        self.support_overlay.set_lines(support_lines);
+        self.local.modal_overlay.set_lines(modal_lines);
+        self.local.support_overlay.set_lines(support_lines);
 
         let composer_height = self
             .render_editor_box(terminal_width.max(1))
@@ -691,14 +715,14 @@ impl InteractiveRoot {
     }
 
     pub(super) fn drain_modal_overlay_input(&mut self) {
-        for event in self.modal_overlay.take_pending_input() {
+        for event in self.local.modal_overlay.take_pending_input() {
             input::handle_root_input(self, &event);
         }
     }
 
     #[cfg(test)]
     pub(super) fn modal_overlay_focused(&self) -> bool {
-        self.modal_overlay.focused()
+        self.local.modal_overlay.focused()
     }
 
     pub(super) fn take_pending_tool_authorization_decision(
@@ -719,17 +743,24 @@ impl InteractiveRoot {
     }
 
     pub(super) fn take_selected_model(&mut self) -> Option<Model> {
-        self.selected_model.take()
+        self.local.selected_model.take()
     }
 
     pub(super) fn take_selected_thinking_level(
         &mut self,
     ) -> Option<pi_agent_core::api::agent::ThinkingLevel> {
-        self.selected_thinking_level.take()
+        self.local.selected_thinking_level.take()
     }
 
+    #[cfg(test)]
     pub(super) fn take_selected_agent_profile_id(&mut self) -> Option<ProfileId> {
-        self.selected_agent_profile_id.take()
+        match self.pending_command.take() {
+            Some(PendingInteractiveCommand::UseAgentProfile(profile_id)) => Some(profile_id),
+            other => {
+                self.pending_command = other;
+                None
+            }
+        }
     }
 
     pub(super) fn set_default_agent_profile_id(&mut self, profile_id: ProfileId) {
@@ -738,37 +769,95 @@ impl InteractiveRoot {
         self.slash_suggestions_dismissed_for = None;
     }
 
+    pub(super) fn display_default_agent_profile_id(&self) -> &ProfileId {
+        self.shared_projection
+            .session()
+            .map(|session| &session.default_agent_profile_id)
+            .unwrap_or(&self.default_agent_profile_id)
+    }
+
+    pub(super) fn install_shared_snapshot(&mut self, snapshot: UiSnapshot) {
+        let previous_running = self.running_projection_operations();
+        self.shared_projection = UiProjection::from_snapshot(snapshot);
+        Self::update_context_local_state(
+            &mut self.local,
+            &previous_running,
+            self.shared_projection.context(),
+        );
+        self.clamp_context_navigation();
+    }
+
+    pub(super) fn apply_shared_product_event(&mut self, event: &ProductEvent) {
+        let previous_running = self.running_projection_operations();
+        self.shared_projection.apply_product_event(event);
+        Self::update_context_local_state(
+            &mut self.local,
+            &previous_running,
+            self.shared_projection.context(),
+        );
+        self.clamp_context_navigation();
+    }
+
+    pub(super) fn drain_shared_ui_events(&mut self) -> Vec<UiEvent> {
+        self.shared_projection.drain()
+    }
+
+    #[cfg(test)]
     pub(super) fn set_context_projection(&mut self, projection: UiContextProjection) {
+        let previous_running = self.running_projection_operations();
+        self.shared_projection.replace_context(projection);
+        Self::update_context_local_state(
+            &mut self.local,
+            &previous_running,
+            self.shared_projection.context(),
+        );
+        self.clamp_context_navigation();
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_capabilities(&mut self, capabilities: Option<CodingAgentCapabilities>) {
+        self.shared_projection.replace_capabilities(capabilities);
+    }
+
+    fn running_projection_operations(&self) -> HashSet<String> {
+        self.shared_projection
+            .context()
+            .operations
+            .iter()
+            .filter(|operation| operation.status.is_running())
+            .map(|operation| operation.operation_id.clone())
+            .collect()
+    }
+
+    fn update_context_local_state(
+        local: &mut InteractiveLocalState,
+        previous_running: &HashSet<String>,
+        projection: &UiContextProjection,
+    ) {
         let now = Instant::now();
         for operation in &projection.operations {
-            let previous_was_running = self
-                .context_projection
-                .operations
-                .iter()
-                .find(|previous| previous.operation_id == operation.operation_id)
-                .is_some_and(|previous| previous.status.is_running());
-            let timing = self
+            let timing = local
                 .context_operation_timing
                 .entry(operation.operation_id.clone())
                 .or_insert_with(|| OperationTiming {
                     first_seen: now,
                     terminal_elapsed: None,
                 });
-            if previous_was_running
+            if previous_running.contains(&operation.operation_id)
                 && !operation.status.is_running()
                 && timing.terminal_elapsed.is_none()
             {
                 timing.terminal_elapsed = Some(now.saturating_duration_since(timing.first_seen));
             }
         }
-        self.context_operation_timing.retain(|operation_id, _| {
+        local.context_operation_timing.retain(|operation_id, _| {
             projection
                 .operations
                 .iter()
                 .any(|operation| operation.operation_id == *operation_id)
         });
         for change in &projection.changes {
-            let timing = self
+            let timing = local
                 .context_change_timing
                 .entry(change.path.clone())
                 .or_insert((change.updated_sequence, now));
@@ -776,14 +865,9 @@ impl InteractiveRoot {
                 *timing = (change.updated_sequence, now);
             }
         }
-        self.context_change_timing
+        local
+            .context_change_timing
             .retain(|path, _| projection.changes.iter().any(|change| change.path == *path));
-        self.context_projection = projection;
-        self.clamp_context_navigation();
-    }
-
-    pub(super) fn set_capabilities(&mut self, capabilities: Option<CodingAgentCapabilities>) {
-        self.capabilities = capabilities;
     }
 
     fn clamp_context_navigation(&mut self) {
@@ -794,23 +878,23 @@ impl InteractiveRoot {
             } else {
                 self.context_items(tab).len()
             };
-            self.context_selection[index] =
-                self.context_selection[index].min(count.saturating_sub(1));
-            self.context_scroll[index] = self.context_scroll[index]
-                .min(count.saturating_sub(self.context_viewport_height.max(1)));
+            self.local.context_selection[index] =
+                self.local.context_selection[index].min(count.saturating_sub(1));
+            self.local.context_scroll[index] = self.local.context_scroll[index]
+                .min(count.saturating_sub(self.local.context_viewport_height.max(1)));
         }
     }
 
     fn move_context_selection(&mut self, direction: isize) {
-        let items = self.context_items(self.context_tab);
+        let items = self.context_items(self.local.context_tab);
         if items.is_empty() {
             return;
         }
-        let index = self.context_tab.index();
-        self.context_selection[index] = if direction < 0 {
-            self.context_selection[index].saturating_sub(1)
+        let index = self.local.context_tab.index();
+        self.local.context_selection[index] = if direction < 0 {
+            self.local.context_selection[index].saturating_sub(1)
         } else {
-            self.context_selection[index]
+            self.local.context_selection[index]
                 .saturating_add(1)
                 .min(items.len() - 1)
         };
@@ -818,39 +902,40 @@ impl InteractiveRoot {
     }
 
     fn ensure_context_selection_visible(&mut self) {
-        let index = self.context_tab.index();
-        let selected = self.context_selection[index];
-        let viewport = self.context_viewport_height.max(1);
-        if selected < self.context_scroll[index] {
-            self.context_scroll[index] = selected;
-        } else if selected >= self.context_scroll[index].saturating_add(viewport) {
-            self.context_scroll[index] = selected.saturating_add(1).saturating_sub(viewport);
+        let index = self.local.context_tab.index();
+        let selected = self.local.context_selection[index];
+        let viewport = self.local.context_viewport_height.max(1);
+        if selected < self.local.context_scroll[index] {
+            self.local.context_scroll[index] = selected;
+        } else if selected >= self.local.context_scroll[index].saturating_add(viewport) {
+            self.local.context_scroll[index] = selected.saturating_add(1).saturating_sub(viewport);
         }
     }
 
     fn scroll_context(&mut self, rows: isize) {
-        let index = self.context_tab.index();
-        let count = if self.context_tab == ContextTab::Usage {
+        let index = self.local.context_tab.index();
+        let count = if self.local.context_tab == ContextTab::Usage {
             self.context_usage_lines().len()
         } else {
-            self.context_items(self.context_tab).len()
+            self.context_items(self.local.context_tab).len()
         };
-        let maximum = count.saturating_sub(self.context_viewport_height.max(1));
-        self.context_scroll[index] = if rows < 0 {
-            self.context_scroll[index].saturating_sub(rows.unsigned_abs())
+        let maximum = count.saturating_sub(self.local.context_viewport_height.max(1));
+        self.local.context_scroll[index] = if rows < 0 {
+            self.local.context_scroll[index].saturating_sub(rows.unsigned_abs())
         } else {
-            self.context_scroll[index]
+            self.local.context_scroll[index]
                 .saturating_add(rows as usize)
                 .min(maximum)
         };
     }
 
     fn open_selected_context_detail(&mut self) -> bool {
-        let items = self.context_items(self.context_tab);
-        let Some(item) = items.get(self.context_selection[self.context_tab.index()]) else {
+        let items = self.context_items(self.local.context_tab);
+        let Some(item) = items.get(self.local.context_selection[self.local.context_tab.index()])
+        else {
             return false;
         };
-        self.context_detail = Some(ContextDetail {
+        self.local.context_detail = Some(ContextDetail {
             title: item.detail_title.clone(),
             lines: item.detail_lines.clone(),
             scroll: 0,
@@ -859,18 +944,18 @@ impl InteractiveRoot {
     }
 
     pub(super) fn has_context_detail(&self) -> bool {
-        self.context_detail.is_some()
+        self.local.context_detail.is_some()
     }
 
     pub(super) fn handle_context_detail_input(&mut self, event: &InputEvent) -> bool {
-        let Some(detail) = self.context_detail.as_mut() else {
+        let Some(detail) = self.local.context_detail.as_mut() else {
             return false;
         };
         if matches_key(event, "escape")
             || matches_key(event, "enter")
             || matches_key(event, "ctrl+c")
         {
-            self.context_detail = None;
+            self.local.context_detail = None;
             return true;
         }
         if matches_key(event, "pageup") || matches_key(event, "up") {
@@ -889,19 +974,19 @@ impl InteractiveRoot {
     }
 
     pub(super) fn take_selected_session(&mut self) -> Option<SessionChoice> {
-        self.selected_session.take()
+        self.local.selected_session.take()
     }
 
     pub(super) fn take_selected_session_hydrate(&mut self) -> bool {
-        std::mem::take(&mut self.selected_session_hydrate)
+        std::mem::take(&mut self.local.selected_session_hydrate)
     }
 
     pub(super) fn take_selected_tree_entry_id(&mut self) -> Option<String> {
-        self.selected_tree_entry_id.take()
+        self.local.selected_tree_entry_id.take()
     }
 
     pub(super) fn take_pending_tree_label_change(&mut self) -> Option<(String, Option<String>)> {
-        self.pending_tree_label_change.take()
+        self.local.pending_tree_label_change.take()
     }
 
     pub(super) fn apply_tree_label_update(
@@ -910,60 +995,110 @@ impl InteractiveRoot {
         label: Option<String>,
         updated_at: String,
     ) {
-        if let Some(selector) = self.tree_selector.as_mut() {
+        if let Some(selector) = self.local.tree_selector.as_mut() {
             let timestamp = label.as_ref().map(|_| updated_at);
             selector.update_node_label(entry_id, label, timestamp);
         }
     }
 
     pub(super) fn take_settings_update(&mut self) -> Option<Settings> {
-        self.settings_update.take()
+        self.local.settings_update.take()
     }
 
     pub(super) fn settings_delta(&self) -> &crate::config::settings::PartialSettings {
-        &self.settings_delta
+        &self.local.settings_delta
     }
 
     pub(super) fn take_auth_update(&mut self) -> Option<AuthStore> {
-        self.auth_update.take()
+        self.local.auth_update.take()
     }
 
     pub(super) fn take_submitted(&mut self) -> Option<String> {
-        self.submitted.lock().unwrap().take()
+        self.local.submitted.lock().unwrap().take()
     }
 
+    pub(super) fn queue_command(&mut self, command: PendingInteractiveCommand) {
+        self.action = command.action();
+        self.pending_command = Some(command);
+    }
+
+    pub(super) fn take_pending_command(&mut self) -> Option<PendingInteractiveCommand> {
+        self.pending_command.take()
+    }
+
+    #[cfg(test)]
     pub(super) fn take_pending_submit(&mut self) -> Option<String> {
-        self.pending_submit.take()
+        match self.pending_command.take() {
+            Some(
+                PendingInteractiveCommand::Submit(prompt)
+                | PendingInteractiveCommand::FollowUp(prompt),
+            ) => Some(prompt),
+            other => {
+                self.pending_command = other;
+                None
+            }
+        }
     }
 
-    pub(super) fn take_pending_compact_instructions(&mut self) -> Option<String> {
-        self.pending_compact_instructions.take()
-    }
-
+    #[cfg(test)]
     pub(super) fn take_pending_branch_summary_request(
         &mut self,
     ) -> Option<PendingBranchSummaryRequest> {
-        self.pending_branch_summary_request.take()
+        match self.pending_command.take() {
+            Some(PendingInteractiveCommand::BranchSummary(request)) => Some(request),
+            other => {
+                self.pending_command = other;
+                None
+            }
+        }
     }
 
+    #[cfg(test)]
     pub(super) fn take_pending_fork_request(&mut self) -> Option<PendingForkRequest> {
-        self.pending_fork_request.take()
+        match self.pending_command.take() {
+            Some(PendingInteractiveCommand::Fork(request)) => Some(request),
+            other => {
+                self.pending_command = other;
+                None
+            }
+        }
     }
 
+    #[cfg(test)]
     pub(super) fn take_pending_agent_invocation_request(
         &mut self,
     ) -> Option<PendingAgentInvocationRequest> {
-        self.pending_agent_invocation_request.take()
+        match self.pending_command.take() {
+            Some(PendingInteractiveCommand::AgentInvocation(request)) => Some(request),
+            other => {
+                self.pending_command = other;
+                None
+            }
+        }
     }
 
+    #[cfg(test)]
     pub(super) fn take_pending_agent_team_request(&mut self) -> Option<PendingAgentTeamRequest> {
-        self.pending_agent_team_request.take()
+        match self.pending_command.take() {
+            Some(PendingInteractiveCommand::AgentTeam(request)) => Some(request),
+            other => {
+                self.pending_command = other;
+                None
+            }
+        }
     }
 
+    #[cfg(test)]
     pub(super) fn take_pending_self_healing_edit_request(
         &mut self,
     ) -> Option<PendingSelfHealingEditRequest> {
-        self.pending_self_healing_edit_request.take()
+        match self.pending_command.take() {
+            Some(PendingInteractiveCommand::SelfHealingEdit(request)) => Some(request),
+            other => {
+                self.pending_command = other;
+                None
+            }
+        }
     }
 
     pub(super) fn take_pending_delegation_confirmation_command(
@@ -973,7 +1108,7 @@ impl InteractiveRoot {
     }
 
     pub(super) fn take_scroll_command(&mut self) -> Option<TranscriptScrollCommand> {
-        self.scroll_command.lock().unwrap().take()
+        self.local.scroll_command.lock().unwrap().take()
     }
 
     pub(super) fn open_delegation_confirmation_menu(
@@ -984,7 +1119,7 @@ impl InteractiveRoot {
         self.pending_delegation_rejection_reason = None;
         self.profile_menu = None;
         self.pending_profile_task = None;
-        self.editor.set_text("");
+        self.local.editor.set_text("");
         self.slash_suggestion_selected = 0;
         self.slash_suggestions_dismissed_for = None;
     }
@@ -1019,12 +1154,12 @@ impl InteractiveRoot {
         let Some(menu) = self.delegation_confirmation_menu.as_mut() else {
             return false;
         };
-        let outcome = menu.handle_input(&self.keybindings, event);
+        let outcome = menu.handle_input(&self.local.keybindings, event);
         match outcome {
             DelegationConfirmationMenuOutcome::None => {}
             DelegationConfirmationMenuOutcome::Close => {
                 self.delegation_confirmation_menu = None;
-                self.editor.set_text("");
+                self.local.editor.set_text("");
             }
             DelegationConfirmationMenuOutcome::Approve {
                 operation_id,
@@ -1066,7 +1201,7 @@ impl InteractiveRoot {
                         tool_call_id,
                     },
                 });
-                self.editor.set_text("");
+                self.local.editor.set_text("");
             }
         }
         true
@@ -1093,11 +1228,11 @@ impl InteractiveRoot {
             });
             return true;
         }
-        if self.keybindings.matches(event, "tui.select.up") {
+        if self.local.keybindings.matches(event, "tui.select.up") {
             self.tool_authorization_selected = (self.tool_authorization_selected + 2) % 3;
             return true;
         }
-        if self.keybindings.matches(event, "tui.select.down") {
+        if self.local.keybindings.matches(event, "tui.select.down") {
             self.tool_authorization_selected = (self.tool_authorization_selected + 1) % 3;
             return true;
         }
@@ -1115,7 +1250,7 @@ impl InteractiveRoot {
             }
             return true;
         }
-        if self.keybindings.matches(event, "tui.select.confirm") {
+        if self.local.keybindings.matches(event, "tui.select.confirm") {
             let decision = match self.tool_authorization_selected {
                 0 => ToolAuthorizationDecision::AllowOnce,
                 1 => ToolAuthorizationDecision::AllowForOperation,
@@ -1220,15 +1355,15 @@ impl InteractiveRoot {
         };
         if matches_key(event, "escape") || matches_key(event, "ctrl+c") {
             self.pending_delegation_rejection_reason = None;
-            self.editor.set_text("");
+            self.local.editor.set_text("");
             self.transcript
                 .push(TranscriptItem::system("Delegation rejection canceled"));
             return true;
         }
 
-        let before_text = self.editor.text().to_string();
-        self.editor.handle_input(event);
-        if self.editor.text() != before_text {
+        let before_text = self.local.editor.text().to_string();
+        self.local.editor.handle_input(event);
+        if self.local.editor.text() != before_text {
             self.slash_suggestion_selected = 0;
             self.slash_suggestions_dismissed_for = None;
         }
@@ -1249,7 +1384,7 @@ impl InteractiveRoot {
                 reason: (!reason.is_empty()).then_some(reason),
             });
         self.pending_delegation_rejection_reason = None;
-        self.editor.set_text("");
+        self.local.editor.set_text("");
         self.action = InteractiveAction::DelegationConfirmation;
         true
     }
@@ -1263,7 +1398,7 @@ impl InteractiveRoot {
         self.pending_delegation_rejection_reason = None;
         self.profile_menu = Some(ProfileMenuState::agent());
         self.pending_profile_task = None;
-        self.editor.set_text("");
+        self.local.editor.set_text("");
         self.slash_suggestion_selected = 0;
         self.slash_suggestions_dismissed_for = None;
     }
@@ -1273,32 +1408,34 @@ impl InteractiveRoot {
         self.pending_delegation_rejection_reason = None;
         self.profile_menu = Some(ProfileMenuState::team());
         self.pending_profile_task = None;
-        self.editor.set_text("");
+        self.local.editor.set_text("");
         self.slash_suggestion_selected = 0;
         self.slash_suggestions_dismissed_for = None;
     }
 
     pub(super) fn handle_profile_menu_input(&mut self, event: &InputEvent) -> bool {
+        let default_agent_profile_id = self.display_default_agent_profile_id().clone();
         let Some(menu) = self.profile_menu.as_mut() else {
             return false;
         };
         let outcome = menu.handle_input(
-            &self.keybindings,
+            &self.local.keybindings,
             event,
             &self.profile_registry,
-            &self.default_agent_profile_id,
+            &default_agent_profile_id,
         );
         match outcome {
             ProfileMenuOutcome::None => {}
             ProfileMenuOutcome::Close => {
                 self.profile_menu = None;
-                self.editor.set_text("");
+                self.local.editor.set_text("");
             }
             ProfileMenuOutcome::SetDefaultAgent(profile_id) => {
                 self.profile_menu = None;
                 self.set_default_agent_profile_id(profile_id.clone());
-                self.selected_agent_profile_id = Some(profile_id.clone());
-                self.action = InteractiveAction::AgentProfileUse;
+                self.queue_command(PendingInteractiveCommand::UseAgentProfile(
+                    profile_id.clone(),
+                ));
                 self.transcript.push(TranscriptItem::system(format!(
                     "Default agent profile: {profile_id}"
                 )));
@@ -1306,12 +1443,12 @@ impl InteractiveRoot {
             ProfileMenuOutcome::BeginAgentTask(profile_id) => {
                 self.profile_menu = None;
                 self.pending_profile_task = Some(PendingProfileTask::Agent { profile_id });
-                self.editor.set_text("");
+                self.local.editor.set_text("");
             }
             ProfileMenuOutcome::BeginTeamTask(team_id) => {
                 self.profile_menu = None;
                 self.pending_profile_task = Some(PendingProfileTask::Team { team_id });
-                self.editor.set_text("");
+                self.local.editor.set_text("");
             }
         }
         true
@@ -1323,15 +1460,15 @@ impl InteractiveRoot {
         };
         if matches_key(event, "escape") || matches_key(event, "ctrl+c") {
             self.pending_profile_task = None;
-            self.editor.set_text("");
+            self.local.editor.set_text("");
             self.transcript
                 .push(TranscriptItem::system("Profile task canceled"));
             return true;
         }
 
-        let before_text = self.editor.text().to_string();
-        self.editor.handle_input(event);
-        if self.editor.text() != before_text {
+        let before_text = self.local.editor.text().to_string();
+        self.local.editor.handle_input(event);
+        if self.local.editor.text() != before_text {
             self.slash_suggestion_selected = 0;
             self.slash_suggestions_dismissed_for = None;
         }
@@ -1351,16 +1488,17 @@ impl InteractiveRoot {
                 .push(TranscriptItem::system("Profile task requires text"));
             return true;
         }
-        self.editor.add_to_history(&task);
+        self.local.editor.add_to_history(&task);
         match pending_task {
             PendingProfileTask::Agent { profile_id } => {
-                self.pending_agent_invocation_request =
-                    Some(PendingAgentInvocationRequest { profile_id, task });
-                self.action = InteractiveAction::AgentInvocation;
+                self.queue_command(PendingInteractiveCommand::AgentInvocation(
+                    PendingAgentInvocationRequest { profile_id, task },
+                ));
             }
             PendingProfileTask::Team { team_id } => {
-                self.pending_agent_team_request = Some(PendingAgentTeamRequest { team_id, task });
-                self.action = InteractiveAction::AgentTeam;
+                self.queue_command(PendingInteractiveCommand::AgentTeam(
+                    PendingAgentTeamRequest { team_id, task },
+                ));
             }
         }
         self.pending_profile_task = None;
@@ -1368,14 +1506,11 @@ impl InteractiveRoot {
     }
 
     fn render_profile_menu(&mut self, width: usize) -> Vec<String> {
+        let default_agent_profile_id = self.display_default_agent_profile_id().clone();
         let Some(menu) = self.profile_menu.as_mut() else {
             return Vec::new();
         };
-        menu.render(
-            &self.profile_registry,
-            &self.default_agent_profile_id,
-            width,
-        )
+        menu.render(&self.profile_registry, &default_agent_profile_id, width)
     }
 
     fn render_pending_delegation_rejection_reason(&self, width: usize) -> Vec<String> {
@@ -1429,9 +1564,12 @@ impl InteractiveRoot {
         self.session_choices = prompt_context.session_choices.clone();
         self.theme = prompt_context.theme.clone();
         self.settings = prompt_context.settings.clone();
-        self.settings_list =
-            build_settings_list(self.settings.clone(), &self.theme, self.keybindings.clone());
-        self.render_cache.clear();
+        self.local.settings_list = build_settings_list(
+            self.settings.clone(),
+            &self.theme,
+            self.local.keybindings.clone(),
+        );
+        self.local.render_cache.clear();
         self.auth = prompt_context.auth.clone();
         self.git_branch.set_cwd(&self.cwd);
         self.prompt_templates = prompt_context.resources.prompt_templates.clone();
@@ -1622,11 +1760,11 @@ impl InteractiveRoot {
         self.model_id = model.id.clone();
         self.model = Some(model.clone());
         self.thinking_level = thinking_level.unwrap_or_default();
-        self.selected_model = Some(model);
-        self.selected_thinking_level = thinking_level;
-        self.selecting_model = false;
-        self.model_selection_selected = 0;
-        self.editor.set_text("");
+        self.local.selected_model = Some(model);
+        self.local.selected_thinking_level = thinking_level;
+        self.local.selecting_model = false;
+        self.local.model_selection_selected = 0;
+        self.local.editor.set_text("");
         let suffix = thinking_level
             .map(|level| format!(" (thinking: {level})"))
             .unwrap_or_default();
@@ -1657,12 +1795,12 @@ impl InteractiveRoot {
 
     pub(super) fn set_selected_session(&mut self, choice: SessionChoice) {
         self.session_label = choice.display_name().to_string();
-        self.selected_session = Some(choice.clone());
-        self.selected_session_hydrate = true;
+        self.local.selected_session = Some(choice.clone());
+        self.local.selected_session_hydrate = true;
         self.set_active_session_choice(choice.clone());
-        self.selecting_session = false;
-        self.session_selection_selected = 0;
-        self.editor.set_text("");
+        self.local.selecting_session = false;
+        self.local.session_selection_selected = 0;
+        self.local.editor.set_text("");
         self.transcript.push(TranscriptItem::system(format!(
             "Session selected: {}",
             choice.display_name()
@@ -1701,7 +1839,7 @@ impl InteractiveRoot {
             transcript.push(TranscriptItem::system(notice));
         }
         self.transcript = transcript;
-        self.render_cache.clear();
+        self.local.render_cache.clear();
     }
 
     pub(super) fn set_active_session_choice(&mut self, choice: SessionChoice) {
@@ -1903,36 +2041,37 @@ impl InteractiveRoot {
 
     pub(super) fn render_state(&self) -> InteractiveRenderState {
         InteractiveRenderState {
-            editor_text: self.editor.text().to_string(),
-            editor_cursor: self.editor.cursor(),
+            editor_text: self.local.editor.text().to_string(),
+            editor_cursor: self.local.editor.cursor(),
             transcript_revision: self.transcript.revision(),
-            transcript_view_revision: self.transcript_view.revision(),
-            selected_transcript_block: self.transcript_view.selected(),
+            transcript_view_revision: self.local.transcript_view.revision(),
+            selected_transcript_block: self.local.transcript_view.selected(),
             transcript_scroll_offset: self.transcript.scroll_offset(),
             transcript_has_new_output_below: self.transcript.has_new_output_below(),
-            focused_region: self.focus_ring.current(),
-            context_tab: self.context_tab,
+            focused_region: self.local.focus_ring.current(),
+            context_tab: self.local.context_tab,
             context_projection: self
                 .fullscreen_viewport
-                .then(|| self.context_projection.clone()),
+                .then(|| self.shared_projection.context().clone()),
             capabilities: if self.fullscreen_viewport {
-                self.capabilities.clone()
+                self.shared_projection.capabilities().cloned()
             } else {
                 None
             },
-            context_selection: self.context_selection,
-            context_scroll: self.context_scroll,
-            context_detail: self.context_detail.clone(),
-            context_open: self.context_open,
+            context_selection: self.local.context_selection,
+            context_scroll: self.local.context_scroll,
+            context_detail: self.local.context_detail.clone(),
+            context_open: self.local.context_open,
             status: self.status,
             stats: self.stats,
             tool_output_expanded: self.tool_output_expanded,
             spinner_frame: self.spinner_frame,
             slash_suggestion_selected: self.slash_suggestion_selected,
             slash_suggestions_dismissed_for: self.slash_suggestions_dismissed_for.clone(),
-            selecting_settings: self.selecting_settings,
-            selecting_tree: self.selecting_tree,
+            selecting_settings: self.local.selecting_settings,
+            selecting_tree: self.local.selecting_tree,
             tree_selector_state: self
+                .local
                 .tree_selector
                 .as_ref()
                 .map(|selector| selector.render_state()),
@@ -1940,13 +2079,14 @@ impl InteractiveRoot {
             auth: self.auth.clone(),
             theme_name: self.theme.name.clone(),
             settings_selected_item_id: self
+                .local
                 .settings_list
                 .selected_item()
                 .map(|item| item.id.clone()),
-            selecting_model: self.selecting_model,
-            model_selection_selected: self.model_selection_selected,
-            selecting_session: self.selecting_session,
-            session_selection_selected: self.session_selection_selected,
+            selecting_model: self.local.selecting_model,
+            model_selection_selected: self.local.model_selection_selected,
+            selecting_session: self.local.selecting_session,
+            session_selection_selected: self.local.session_selection_selected,
             delegation_confirmation_menu_state: self
                 .delegation_confirmation_menu
                 .as_ref()
@@ -1964,9 +2104,9 @@ impl InteractiveRoot {
     }
 
     pub(super) fn editor_border_style(&self) -> Style {
-        if self.selecting_model
-            || self.selecting_settings
-            || self.selecting_session
+        if self.local.selecting_model
+            || self.local.selecting_settings
+            || self.local.selecting_session
             || self.delegation_confirmation_menu.is_some()
             || !self.tool_authorizations.is_empty()
             || self.pending_delegation_rejection_reason.is_some()
@@ -2002,9 +2142,9 @@ impl InteractiveRoot {
     }
 
     fn render_slash_suggestions(&mut self, width: usize) -> Vec<String> {
-        if self.selecting_model
-            || self.selecting_settings
-            || self.selecting_session
+        if self.local.selecting_model
+            || self.local.selecting_settings
+            || self.local.selecting_session
             || self.delegation_confirmation_menu.is_some()
             || self.profile_menu.is_some()
             || self.pending_profile_task.is_some()
@@ -2014,8 +2154,8 @@ impl InteractiveRoot {
 
         let commands = self.all_slash_commands();
         slash::render_suggestions(
-            self.editor.text(),
-            self.editor.cursor(),
+            self.local.editor.text(),
+            self.local.editor.cursor(),
             self.slash_suggestions_dismissed_for.as_deref(),
             &mut self.slash_suggestion_selected,
             width,
@@ -2024,11 +2164,11 @@ impl InteractiveRoot {
     }
 
     fn render_settings_menu(&mut self, width: usize) -> Vec<String> {
-        if !self.selecting_settings {
+        if !self.local.selecting_settings {
             return Vec::new();
         }
         let mut lines = vec![fit_line("Settings", width)];
-        lines.extend(self.settings_list.render(width));
+        lines.extend(self.local.settings_list.render(width));
         lines
     }
 
@@ -2036,79 +2176,84 @@ impl InteractiveRoot {
         match id {
             "theme" => {
                 self.settings.theme = Some(value.to_string());
-                self.settings_delta.theme = Some(value.to_string());
+                self.local.settings_delta.theme = Some(value.to_string());
                 self.apply_builtin_theme(value);
             }
             "auto_compaction" => {
                 self.settings.compaction.enabled = value == "on";
-                self.settings_delta
+                self.local
+                    .settings_delta
                     .compaction
                     .get_or_insert_with(crate::config::settings::PartialCompaction::default)
                     .enabled = Some(value == "on");
             }
             "steering_mode" => {
                 self.settings.steering_mode = value.to_string();
-                self.settings_delta.steering_mode = Some(value.to_string());
+                self.local.settings_delta.steering_mode = Some(value.to_string());
             }
             "follow_up_mode" => {
                 self.settings.follow_up_mode = value.to_string();
-                self.settings_delta.follow_up_mode = Some(value.to_string());
+                self.local.settings_delta.follow_up_mode = Some(value.to_string());
             }
             "show_progress" => {
                 self.settings.terminal.show_progress = value == "on";
-                self.settings_delta
+                self.local
+                    .settings_delta
                     .terminal
                     .get_or_insert_with(crate::config::settings::PartialTerminal::default)
                     .show_progress = Some(value == "on");
             }
             "auto_resize_images" => {
                 self.settings.terminal.auto_resize_images = value == "on";
-                self.settings_delta
+                self.local
+                    .settings_delta
                     .terminal
                     .get_or_insert_with(crate::config::settings::PartialTerminal::default)
                     .auto_resize_images = Some(value == "on");
             }
             "block_images" => {
                 self.settings.terminal.block_images = value == "on";
-                self.settings_delta
+                self.local
+                    .settings_delta
                     .terminal
                     .get_or_insert_with(crate::config::settings::PartialTerminal::default)
                     .block_images = Some(value == "on");
             }
             "enable_skill_commands" => {
                 self.settings.enable_skill_commands = value == "on";
-                self.settings_delta.enable_skill_commands = Some(value == "on");
+                self.local.settings_delta.enable_skill_commands = Some(value == "on");
             }
             "hide_thinking_block" => {
                 self.settings.hide_thinking_block = value == "on";
-                self.settings_delta.hide_thinking_block = Some(value == "on");
+                self.local.settings_delta.hide_thinking_block = Some(value == "on");
             }
             "quiet_startup" => {
                 self.settings.quiet_startup = value == "on";
-                self.settings_delta.quiet_startup = Some(value == "on");
+                self.local.settings_delta.quiet_startup = Some(value == "on");
             }
             "clear_on_shrink" => {
                 self.settings.terminal.clear_on_shrink = value == "on";
-                self.settings_delta
+                self.local
+                    .settings_delta
                     .terminal
                     .get_or_insert_with(crate::config::settings::PartialTerminal::default)
                     .clear_on_shrink = Some(value == "on");
             }
             "double_escape_action" => {
                 self.settings.double_escape_action = value.to_string();
-                self.settings_delta.double_escape_action = Some(value.to_string());
+                self.local.settings_delta.double_escape_action = Some(value.to_string());
             }
             "tree_filter_mode" => {
                 self.settings.tree_filter_mode = value.to_string();
-                self.settings_delta.tree_filter_mode = Some(value.to_string());
+                self.local.settings_delta.tree_filter_mode = Some(value.to_string());
             }
             "default_thinking_level" => {
                 self.settings.default_thinking_level = Some(value.to_string());
-                self.settings_delta.default_thinking_level = Some(value.to_string());
+                self.local.settings_delta.default_thinking_level = Some(value.to_string());
                 // Also update the active thinking level so the editor border reflects it
                 if let Ok(level) = value.parse::<pi_agent_core::api::agent::ThinkingLevel>() {
                     self.thinking_level = level;
-                    self.selected_thinking_level = Some(level);
+                    self.local.selected_thinking_level = Some(level);
                 }
             }
             "http_idle_timeout" => {
@@ -2117,12 +2262,12 @@ impl InteractiveRoot {
                     .find(|(label, _)| *label == value)
                 {
                     self.settings.http_idle_timeout_ms = *timeout_ms;
-                    self.settings_delta.http_idle_timeout_ms = Some(*timeout_ms);
+                    self.local.settings_delta.http_idle_timeout_ms = Some(*timeout_ms);
                 }
             }
             _ => return,
         }
-        self.settings_update = Some(self.settings.clone());
+        self.local.settings_update = Some(self.settings.clone());
     }
 
     /// Apply a built-in theme by name ("dark"/"light"), updating both the
@@ -2137,7 +2282,7 @@ impl InteractiveRoot {
             _ => crate::theme::builtin_dark(),
         };
         self.resolved_theme = Some(json.resolve_colors().expect("built-in theme resolves"));
-        self.render_cache.clear();
+        self.local.render_cache.clear();
     }
 
     /// Apply a hot-reloaded custom theme: update the resolved 51-token theme
@@ -2149,7 +2294,7 @@ impl InteractiveRoot {
             // Refresh the palette bridge so non-thinking borders also track
             // the reloaded theme.
             self.theme = crate::resources::tui_theme_from_resolved_json(&name, &theme);
-            self.render_cache.clear();
+            self.local.render_cache.clear();
         }
     }
 
@@ -2191,10 +2336,10 @@ impl InteractiveRoot {
             styles: TranscriptStyles::from_theme(self.resolved_theme.as_ref()),
             view: self
                 .fullscreen_viewport
-                .then(|| self.transcript_view.snapshot()),
+                .then(|| self.local.transcript_view.snapshot()),
             selected_block: (self.fullscreen_viewport
-                && self.focus_ring.current() == Some(InteractiveRegion::Conversation))
-            .then(|| self.transcript_view.selected())
+                && self.local.focus_ring.current() == Some(InteractiveRegion::Conversation))
+            .then(|| self.local.transcript_view.selected())
             .flatten(),
             selection_gutter: self.fullscreen_viewport,
             show_images: self.settings.terminal.show_images,
@@ -2204,16 +2349,18 @@ impl InteractiveRoot {
     }
 
     pub(super) fn handle_settings_input(&mut self, event: &InputEvent) -> bool {
-        if !self.selecting_settings {
+        if !self.local.selecting_settings {
             return false;
         }
 
         let before = self
+            .local
             .settings_list
             .selected_item()
             .map(|item| (item.id.clone(), item.current_value.clone()));
-        self.settings_list.handle_input(event);
+        self.local.settings_list.handle_input(event);
         let after = self
+            .local
             .settings_list
             .selected_item()
             .map(|item| (item.id.clone(), item.current_value.clone()));
@@ -2228,35 +2375,35 @@ impl InteractiveRoot {
     }
 
     pub(super) fn mark_auth_updated(&mut self) {
-        self.auth_update = Some(self.auth.clone());
+        self.local.auth_update = Some(self.auth.clone());
     }
 
     fn render_model_selector(&mut self, width: usize) -> Vec<String> {
-        if !self.selecting_model {
+        if !self.local.selecting_model {
             return Vec::new();
         }
         model_selector::render(
             &self.available_models,
-            self.editor.text(),
-            &mut self.model_selection_selected,
+            self.local.editor.text(),
+            &mut self.local.model_selection_selected,
             width,
         )
     }
 
     fn render_session_selector(&mut self, width: usize) -> Vec<String> {
-        if !self.selecting_session {
+        if !self.local.selecting_session {
             return Vec::new();
         }
         session_selector::render(
             &self.session_choices,
-            self.editor.text(),
-            &mut self.session_selection_selected,
+            self.local.editor.text(),
+            &mut self.local.session_selection_selected,
             width,
         )
     }
 
     fn render_editor_box(&mut self, width: usize) -> Vec<String> {
-        let editor_lines = self.editor.render(width.saturating_sub(2));
+        let editor_lines = self.local.editor.render(width.saturating_sub(2));
         let border = editor_border_line(width, &self.editor_border_style(), color_enabled());
         let mut lines = Vec::with_capacity(editor_lines.len() + 2);
         lines.push(border.clone());
@@ -2270,13 +2417,17 @@ impl InteractiveRoot {
     fn transcript_lines(&mut self, max_tool_result_lines: usize) -> Vec<String> {
         self.sync_transcript_view();
         let opts = self.transcript_render_options(self.viewport_width, max_tool_result_lines);
-        self.render_cache.render_lines(&self.transcript, &opts)
+        self.local
+            .render_cache
+            .render_lines(&self.transcript, &opts)
     }
 
     fn transcript_lines_at(&mut self, width: usize, max_tool_result_lines: usize) -> Vec<String> {
         self.sync_transcript_view();
         let opts = self.transcript_render_options(width, max_tool_result_lines);
-        self.render_cache.render_lines(&self.transcript, &opts)
+        self.local
+            .render_cache
+            .render_lines(&self.transcript, &opts)
     }
 
     pub(super) fn set_fullscreen_viewport(&mut self, enabled: bool) {
@@ -2287,13 +2438,13 @@ impl InteractiveRoot {
     pub(super) fn set_terminal_capabilities(&mut self, capabilities: TerminalCapabilities) {
         if self.terminal_capabilities != capabilities {
             self.terminal_capabilities = capabilities;
-            self.render_cache.clear();
+            self.local.render_cache.clear();
         }
     }
 
     fn sync_transcript_view(&mut self) {
         if self.fullscreen_viewport {
-            self.transcript_view.sync(&self.transcript);
+            self.local.transcript_view.sync(&self.transcript);
         }
     }
 
@@ -2301,7 +2452,7 @@ impl InteractiveRoot {
         self.sync_transcript_view();
         let previous_scroll_offset = self.transcript.scroll_offset();
         let previous_rows = (previous_scroll_offset > 0).then(|| self.transcript_total_rows());
-        let changed = self.transcript_view.toggle_all(&self.transcript);
+        let changed = self.local.transcript_view.toggle_all(&self.transcript);
         if changed && let Some(previous_rows) = previous_rows {
             let current_rows = self.transcript_total_rows();
             self.transcript.preserve_scrolled_view_after_row_change(
@@ -2321,7 +2472,10 @@ impl InteractiveRoot {
         if !self.fullscreen_viewport {
             return false;
         }
-        if self.selecting_model || self.selecting_session || self.selecting_settings {
+        if self.local.selecting_model
+            || self.local.selecting_session
+            || self.local.selecting_settings
+        {
             return false;
         }
         if let InputEvent::Mouse(mouse) = event {
@@ -2329,101 +2483,117 @@ impl InteractiveRoot {
         }
 
         let mode = shell_layout_mode(self.viewport_width);
-        if self.context_open && mode != ShellLayoutMode::Wide && matches_key(event, "escape") {
+        if self.local.context_open && mode != ShellLayoutMode::Wide && matches_key(event, "escape")
+        {
             self.close_context_overlay();
             return true;
         }
-        if self.keybindings.matches(event, "app.context.toggle") {
+        if self.local.keybindings.matches(event, "app.context.toggle") {
             self.toggle_context(mode);
             return true;
         }
 
-        let editor_accepts_tab = self.focus_ring.current() == Some(InteractiveRegion::Composer)
-            && !self.editor.text().is_empty();
-        if self.keybindings.matches(event, "app.focus.next") && !editor_accepts_tab {
-            self.focus_ring.focus_next();
+        let editor_accepts_tab = self.local.focus_ring.current()
+            == Some(InteractiveRegion::Composer)
+            && !self.local.editor.text().is_empty();
+        if self.local.keybindings.matches(event, "app.focus.next") && !editor_accepts_tab {
+            self.local.focus_ring.focus_next();
             self.apply_region_focus();
             return true;
         }
-        if self.keybindings.matches(event, "app.focus.previous") {
-            self.focus_ring.focus_previous();
+        if self.local.keybindings.matches(event, "app.focus.previous") {
+            self.local.focus_ring.focus_previous();
             self.apply_region_focus();
             return true;
         }
 
-        match self.focus_ring.current() {
+        match self.local.focus_ring.current() {
             Some(InteractiveRegion::Conversation) => {
                 self.sync_transcript_view();
-                if self.keybindings.matches(event, "tui.select.up") || matches_key(event, "k") {
-                    if self.transcript_view.select_previous(&self.transcript) {
+                if self.local.keybindings.matches(event, "tui.select.up") || matches_key(event, "k")
+                {
+                    if self.local.transcript_view.select_previous(&self.transcript) {
                         self.ensure_selected_transcript_visible();
                     }
                     return true;
                 }
-                if self.keybindings.matches(event, "tui.select.down") || matches_key(event, "j") {
-                    if self.transcript_view.select_next(&self.transcript) {
+                if self.local.keybindings.matches(event, "tui.select.down")
+                    || matches_key(event, "j")
+                {
+                    if self.local.transcript_view.select_next(&self.transcript) {
                         self.ensure_selected_transcript_visible();
                     }
                     return true;
                 }
-                if self.keybindings.matches(event, "tui.select.confirm")
+                if self.local.keybindings.matches(event, "tui.select.confirm")
                     || matches_key(event, "space")
                     || matches_key(event, "ctrl+o")
                 {
                     self.toggle_selected_transcript_block();
                     return true;
                 }
-                if self.keybindings.matches(event, "app.transcript.arguments") {
+                if self
+                    .local
+                    .keybindings
+                    .matches(event, "app.transcript.arguments")
+                {
                     self.toggle_selected_transcript_arguments();
                     return true;
                 }
-                if self.keybindings.matches(event, "tui.select.pageUp") {
+                if self.local.keybindings.matches(event, "tui.select.pageUp") {
                     self.transcript
                         .scroll_page_up(self.conversation_viewport_height.max(1));
                     return true;
                 }
-                if self.keybindings.matches(event, "tui.select.pageDown") {
+                if self.local.keybindings.matches(event, "tui.select.pageDown") {
                     self.transcript
                         .scroll_page_down(self.conversation_viewport_height.max(1));
                     return true;
                 }
             }
             Some(InteractiveRegion::Context) => {
-                if self.keybindings.matches(event, "app.context.previousTab") {
-                    self.context_tab = self.context_tab.previous();
+                if self
+                    .local
+                    .keybindings
+                    .matches(event, "app.context.previousTab")
+                {
+                    self.local.context_tab = self.local.context_tab.previous();
                     self.clamp_context_navigation();
                     return true;
                 }
-                if self.keybindings.matches(event, "app.context.nextTab") {
-                    self.context_tab = self.context_tab.next();
+                if self.local.keybindings.matches(event, "app.context.nextTab") {
+                    self.local.context_tab = self.local.context_tab.next();
                     self.clamp_context_navigation();
                     return true;
                 }
-                if self.keybindings.matches(event, "tui.select.up") || matches_key(event, "k") {
-                    if self.context_tab == ContextTab::Usage {
+                if self.local.keybindings.matches(event, "tui.select.up") || matches_key(event, "k")
+                {
+                    if self.local.context_tab == ContextTab::Usage {
                         self.scroll_context(-1);
                     } else {
                         self.move_context_selection(-1);
                     }
                     return true;
                 }
-                if self.keybindings.matches(event, "tui.select.down") || matches_key(event, "j") {
-                    if self.context_tab == ContextTab::Usage {
+                if self.local.keybindings.matches(event, "tui.select.down")
+                    || matches_key(event, "j")
+                {
+                    if self.local.context_tab == ContextTab::Usage {
                         self.scroll_context(1);
                     } else {
                         self.move_context_selection(1);
                     }
                     return true;
                 }
-                if self.keybindings.matches(event, "tui.select.pageUp") {
-                    self.scroll_context(-(self.context_viewport_height.max(1) as isize));
+                if self.local.keybindings.matches(event, "tui.select.pageUp") {
+                    self.scroll_context(-(self.local.context_viewport_height.max(1) as isize));
                     return true;
                 }
-                if self.keybindings.matches(event, "tui.select.pageDown") {
-                    self.scroll_context(self.context_viewport_height.max(1) as isize);
+                if self.local.keybindings.matches(event, "tui.select.pageDown") {
+                    self.scroll_context(self.local.context_viewport_height.max(1) as isize);
                     return true;
                 }
-                if self.keybindings.matches(event, "tui.select.confirm") {
+                if self.local.keybindings.matches(event, "tui.select.confirm") {
                     self.open_selected_context_detail();
                     return true;
                 }
@@ -2433,8 +2603,8 @@ impl InteractiveRoot {
 
         if matches_key(event, "ctrl+c")
             || matches_key(event, "ctrl+o")
-            || self.keybindings.matches(event, "app.model.next")
-            || self.keybindings.matches(event, "app.model.previous")
+            || self.local.keybindings.matches(event, "app.model.next")
+            || self.local.keybindings.matches(event, "app.model.previous")
         {
             return false;
         }
@@ -2443,7 +2613,7 @@ impl InteractiveRoot {
 
     fn handle_shell_mouse(&mut self, event: MouseEvent) -> bool {
         let point = Point::new(event.column, event.row);
-        let target = self.mouse_hits.hit(point).copied();
+        let target = self.local.mouse_hits.hit(point).copied();
         match event.kind {
             MouseEventKind::ScrollUp => {
                 if target.is_some_and(InteractiveHitTarget::is_conversation) {
@@ -2491,12 +2661,12 @@ impl InteractiveRoot {
                 }
                 Some(InteractiveHitTarget::ContextTab(tab)) => {
                     self.focus_shell_region(InteractiveRegion::Context);
-                    self.context_tab = tab;
+                    self.local.context_tab = tab;
                     self.clamp_context_navigation();
                 }
                 Some(InteractiveHitTarget::ContextRow(index)) => {
                     self.focus_shell_region(InteractiveRegion::Context);
-                    self.context_selection[self.context_tab.index()] = index;
+                    self.local.context_selection[self.local.context_tab.index()] = index;
                     self.ensure_context_selection_visible();
                 }
                 Some(InteractiveHitTarget::Composer) => {
@@ -2510,58 +2680,66 @@ impl InteractiveRoot {
     }
 
     fn focus_shell_region(&mut self, region: InteractiveRegion) {
-        if self.focus_ring.focus(region) {
+        if self.local.focus_ring.focus(region) {
             self.apply_region_focus();
         }
     }
 
     fn toggle_context(&mut self, mode: ShellLayoutMode) {
         if mode == ShellLayoutMode::Wide {
-            self.focus_ring.focus(InteractiveRegion::Context);
+            self.local.focus_ring.focus(InteractiveRegion::Context);
             self.apply_region_focus();
             return;
         }
-        if self.context_open {
+        if self.local.context_open {
             self.close_context_overlay();
         } else {
-            self.context_restore_focus = self
+            self.local.context_restore_focus = self
+                .local
                 .focus_ring
                 .current()
                 .unwrap_or(InteractiveRegion::Composer);
-            self.context_open = true;
+            self.local.context_open = true;
             self.refresh_shell_focus();
         }
     }
 
     fn close_context_overlay(&mut self) {
-        self.context_open = false;
+        self.local.context_open = false;
         self.refresh_shell_focus();
-        self.focus_ring.focus(self.context_restore_focus);
+        self.local
+            .focus_ring
+            .focus(self.local.context_restore_focus);
         self.apply_region_focus();
     }
 
     fn refresh_shell_focus(&mut self) {
         if !self.fullscreen_viewport {
-            self.focus_ring.set_items([InteractiveRegion::Composer]);
-            self.focus_ring.focus(InteractiveRegion::Composer);
+            self.local
+                .focus_ring
+                .set_items([InteractiveRegion::Composer]);
+            self.local.focus_ring.focus(InteractiveRegion::Composer);
             self.apply_region_focus();
             return;
         }
         match shell_layout_mode(self.viewport_width) {
             ShellLayoutMode::Wide => {
-                self.context_open = false;
-                self.focus_ring.set_items([
+                self.local.context_open = false;
+                self.local.focus_ring.set_items([
                     InteractiveRegion::Conversation,
                     InteractiveRegion::Context,
                     InteractiveRegion::Composer,
                 ]);
             }
-            ShellLayoutMode::Medium | ShellLayoutMode::Narrow if self.context_open => {
-                self.focus_ring.set_items([InteractiveRegion::Context]);
-                self.focus_ring.focus(InteractiveRegion::Context);
+            ShellLayoutMode::Medium | ShellLayoutMode::Narrow if self.local.context_open => {
+                self.local
+                    .focus_ring
+                    .set_items([InteractiveRegion::Context]);
+                self.local.focus_ring.focus(InteractiveRegion::Context);
             }
             ShellLayoutMode::Medium | ShellLayoutMode::Narrow => {
-                self.focus_ring
+                self.local
+                    .focus_ring
                     .set_items([InteractiveRegion::Conversation, InteractiveRegion::Composer]);
             }
         }
@@ -2569,8 +2747,9 @@ impl InteractiveRoot {
     }
 
     fn apply_region_focus(&mut self) {
-        self.editor
-            .set_focused(self.focus_ring.current() == Some(InteractiveRegion::Composer));
+        self.local
+            .editor
+            .set_focused(self.local.focus_ring.current() == Some(InteractiveRegion::Composer));
     }
 
     fn shell_layout(&self, composer_height: usize) -> ShellLayout {
@@ -2626,7 +2805,7 @@ impl InteractiveRoot {
                 }
             }
             ShellLayoutMode::Medium => {
-                let context = self.context_open.then(|| {
+                let context = self.local.context_open.then(|| {
                     let overlay_width = (width * 2 / 5).clamp(26, 38).min(width);
                     Rect::new(
                         width.saturating_sub(overlay_width),
@@ -2648,7 +2827,7 @@ impl InteractiveRoot {
             ShellLayoutMode::Narrow => ShellLayout {
                 mode,
                 conversation: work,
-                context: self.context_open.then_some(work),
+                context: self.local.context_open.then_some(work),
                 tips: None,
                 composer,
                 status,
@@ -2663,8 +2842,8 @@ impl InteractiveRoot {
         conversation_body: Rect,
         transcript_total_rows: usize,
     ) {
-        self.mouse_hits.clear();
-        self.mouse_hits.push(HitRegion::new(
+        self.local.mouse_hits.clear();
+        self.local.mouse_hits.push(HitRegion::new(
             layout.conversation,
             InteractiveHitTarget::Conversation,
         ));
@@ -2676,7 +2855,10 @@ impl InteractiveRoot {
         );
         let opts =
             self.transcript_render_options(conversation_body.width.max(1), MAX_TOOL_RESULT_LINES);
-        let block_rows = self.render_cache.all_block_rows(&self.transcript, &opts);
+        let block_rows = self
+            .local
+            .render_cache
+            .all_block_rows(&self.transcript, &opts);
         for (block_id, rows) in block_rows {
             let visible_start = rows.start.max(viewport_start);
             let visible_end = rows.end.min(viewport_end);
@@ -2691,7 +2873,7 @@ impl InteractiveRoot {
                 conversation_body.width,
                 visible_end.saturating_sub(visible_start),
             );
-            self.mouse_hits.push(HitRegion::new(
+            self.local.mouse_hits.push(HitRegion::new(
                 block_rect,
                 InteractiveHitTarget::TranscriptBlock(block_id),
             ));
@@ -2703,7 +2885,7 @@ impl InteractiveRoot {
                     .item_for_block(block_id)
                     .is_some_and(TranscriptItem::foldable)
             {
-                self.mouse_hits.push(HitRegion::new(
+                self.local.mouse_hits.push(HitRegion::new(
                     Rect::new(
                         conversation_body.x,
                         conversation_body
@@ -2718,16 +2900,17 @@ impl InteractiveRoot {
         }
 
         if let Some(context) = layout.context {
-            self.mouse_hits
+            self.local
+                .mouse_hits
                 .push(HitRegion::new(context, InteractiveHitTarget::Context));
             let mut tab_x = context.x.saturating_add(10);
             for tab in ContextTab::ALL {
                 let tab_width = tab
                     .label()
                     .len()
-                    .saturating_add(usize::from(tab == self.context_tab) * 2);
+                    .saturating_add(usize::from(tab == self.local.context_tab) * 2);
                 if tab_x < context.right() {
-                    self.mouse_hits.push(HitRegion::new(
+                    self.local.mouse_hits.push(HitRegion::new(
                         Rect::new(
                             tab_x,
                             context.y,
@@ -2739,14 +2922,14 @@ impl InteractiveRoot {
                 }
                 tab_x = tab_x.saturating_add(tab_width + 1);
             }
-            if self.context_tab != ContextTab::Usage {
-                let item_count = self.context_items(self.context_tab).len();
-                let scroll = self.context_scroll[self.context_tab.index()];
+            if self.local.context_tab != ContextTab::Usage {
+                let item_count = self.context_items(self.local.context_tab).len();
+                let scroll = self.local.context_scroll[self.local.context_tab.index()];
                 for (visible_index, item_index) in (scroll..item_count)
                     .take(context.height.saturating_sub(1))
                     .enumerate()
                 {
-                    self.mouse_hits.push(HitRegion::new(
+                    self.local.mouse_hits.push(HitRegion::new(
                         Rect::new(
                             context.x,
                             context.y.saturating_add(1 + visible_index),
@@ -2758,7 +2941,7 @@ impl InteractiveRoot {
                 }
             }
         }
-        self.mouse_hits.push(HitRegion::new(
+        self.local.mouse_hits.push(HitRegion::new(
             layout.composer,
             InteractiveHitTarget::Composer,
         ));
@@ -2830,7 +3013,7 @@ impl InteractiveRoot {
     }
 
     fn panel_header(&self, title: &str, region: InteractiveRegion, width: usize) -> String {
-        let prefix = if self.focus_ring.current() == Some(region) {
+        let prefix = if self.local.focus_ring.current() == Some(region) {
             "> "
         } else {
             "  "
@@ -2845,7 +3028,7 @@ impl InteractiveRoot {
         let tabs = ContextTab::ALL
             .iter()
             .map(|tab| {
-                if *tab == self.context_tab {
+                if *tab == self.local.context_tab {
                     format!("[{}]", tab.label())
                 } else {
                     tab.label().to_string()
@@ -2858,19 +3041,21 @@ impl InteractiveRoot {
             InteractiveRegion::Context,
             width,
         )];
-        self.context_viewport_height = height.saturating_sub(1).max(1);
-        let body = if self.context_tab == ContextTab::Usage {
+        self.local.context_viewport_height = height.saturating_sub(1).max(1);
+        let body = if self.local.context_tab == ContextTab::Usage {
             self.context_usage_lines()
         } else {
             self.context_list_lines()
         };
-        let scroll = self.context_scroll[self.context_tab.index()]
-            .min(body.len().saturating_sub(self.context_viewport_height));
-        self.context_scroll[self.context_tab.index()] = scroll;
+        let scroll = self.local.context_scroll[self.local.context_tab.index()].min(
+            body.len()
+                .saturating_sub(self.local.context_viewport_height),
+        );
+        self.local.context_scroll[self.local.context_tab.index()] = scroll;
         lines.extend(
             body.into_iter()
                 .skip(scroll)
-                .take(self.context_viewport_height),
+                .take(self.local.context_viewport_height),
         );
         lines.truncate(height.max(1));
         lines
@@ -2880,10 +3065,10 @@ impl InteractiveRoot {
     }
 
     fn context_list_lines(&mut self) -> Vec<String> {
-        let items = self.context_items(self.context_tab);
+        let items = self.context_items(self.local.context_tab);
         if items.is_empty() {
             return vec![
-                match self.context_tab {
+                match self.local.context_tab {
                     ContextTab::Ops => "no operations yet",
                     ContextTab::Changes => "no successful file changes yet",
                     ContextTab::Agents => "no agent inventory available",
@@ -2892,14 +3077,15 @@ impl InteractiveRoot {
                 .into(),
             ];
         }
-        let index = self.context_tab.index();
-        self.context_selection[index] = self.context_selection[index].min(items.len() - 1);
-        let selected = self.context_selection[index];
-        let viewport = self.context_viewport_height.max(1);
-        if selected < self.context_scroll[index] {
-            self.context_scroll[index] = selected;
-        } else if selected >= self.context_scroll[index].saturating_add(viewport) {
-            self.context_scroll[index] = selected.saturating_add(1).saturating_sub(viewport);
+        let index = self.local.context_tab.index();
+        self.local.context_selection[index] =
+            self.local.context_selection[index].min(items.len() - 1);
+        let selected = self.local.context_selection[index];
+        let viewport = self.local.context_viewport_height.max(1);
+        if selected < self.local.context_scroll[index] {
+            self.local.context_scroll[index] = selected;
+        } else if selected >= self.local.context_scroll[index].saturating_add(viewport) {
+            self.local.context_scroll[index] = selected.saturating_add(1).saturating_sub(viewport);
         }
         items
             .into_iter()
@@ -2914,13 +3100,15 @@ impl InteractiveRoot {
     fn context_items(&self, tab: ContextTab) -> Vec<ContextListItem> {
         match tab {
             ContextTab::Ops => self
-                .context_projection
+                .shared_projection
+                .context()
                 .operations
                 .iter()
                 .map(|operation| self.operation_context_item(operation))
                 .collect(),
             ContextTab::Changes => self
-                .context_projection
+                .shared_projection
+                .context()
                 .changes
                 .iter()
                 .map(|change| self.change_context_item(change))
@@ -2934,14 +3122,18 @@ impl InteractiveRoot {
         let elapsed = self.operation_elapsed(operation);
         let cancellable = operation.status.is_running()
             && self
-                .context_projection
+                .shared_projection
+                .context()
                 .operations
                 .iter()
                 .find(|candidate| candidate.status.is_running())
                 .is_some_and(|candidate| candidate.operation_id == operation.operation_id)
-            && self.capabilities.as_ref().is_some_and(|capabilities| {
-                matches!(capabilities.abort, CapabilityStatus::Available)
-            });
+            && self
+                .shared_projection
+                .capabilities()
+                .is_some_and(|capabilities| {
+                    matches!(capabilities.abort, CapabilityStatus::Available)
+                });
         let cancel = if cancellable { " cancel" } else { "" };
         let summary = format!(
             "{:<9} {} {} {}{cancel}",
@@ -3001,6 +3193,7 @@ impl InteractiveRoot {
             (None, None) => String::new(),
         };
         let age = self
+            .local
             .context_change_timing
             .get(&change.path)
             .map(|(_, seen_at)| Instant::now().saturating_duration_since(*seen_at));
@@ -3067,7 +3260,11 @@ impl InteractiveRoot {
     }
 
     fn operation_elapsed(&self, operation: &UiOperationProjection) -> String {
-        let Some(timing) = self.context_operation_timing.get(&operation.operation_id) else {
+        let Some(timing) = self
+            .local
+            .context_operation_timing
+            .get(&operation.operation_id)
+        else {
             return "--".into();
         };
         if operation.status.is_running() {
@@ -3082,9 +3279,10 @@ impl InteractiveRoot {
 
     fn agent_context_items(&self) -> Vec<ContextListItem> {
         let mut items = Vec::new();
+        let default_agent_profile_id = self.display_default_agent_profile_id();
         let active = self
             .profile_registry
-            .agent(self.default_agent_profile_id.as_str());
+            .agent(default_agent_profile_id.as_str());
         if let Some(profile) = active {
             let mut details = vec![
                 format!("id: {}", profile.id),
@@ -3176,14 +3374,15 @@ impl InteractiveRoot {
             }
         } else {
             items.push(ContextListItem {
-                summary: format!("active  {} · unavailable", self.default_agent_profile_id),
+                summary: format!("active  {default_agent_profile_id} · unavailable"),
                 detail_title: "Active agent profile unavailable".into(),
-                detail_lines: vec![format!("id: {}", self.default_agent_profile_id)],
+                detail_lines: vec![format!("id: {default_agent_profile_id}")],
             });
         }
 
         items.extend(
-            self.context_projection
+            self.shared_projection
+                .context()
                 .delegations
                 .iter()
                 .map(|delegation| {
@@ -3224,7 +3423,7 @@ impl InteractiveRoot {
     }
 
     fn context_usage_lines(&self) -> Vec<String> {
-        let usage = &self.context_projection.usage;
+        let usage = &self.shared_projection.context().usage;
         let mut lines = vec![
             "session totals".into(),
             format!("input       {}", format_token_total(usage.input)),
@@ -3283,7 +3482,8 @@ impl InteractiveRoot {
 
     fn render_tips_region(&self, width: usize, height: usize) -> Vec<String> {
         let key = |id: &str| {
-            self.keybindings
+            self.local
+                .keybindings
                 .get_keys(id)
                 .into_iter()
                 .next()
@@ -3295,7 +3495,7 @@ impl InteractiveRoot {
             key("app.focus.previous")
         )];
         tips.push(format!("{}  context", key("app.context.toggle")));
-        match self.focus_ring.current() {
+        match self.local.focus_ring.current() {
             Some(InteractiveRegion::Conversation) => {
                 tips.push(format!(
                     "{} / {}  select",
@@ -3303,6 +3503,7 @@ impl InteractiveRoot {
                     key("tui.select.down")
                 ));
                 if self
+                    .local
                     .transcript_view
                     .selected()
                     .and_then(|block_id| self.transcript.item_for_block(block_id))
@@ -3311,6 +3512,7 @@ impl InteractiveRoot {
                     tips.push(format!("{}  disclose", key("tui.select.confirm")));
                 }
                 if self
+                    .local
                     .transcript_view
                     .selected_has_tool_arguments(&self.transcript)
                 {
@@ -3327,20 +3529,24 @@ impl InteractiveRoot {
                     "{} / {}  {}",
                     key("tui.select.up"),
                     key("tui.select.down"),
-                    if self.context_tab == ContextTab::Usage {
+                    if self.local.context_tab == ContextTab::Usage {
                         "scroll"
                     } else {
                         "select"
                     }
                 ));
-                if self.context_tab != ContextTab::Usage
-                    && !self.context_items(self.context_tab).is_empty()
+                if self.local.context_tab != ContextTab::Usage
+                    && !self.context_items(self.local.context_tab).is_empty()
                 {
                     tips.push(format!("{}  detail", key("tui.select.confirm")));
                 }
-                if self.capabilities.as_ref().is_some_and(|capabilities| {
-                    matches!(capabilities.abort, CapabilityStatus::Available)
-                }) {
+                if self
+                    .shared_projection
+                    .capabilities()
+                    .is_some_and(|capabilities| {
+                        matches!(capabilities.abort, CapabilityStatus::Available)
+                    })
+                {
                     tips.push(format!("{}  cancel", key("app.interrupt")));
                 }
             }
@@ -3357,7 +3563,8 @@ impl InteractiveRoot {
 
     fn render_status_bar(&self, width: usize) -> String {
         let active_kind = self
-            .context_projection
+            .shared_projection
+            .context()
             .operations
             .iter()
             .find(|operation| operation.status.is_running())
@@ -3376,7 +3583,8 @@ impl InteractiveRoot {
         let mut segments = vec![state];
         segments.push(format!(
             "{} / {}",
-            self.session_label, self.default_agent_profile_id
+            self.session_label,
+            self.display_default_agent_profile_id()
         ));
         segments.push(format!(
             "{} / {}",
@@ -3387,17 +3595,19 @@ impl InteractiveRoot {
         ));
 
         let context = self
-            .context_projection
+            .shared_projection
+            .context()
             .usage
             .latest_turn
             .as_ref()
             .and_then(|turn| turn.context_tokens)
-            .zip(self.context_projection.usage.context_window)
+            .zip(self.shared_projection.context().usage.context_window)
             .map(|(tokens, window)| {
                 format!("ctx {}/{}", format_tokens(tokens), format_tokens(window))
             });
         let cost = self
-            .context_projection
+            .shared_projection
+            .context()
             .usage
             .cost
             .map(|cost| format!("${cost:.4}"));
@@ -3431,8 +3641,8 @@ impl InteractiveRoot {
 
     fn render_modal_surface(&mut self, width: usize) -> Vec<String> {
         let mut lines = Vec::new();
-        if self.selecting_tree {
-            if let Some(ref selector) = self.tree_selector {
+        if self.local.selecting_tree {
+            if let Some(ref selector) = self.local.tree_selector {
                 lines.extend(selector.render(width));
             }
         } else if !self.tool_authorizations.is_empty() {
@@ -3441,20 +3651,20 @@ impl InteractiveRoot {
             lines.extend(self.render_delegation_confirmation_menu(width));
         } else if self.profile_menu.is_some() {
             lines.extend(self.render_profile_menu(width));
-        } else if self.selecting_model {
+        } else if self.local.selecting_model {
             lines.extend(self.render_model_selector(width));
-        } else if self.selecting_session {
+        } else if self.local.selecting_session {
             lines.extend(self.render_session_selector(width));
-        } else if self.selecting_settings {
+        } else if self.local.selecting_settings {
             lines.extend(self.render_settings_menu(width));
-        } else if self.context_detail.is_some() {
+        } else if self.local.context_detail.is_some() {
             lines.extend(self.render_context_detail(width));
         }
         lines
     }
 
     fn render_context_detail(&mut self, width: usize) -> Vec<String> {
-        let Some(detail) = self.context_detail.as_mut() else {
+        let Some(detail) = self.local.context_detail.as_mut() else {
             return Vec::new();
         };
         let viewport = self.viewport_height.saturating_sub(8).clamp(3, 20);
@@ -3493,7 +3703,9 @@ impl InteractiveRoot {
         self.sync_transcript_view();
         let opts =
             self.transcript_render_options(self.transcript_render_width(), max_tool_result_lines);
-        self.render_cache.row_snapshot(&self.transcript, &opts)
+        self.local
+            .render_cache
+            .row_snapshot(&self.transcript, &opts)
     }
 
     fn transcript_row_delta_since(
@@ -3506,7 +3718,7 @@ impl InteractiveRoot {
         self.sync_transcript_view();
         let opts =
             self.transcript_render_options(self.transcript_render_width(), max_tool_result_lines);
-        self.render_cache.row_delta_since(
+        self.local.render_cache.row_delta_since(
             &self.transcript,
             &opts,
             snapshot,
@@ -3526,7 +3738,8 @@ impl InteractiveRoot {
     fn transcript_total_rows(&mut self) -> usize {
         let opts =
             self.transcript_render_options(self.transcript_render_width(), MAX_TOOL_RESULT_LINES);
-        self.render_cache
+        self.local
+            .render_cache
             .row_snapshot(&self.transcript, &opts)
             .total_rows()
     }
@@ -3534,7 +3747,7 @@ impl InteractiveRoot {
     fn toggle_selected_transcript_block(&mut self) -> bool {
         let previous_scroll_offset = self.transcript.scroll_offset();
         let previous_rows = (previous_scroll_offset > 0).then(|| self.transcript_total_rows());
-        let changed = self.transcript_view.toggle_selected(&self.transcript);
+        let changed = self.local.transcript_view.toggle_selected(&self.transcript);
         if !changed {
             return false;
         }
@@ -3552,7 +3765,10 @@ impl InteractiveRoot {
 
     fn select_transcript_block(&mut self, block_id: TranscriptBlockId) -> bool {
         self.sync_transcript_view();
-        let changed = self.transcript_view.select(&self.transcript, block_id);
+        let changed = self
+            .local
+            .transcript_view
+            .select(&self.transcript, block_id);
         if changed {
             self.ensure_selected_transcript_visible();
         }
@@ -3563,6 +3779,7 @@ impl InteractiveRoot {
         let previous_scroll_offset = self.transcript.scroll_offset();
         let previous_rows = (previous_scroll_offset > 0).then(|| self.transcript_total_rows());
         let changed = self
+            .local
             .transcript_view
             .toggle_selected_arguments(&self.transcript);
         if !changed {
@@ -3581,12 +3798,13 @@ impl InteractiveRoot {
     }
 
     fn ensure_selected_transcript_visible(&mut self) {
-        let Some(selected) = self.transcript_view.selected() else {
+        let Some(selected) = self.local.transcript_view.selected() else {
             return;
         };
         let opts =
             self.transcript_render_options(self.transcript_render_width(), MAX_TOOL_RESULT_LINES);
         let Some(rows) = self
+            .local
             .render_cache
             .block_rows(&self.transcript, &opts, selected)
         else {
@@ -3602,20 +3820,20 @@ impl InteractiveRoot {
 
     #[cfg(test)]
     pub(super) fn reset_render_cache_stats(&mut self) {
-        self.render_cache.reset_stats();
+        self.local.render_cache.reset_stats();
     }
 
     #[cfg(test)]
     pub(super) fn render_cache_stats(
         &self,
     ) -> crate::adapters::interactive::render::TranscriptRenderCacheStats {
-        self.render_cache.stats()
+        self.local.render_cache.stats()
     }
 
     pub(super) fn handle_slash_suggestion_input(&mut self, event: &InputEvent) -> bool {
-        if self.selecting_model
-            || self.selecting_settings
-            || self.selecting_session
+        if self.local.selecting_model
+            || self.local.selecting_settings
+            || self.local.selecting_session
             || self.delegation_confirmation_menu.is_some()
             || self.profile_menu.is_some()
             || self.pending_profile_task.is_some()
@@ -3624,9 +3842,9 @@ impl InteractiveRoot {
         }
         let commands = self.all_slash_commands();
         slash::handle_suggestion_input(
-            &self.keybindings,
+            &self.local.keybindings,
             event,
-            &mut self.editor,
+            &mut self.local.editor,
             &mut self.slash_suggestion_selected,
             &mut self.slash_suggestions_dismissed_for,
             &commands,
@@ -3634,22 +3852,22 @@ impl InteractiveRoot {
     }
 
     pub(super) fn handle_model_selection_input(&mut self, event: &InputEvent) -> bool {
-        if !self.selecting_model {
+        if !self.local.selecting_model {
             return false;
         }
 
         match model_selector::handle_input(
-            &self.keybindings,
+            &self.local.keybindings,
             event,
-            &mut self.editor,
-            &mut self.model_selection_selected,
+            &mut self.local.editor,
+            &mut self.local.model_selection_selected,
             &self.available_models,
         ) {
             model_selector::SelectorInput::Handled => {}
             model_selector::SelectorInput::Cancel => {
-                self.selecting_model = false;
-                self.model_selection_selected = 0;
-                self.editor.set_text("");
+                self.local.selecting_model = false;
+                self.local.model_selection_selected = 0;
+                self.local.editor.set_text("");
                 self.transcript.push(TranscriptItem::system(
                     "Model selection canceled".to_string(),
                 ));
@@ -3664,32 +3882,32 @@ impl InteractiveRoot {
     }
 
     pub(super) fn handle_tree_selection_input(&mut self, event: &InputEvent) -> bool {
-        if !self.selecting_tree {
+        if !self.local.selecting_tree {
             return false;
         }
 
-        let Some(selector) = self.tree_selector.as_mut() else {
+        let Some(selector) = self.local.tree_selector.as_mut() else {
             return false;
         };
 
-        match selector.handle_input(&self.keybindings, event) {
+        match selector.handle_input(&self.local.keybindings, event) {
             TreeSelectorInput::Cancel => {
-                self.selecting_tree = false;
-                self.tree_selector = None;
-                self.selected_tree_entry_id = None;
-                self.editor.set_text("");
+                self.local.selecting_tree = false;
+                self.local.tree_selector = None;
+                self.local.selected_tree_entry_id = None;
+                self.local.editor.set_text("");
             }
             TreeSelectorInput::Confirm(Some(entry_id)) => {
-                self.selected_tree_entry_id = Some(entry_id);
-                self.selecting_tree = false;
-                self.tree_selector = None;
+                self.local.selected_tree_entry_id = Some(entry_id);
+                self.local.selecting_tree = false;
+                self.local.tree_selector = None;
             }
             TreeSelectorInput::Confirm(None) => {}
             TreeSelectorInput::EditLabel { .. } => {
                 // Label edit is handled inside the selector state
             }
             TreeSelectorInput::SaveLabel { entry_id, label } => {
-                self.pending_tree_label_change = Some((entry_id, label));
+                self.local.pending_tree_label_change = Some((entry_id, label));
             }
             TreeSelectorInput::Handled => {}
         }
@@ -3697,22 +3915,22 @@ impl InteractiveRoot {
     }
 
     pub(super) fn handle_session_selection_input(&mut self, event: &InputEvent) -> bool {
-        if !self.selecting_session {
+        if !self.local.selecting_session {
             return false;
         }
 
         match session_selector::handle_input(
-            &self.keybindings,
+            &self.local.keybindings,
             event,
-            &mut self.editor,
-            &mut self.session_selection_selected,
+            &mut self.local.editor,
+            &mut self.local.session_selection_selected,
             &self.session_choices,
         ) {
             session_selector::SelectorInput::Handled => {}
             session_selector::SelectorInput::Cancel => {
-                self.selecting_session = false;
-                self.session_selection_selected = 0;
-                self.editor.set_text("");
+                self.local.selecting_session = false;
+                self.local.session_selection_selected = 0;
+                self.local.editor.set_text("");
                 self.transcript.push(TranscriptItem::system(
                     "Session selection canceled".to_string(),
                 ));
@@ -3736,7 +3954,7 @@ impl Component for InteractiveRoot {
             return self.render_fullscreen_shell(width);
         }
 
-        self.mouse_hits.clear();
+        self.local.mouse_hits.clear();
 
         let max_tool_result_lines = if self.tool_output_expanded {
             EXPANDED_TOOL_RESULT_LINES
@@ -3764,12 +3982,12 @@ impl Component for InteractiveRoot {
         if focused {
             self.apply_region_focus();
         } else {
-            self.editor.set_focused(false);
+            self.local.editor.set_focused(false);
         }
     }
 
     fn focused(&self) -> bool {
-        self.editor.focused()
+        self.local.editor.focused()
     }
 }
 
@@ -4102,30 +4320,39 @@ mod transcript_viewport_tests {
         let mut root = InteractiveRoot::new(PathBuf::from("."), "model".into(), "session".into());
         root.set_fullscreen_viewport(true);
         root.set_viewport_size(120, 24);
-        assert_eq!(root.focus_ring.current(), Some(InteractiveRegion::Composer));
+        assert_eq!(
+            root.local.focus_ring.current(),
+            Some(InteractiveRegion::Composer)
+        );
 
         assert!(root.handle_shell_input(&key("\t")));
         assert_eq!(
-            root.focus_ring.current(),
+            root.local.focus_ring.current(),
             Some(InteractiveRegion::Conversation)
         );
         assert!(root.handle_shell_input(&key("\t")));
-        assert_eq!(root.focus_ring.current(), Some(InteractiveRegion::Context));
+        assert_eq!(
+            root.local.focus_ring.current(),
+            Some(InteractiveRegion::Context)
+        );
 
         root.set_viewport_size(80, 24);
         assert_eq!(
-            root.focus_ring.current(),
+            root.local.focus_ring.current(),
             Some(InteractiveRegion::Conversation)
         );
         assert!(root.handle_shell_input(&key("\x07")));
-        assert_eq!(root.focus_ring.current(), Some(InteractiveRegion::Context));
-        assert!(root.context_open);
+        assert_eq!(
+            root.local.focus_ring.current(),
+            Some(InteractiveRegion::Context)
+        );
+        assert!(root.local.context_open);
         assert!(root.handle_shell_input(&key("\x1b")));
         assert_eq!(
-            root.focus_ring.current(),
+            root.local.focus_ring.current(),
             Some(InteractiveRegion::Conversation)
         );
-        assert!(!root.context_open);
+        assert!(!root.local.context_open);
     }
 
     #[test]
@@ -4133,14 +4360,14 @@ mod transcript_viewport_tests {
         let mut root = InteractiveRoot::new(PathBuf::from("."), "model".into(), "session".into());
         root.set_fullscreen_viewport(true);
         root.set_viewport_size(120, 24);
-        root.focus_ring.focus(InteractiveRegion::Context);
+        root.local.focus_ring.focus(InteractiveRegion::Context);
         root.apply_region_focus();
 
         assert!(root.handle_shell_input(&key("\x1b[C")));
-        assert_eq!(root.context_tab, ContextTab::Changes);
-        assert!(root.editor.text().is_empty());
+        assert_eq!(root.local.context_tab, ContextTab::Changes);
+        assert!(root.local.editor.text().is_empty());
         assert!(root.handle_shell_input(&key("\x1b[D")));
-        assert_eq!(root.context_tab, ContextTab::Ops);
+        assert_eq!(root.local.context_tab, ContextTab::Ops);
     }
 
     fn context_projection(operation_count: usize) -> UiContextProjection {
@@ -4189,7 +4416,7 @@ mod transcript_viewport_tests {
                 false,
             ),
         ));
-        root.focus_ring.focus(InteractiveRegion::Context);
+        root.local.focus_ring.focus(InteractiveRegion::Context);
         root.apply_region_focus();
 
         let ops = root.render(120).join("\n");
@@ -4290,27 +4517,30 @@ mod transcript_viewport_tests {
         root.set_fullscreen_viewport(true);
         root.set_viewport_size(120, 12);
         root.set_context_projection(context_projection(16));
-        root.focus_ring.focus(InteractiveRegion::Context);
+        root.local.focus_ring.focus(InteractiveRegion::Context);
         root.apply_region_focus();
         let _ = root.render(120);
 
         for _ in 0..10 {
             assert!(root.handle_shell_input(&key("\x1b[B")));
         }
-        let ops_selection = root.context_selection[ContextTab::Ops.index()];
-        let ops_scroll = root.context_scroll[ContextTab::Ops.index()];
+        let ops_selection = root.local.context_selection[ContextTab::Ops.index()];
+        let ops_scroll = root.local.context_scroll[ContextTab::Ops.index()];
         assert_eq!(ops_selection, 10);
         assert!(ops_scroll > 0);
 
         assert!(root.handle_shell_input(&key("\x1b[C")));
-        assert_eq!(root.context_selection[ContextTab::Changes.index()], 0);
-        assert_eq!(root.context_scroll[ContextTab::Changes.index()], 0);
+        assert_eq!(root.local.context_selection[ContextTab::Changes.index()], 0);
+        assert_eq!(root.local.context_scroll[ContextTab::Changes.index()], 0);
         assert!(root.handle_shell_input(&key("\x1b[D")));
         assert_eq!(
-            root.context_selection[ContextTab::Ops.index()],
+            root.local.context_selection[ContextTab::Ops.index()],
             ops_selection
         );
-        assert_eq!(root.context_scroll[ContextTab::Ops.index()], ops_scroll);
+        assert_eq!(
+            root.local.context_scroll[ContextTab::Ops.index()],
+            ops_scroll
+        );
     }
 
     fn bash_tool(call_id: &str, prefix: &str) -> TranscriptItem {
@@ -4345,7 +4575,7 @@ mod transcript_viewport_tests {
         root.transcript.push(bash_tool("a", "alpha"));
         root.transcript.push(bash_tool("b", "beta"));
         let _ = root.render(120);
-        root.focus_ring.focus(InteractiveRegion::Conversation);
+        root.local.focus_ring.focus(InteractiveRegion::Conversation);
         root.apply_region_focus();
 
         assert!(root.handle_shell_input(&key("\x1b[A")));
@@ -4383,7 +4613,7 @@ mod transcript_viewport_tests {
                 .push(TranscriptItem::user(format!("message {index}")));
         }
         let _ = root.render(60);
-        root.focus_ring.focus(InteractiveRegion::Conversation);
+        root.local.focus_ring.focus(InteractiveRegion::Conversation);
         root.apply_region_focus();
 
         for _ in 0..11 {
@@ -4408,6 +4638,7 @@ mod transcript_viewport_tests {
         let _ = root.render(120);
 
         let conversation = root
+            .local
             .mouse_hits
             .regions()
             .iter()
@@ -4422,6 +4653,7 @@ mod transcript_viewport_tests {
         assert_eq!(root.transcript.scroll_offset(), super::MOUSE_SCROLL_ROWS);
 
         let context = root
+            .local
             .mouse_hits
             .regions()
             .iter()
@@ -4430,11 +4662,11 @@ mod transcript_viewport_tests {
             .rect;
         assert!(root.handle_shell_input(&mouse(MouseEventKind::ScrollUp, context.x, context.y)));
         assert_eq!(root.transcript.scroll_offset(), super::MOUSE_SCROLL_ROWS);
-        assert_eq!(root.context_scroll[ContextTab::Ops.index()], 0);
+        assert_eq!(root.local.context_scroll[ContextTab::Ops.index()], 0);
         assert!(root.handle_shell_input(&mouse(MouseEventKind::ScrollDown, context.x, context.y)));
         assert_eq!(root.transcript.scroll_offset(), super::MOUSE_SCROLL_ROWS);
         assert_eq!(
-            root.context_scroll[ContextTab::Ops.index()],
+            root.local.context_scroll[ContextTab::Ops.index()],
             super::MOUSE_SCROLL_ROWS
         );
     }
@@ -4449,6 +4681,7 @@ mod transcript_viewport_tests {
         let _ = root.render(120);
 
         let disclosures = root
+            .local
             .mouse_hits
             .regions()
             .iter()
@@ -4462,6 +4695,7 @@ mod transcript_viewport_tests {
         assert_eq!(disclosures.len(), 2);
         let (first_id, first_header) = disclosures[0];
         let first_body = root
+            .local
             .mouse_hits
             .regions()
             .iter()
@@ -4478,9 +4712,9 @@ mod transcript_viewport_tests {
             first_body.x,
             first_body.y.saturating_add(1)
         )));
-        assert_eq!(root.transcript_view.selected(), Some(first_id));
+        assert_eq!(root.local.transcript_view.selected(), Some(first_id));
         assert_eq!(
-            root.focus_ring.current(),
+            root.local.focus_ring.current(),
             Some(InteractiveRegion::Conversation)
         );
         let selected_only = root.transcript_lines_at(80, 3).join("\n");
@@ -4505,6 +4739,7 @@ mod transcript_viewport_tests {
         let _ = root.render(120);
 
         let changes_tab = root
+            .local
             .mouse_hits
             .regions()
             .iter()
@@ -4518,10 +4753,11 @@ mod transcript_viewport_tests {
             changes_tab.x,
             changes_tab.y
         )));
-        assert_eq!(root.context_tab, ContextTab::Changes);
+        assert_eq!(root.local.context_tab, ContextTab::Changes);
 
         let _ = root.render(120);
         let row = root
+            .local
             .mouse_hits
             .regions()
             .iter()
@@ -4534,8 +4770,11 @@ mod transcript_viewport_tests {
             row.x,
             row.y
         )));
-        assert_eq!(root.focus_ring.current(), Some(InteractiveRegion::Context));
-        assert_eq!(root.context_selection[ContextTab::Changes.index()], 0);
+        assert_eq!(
+            root.local.focus_ring.current(),
+            Some(InteractiveRegion::Context)
+        );
+        assert_eq!(root.local.context_selection[ContextTab::Changes.index()], 0);
     }
 
     #[test]
@@ -4546,7 +4785,8 @@ mod transcript_viewport_tests {
         root.transcript.push(bash_tool("a", "alpha"));
         let _ = root.render(120);
         assert!(
-            root.mouse_hits
+            root.local
+                .mouse_hits
                 .regions()
                 .iter()
                 .any(|region| region.target == InteractiveHitTarget::Context)
@@ -4556,13 +4796,15 @@ mod transcript_viewport_tests {
         let _ = root.render(50);
 
         assert!(
-            root.mouse_hits
+            root.local
+                .mouse_hits
                 .regions()
                 .iter()
                 .all(|region| region.rect.right() <= 50 && region.rect.bottom() <= 10)
         );
         assert!(
-            root.mouse_hits
+            root.local
+                .mouse_hits
                 .regions()
                 .iter()
                 .all(|region| region.target != InteractiveHitTarget::Context)
@@ -4643,5 +4885,26 @@ mod transcript_viewport_tests {
         let hidden = root.transcript_lines_at(40, 3).join("\n");
         assert!(hidden.contains("[Image: image/png]"), "{hidden}");
         assert!(!hidden.contains("\x1b_G"), "{hidden}");
+    }
+
+    #[test]
+    fn pending_interactive_command_is_a_single_replacing_slot() {
+        let mut root = InteractiveRoot::new(PathBuf::from("."), "model".into(), "session".into());
+        root.queue_command(super::PendingInteractiveCommand::Submit("first".into()));
+        root.queue_command(super::PendingInteractiveCommand::Fork(
+            super::PendingForkRequest {
+                target_leaf_id: Some("leaf-2".into()),
+            },
+        ));
+
+        assert_eq!(root.action, super::InteractiveAction::Fork);
+        assert!(root.take_pending_submit().is_none());
+        assert_eq!(
+            root.take_pending_fork_request(),
+            Some(super::PendingForkRequest {
+                target_leaf_id: Some("leaf-2".into()),
+            })
+        );
+        assert!(root.pending_command.is_none());
     }
 }

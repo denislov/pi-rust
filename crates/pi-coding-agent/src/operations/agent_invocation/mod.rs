@@ -5,17 +5,21 @@ use crate::runtime::capability::OperationCapabilitySnapshot;
 use crate::runtime::control::{OperationControl, PromptControlReceiver};
 use crate::runtime::facade::CodingSessionError;
 use crate::services::event::EventService;
-use crate::services::workflow::WorkflowService;
-use runner::{AgentInvocationContext, AgentInvocationOptions, AgentInvocationOutcome};
+use runner::{
+    AgentInvocationContext, AgentInvocationOptions, AgentInvocationOutcome, AgentInvocationRunner,
+};
 use tokio_util::sync::CancellationToken;
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "typed runner entry keeps scheduler, profile, event, and cancellation owners explicit"
+)]
 pub(crate) async fn run(
     options: AgentInvocationOptions,
     scheduler_parent_operation_id: String,
     prompt_control_receiver: Option<PromptControlReceiver>,
     profile_registry: &ProfileRegistry,
     event_service: &EventService,
-    workflow_service: &WorkflowService,
     operation_control: &OperationControl,
     parent_capability_snapshot: OperationCapabilitySnapshot,
     cancellation: Option<CancellationToken>,
@@ -32,13 +36,12 @@ pub(crate) async fn run(
     if let Some(receiver) = prompt_control_receiver {
         context.set_prompt_control_receiver(receiver);
     }
-    let result = match cancellation {
-        Some(cancellation) => {
-            workflow_service
-                .run_agent_invocation_with_cancellation(&mut context, cancellation)
-                .await
-        }
-        None => workflow_service.run_agent_invocation(&mut context).await,
+    let result = match AgentInvocationRunner::new()?
+        .run_typed(&mut context, cancellation)
+        .await
+    {
+        Ok(_) => context.finish_success(),
+        Err(error) => Err(error),
     };
     if let Err(error) = &result {
         context.ensure_failure_terminal_draft(error);

@@ -5,8 +5,8 @@
 Baseline version: `0.3.1`, released as annotated tag `v0.3.1`.
 
 Source baseline: commit `870d4bb`; dated release record: `180f219`; post-baseline
-`0.4.0` through completed `0.5.1` convergence evidence is recorded below. Last refreshed:
-2026-07-20.
+`0.4.0` through completed `0.5.2` convergence evidence is recorded below. Last
+refreshed: 2026-07-20.
 
 This file records implementation facts, not desired behavior. Cargo manifests,
 compiled source, tests, and CodeGraph call paths outrank this summary when they
@@ -18,7 +18,7 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   `pi-coding-agent -> {pi-agent-core, pi-ai, pi-tui}`.
 - `pi-ai` and `pi-tui` have no workspace dependencies.
 - `pi-mom`, `pi-pods`, and `pi-web-ui` are placeholder crates.
-- All workspace packages inherit version `0.5.1` from the root manifest.
+- All workspace packages inherit version `0.5.2` from the root manifest.
 - The reduced 0.4.x train ends at `0.4.2`; reserved Extension release plans
   `0.4.3` through `0.4.5` are Skip records and did not produce package versions.
 - `pi-rust` is a placeholder binary; `pi-coding-agent` is user-facing.
@@ -44,6 +44,11 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
 
 - Production Agent turns and fixed product workflows use typed state/pipeline
   runners. The generic `Flow<C>` engine and compatibility wrappers are deleted.
+- The zero-state `WorkflowService` is deleted. Fixed operations invoke their
+  dedicated typed runners directly; only PromptTurn retains its dynamic
+  provider/tool/control loop. Operation metadata, public/internal outcome
+  projection, terminal evidence, and adapter extraction are derived from the
+  exhaustive operation contract rather than repeated adapter matches.
 - AgentTeam member execution is bounded to two structured child contexts and
   restores results in profile order.
 - Persistent sessions disable ephemeral core automatic compaction and use the
@@ -79,9 +84,8 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   manifest snapshot feeds session view, tree, summary, active-leaf, and
   default-profile reads across independent opens. Navigation refresh ordering,
   writer pressure, independent-session concurrency, startup recovery, and
-  workspace gates pass; the runtime/session owner slice `RIF-008` is complete.
-  Durable outbox, reconnect, and snapshot-consistency work belongs to the
-  subsequent `RIF-009` plan.
+  workspace gates pass; the runtime/session owner slice `RIF-008` and durable
+  outbox/reconnect/snapshot-consistency slice `RIF-009` are complete.
   `SessionService` no longer replaces its repository handle after writes, so
   that handle is read/path authority only; deterministic coverage also proves
   one session writer can progress while another session writer is blocked.
@@ -177,50 +181,36 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   sequences and broadcasts it through a bounded retained stream.
 - Snapshot/reconnect, stream identity, sequence gaps, capability generation,
   client projection, print/JSON, RPC, and interactive adapters exist.
+- Print, JSON, RPC, and interactive adapters consume the same public
+  ProductEvent/snapshot contract. The interactive adapter owns one exhaustive
+  pending-command slot, one ordered `UiProjection`, and a separate
+  `InteractiveLocalState`; it no longer mirrors shared projection facts across
+  the event loop and root component.
 - A durable ProductEvent outbox now shares the bounded writer commit point with
-  its source SessionEvents. Session-write, startup-recovery, and the first
-  Prompt, Compact, PluginLoad, and SelfHealingEdit `OperationTerminal` records
-  are implemented; remaining supervisor-owned operation-terminal records remain
-  open under `RIF-002`.
-  Standalone AgentInvocation and AgentTeam terminal ProductEvents now publish
-  after finalization; delegated child publication remains child-admission owned.
+  its source SessionEvents. Prompt, Compact, PluginLoad, and SelfHealingEdit
+  terminal records persist and publish only after the corresponding commit.
+  BranchSummary is intentionally outcome-acknowledged. Standalone
+  AgentInvocation and AgentTeam terminal ProductEvents publish after
+  finalization without creating session outbox rows; delegated child
+  publication remains child-admission owned. The supervisor-owned terminal and
+  recovery state machine is complete under `RIF-002`.
 - The retained broadcast window is live delivery/replay state, not durable
-  evidence. `RIF-009-001` must define an outbox record and semantic identity
-  before a writer batch can claim session/outbox atomicity. The record contract
-  now exists in `events::outbox`. Completed `RIF-009-002` added `outbox.jsonl`, a
-  typed writer batch, outbox-first append ordering under the session append lock,
-  source event correlation, and session-write outbox persistence for prompt
-  success/failure/abort and non-leaf commit/failure paths. Remaining
-  operation-terminal publication stays open under `RIF-002`; recovery
-  publication now persists
-  `Recovery` outbox records atomically with non-terminal
-  `OperationRecoveryPending` facts. Offline restart/reconnect/redelivery
-  reconciliation is complete under `RIF-009-004`; provider/live stress is a
-  later hardening concern.
-  Prompt terminal publication now occurs only after the terminal fact/outbox
-  commit succeeds. Compact success/failure, PluginLoad success/failure/abort,
-  and SelfHealingEdit success/failure/abort now use the same ordering and an
-  outbox operation-kind hint for correct restart redelivery. BranchSummary is
-  intentionally outcome-acknowledged. Standalone AgentInvocation/AgentTeam
-  are non-session ProductEvent terminals and do not create session outbox rows.
-  `RIF-009-004` owns the completed offline
-  restart/reconnect/redelivery consistency slice. The completed cursor work:
-  outbox schema v2 stores `committed_through_session_sequence`, while only the
-  repository may turn a validated candidate into a cursor-bearing durable
-  record. `SessionReplay` now derives the same cursor from sequenced facts, and
-  public snapshots expose `last_session_sequence`. Completed `RIF-009-003`
-  returns a typed `SessionCommitReceipt` from the bounded writer, retains that
-  cursor monotonically in SessionService, and installs projection state from the
-  receipt-derived cursor without replaying. `RIF-009-004` completed the recovery
-  and redelivery matrix; session open rejects malformed, regressed, or duplicate
+  evidence. The `events::outbox` record has a typed semantic identity, and the
+  writer persists outbox intent before session facts under one append lock so a
+  later fact failure remains restart-visible uncertainty evidence. Recovery
+  publication persists `Recovery` outbox records atomically with non-terminal
+  `OperationRecoveryPending` facts. Outbox schema v2 stores
+  `committed_through_session_sequence`; only the repository may turn a validated
+  candidate into a cursor-bearing durable record. `SessionReplay` derives the
+  same cursor from sequenced facts, public snapshots expose
+  `last_session_sequence`, and the bounded writer returns a typed
+  `SessionCommitReceipt` that SessionService retains monotonically without a
+  replay refresh. Session open rejects malformed, regressed, or duplicate
   outbox records before runtime startup, and EventService redelivers startup
-  records once per runtime by semantic record ID. The first matrix slice covers
-  duplicate suppression, retained gaps, replay ordering, and reconnect from the
-  current cursor. A manifest-failure -> writer shutdown -> reopen integration
-  test proves durable outbox evidence survives the restart boundary. Startup
-  recovery idempotence coverage also verifies the recovery record is read back
-  on subsequent opens, references the exact pending fact event, and never marks
-  the operation terminal merely because the process restarted.
+  records once per runtime by semantic record ID. Offline duplicate, retained
+  gap, replay ordering, reconnect, manifest-failure/reopen, startup recovery,
+  and redelivery matrices are complete under `RIF-009`. Provider/live pressure
+  and reconnect stress remain a later hardening concern.
 - The current transaction may append facts and then fail a manifest refresh,
   producing partial-commit uncertainty that startup recovery can inspect.
 
@@ -233,8 +223,8 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   queues, and live steering/follow-up insertion remains preserved. The core
   Branch Summary, Session Context/Memory, and Harness/Proxy alternatives are
   deleted; product BranchSummary remains owned by `pi-coding-agent`. Fixed
-  product workflows use operation-specific runners behind `WorkflowService`;
-  the generic graph engine is absent.
+  product workflows invoke operation-specific runners directly; the generic
+  graph engine and zero-state workflow pass-through service are absent.
 - The legacy Rust contribution-provider registry and Lua/`mlua` runtime are
   deleted. The replacement path has candidate
   Manifest/WIT/schema contracts, immutable packages, grant-backed activation,
@@ -244,6 +234,12 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   Contribution productization is Skipped; no PluginCommand/UI compatibility
   surface, Lua/native compatibility runtime, or automated migration layer is
   retained.
+- The 0.5.2 retained-contract gate passes all 33 Extension unit contracts,
+  TypeScript/WIT conformance, the production Wasm vertical slice (182.23 second
+  debug cold path), the four-case Wasmtime isolation/resource prototype, public
+  trusted-host reload, and durable PluginLoad restart/outbox coverage.
+  Wasmtime remains pinned to `46.0.1`; skipped contribution productization is
+  not claimed.
 - PluginLoad uses the admitted snapshot operation ID and typed
   Completed/Failed/Aborted root terminal evidence. Its terminal draft now
   persists through the coordinator outbox and publishes only after commit.
@@ -260,6 +256,12 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   dependency for the reduced minimum Component vertical slice.
 
 ## Evidence Maintenance
+
+The supported `pi_coding_agent::api` facade now contains runtime, operation,
+event, client, required view, protocol, Extension, authorization, and
+high-level CLI runner contracts. Low-level CLI parser/config/input/resource/
+theme implementation categories are private; migration details are recorded in
+`docs/0.5.2-migration-guide.md` and the 0.5.2 API snapshot.
 
 The archived detailed `0.3.1` inventory is preserved in
 [`migrations/0.3.1-monolithic-architecture.md`](migrations/0.3.1-monolithic-architecture.md).

@@ -1,11 +1,11 @@
 //! Product runtime construction behavior.
 
-use pi_agent_core::api::resources::AgentResources;
-use pi_coding_agent::api::cli::command::{CliError, parse_args};
-use pi_coding_agent::api::cli::configuration::{
+use crate::internal_tests::cli_fixture::command::{CliError, parse_args};
+use crate::internal_tests::cli_fixture::configuration::{
     CompactionSettings, DEFAULT_MODEL_ID, DEFAULT_SYSTEM_PROMPT, RetrySettings, Settings,
     TerminalSettings, TuiMode, build_agent_config, select_model,
 };
+use pi_agent_core::api::resources::AgentResources;
 
 fn runtime_settings() -> Settings {
     Settings {

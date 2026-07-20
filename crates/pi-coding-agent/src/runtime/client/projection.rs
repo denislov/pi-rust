@@ -884,6 +884,10 @@ pub struct CodingAgentReconnectReceiver {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "public reconnect delivery retains the exact ProductEvent payload contract"
+)]
 pub enum CodingAgentReconnectDelivery {
     Event(CodingAgentProductEvent),
     FreshSnapshotRequired(CodingAgentFreshSnapshotRecovery),

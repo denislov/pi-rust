@@ -1,6 +1,6 @@
 use crate::runtime::facade::FilesystemCapability;
 use crate::tools::filesystem::path::resolve_to_cwd;
-use crate::tools::output::{DEFAULT_MAX_BYTES, TruncationOptions, format_size, truncate_head};
+use crate::tools::output::{DEFAULT_MAX_BYTES, TruncationLimit, format_size, truncate_head};
 use pi_agent_core::api::tool::{AgentTool, AgentToolOutput, ToolFn};
 use pi_ai::api::conversation::ContentBlock;
 use std::path::Path;
@@ -89,9 +89,9 @@ pub async fn ls_execute(cwd: &Path, args: serde_json::Value) -> Result<Vec<Conte
         .join("\n");
     let truncation = truncate_head(
         &output,
-        &TruncationOptions {
-            max_lines: Some(usize::MAX),
-            max_bytes: Some(DEFAULT_MAX_BYTES),
+        TruncationLimit {
+            max_lines: usize::MAX,
+            max_bytes: DEFAULT_MAX_BYTES,
         },
     );
     let mut output = truncation.content;

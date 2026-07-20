@@ -359,7 +359,6 @@ pub(crate) struct SelfHealingEditContext {
     repair_attempt_records: Vec<SelfHealingEditRepairAttempt>,
     check_output: Option<SelfHealingEditCheckOutput>,
     check_failed: bool,
-    failure_error: Option<CodingSessionError>,
     cancellation_handle: Option<OperationCancellationHandle>,
 }
 
@@ -377,17 +376,12 @@ impl SelfHealingEditContext {
             repair_attempt_records: Vec::new(),
             check_output: None,
             check_failed: false,
-            failure_error: None,
             cancellation_handle: None,
         }
     }
 
     pub(crate) fn repair_attempts(&self) -> &[SelfHealingEditRepairAttempt] {
         &self.repair_attempt_records
-    }
-
-    pub(crate) fn take_failure_error(&mut self) -> Option<CodingSessionError> {
-        self.failure_error.take()
     }
 
     pub(crate) fn set_cancellation_handle(
@@ -403,15 +397,6 @@ impl SelfHealingEditContext {
             .ok_or_else(|| CodingSessionError::Session {
                 message: "self-healing edit cannot finish without a recorded result".into(),
             })
-    }
-
-    fn fail(&mut self, error: CodingSessionError) -> String {
-        let message = error.to_string();
-        self.diagnostics.push(SelfHealingEditDiagnostic {
-            message: message.clone(),
-        });
-        self.failure_error = Some(error);
-        message
     }
 
     fn start_edit_workflow(&mut self) -> Result<(), CodingSessionError> {
@@ -589,7 +574,7 @@ impl SelfHealingEditContext {
         CodingSessionError::SelfHealingEditFailed {
             message: self.latest_check_failure_message(),
             diagnostics: self.diagnostics.clone(),
-            check_output: self.check_output.clone(),
+            check_output: self.check_output.clone().map(Box::new),
             repair_attempts: self.repair_attempt_records.clone(),
         }
     }
@@ -603,7 +588,7 @@ impl SelfHealingEditContext {
         CodingSessionError::SelfHealingEditFailed {
             message,
             diagnostics,
-            check_output: self.check_output.clone(),
+            check_output: self.check_output.clone().map(Box::new),
             repair_attempts: self.repair_attempt_records.clone(),
         }
     }
@@ -660,18 +645,6 @@ impl SelfHealingEditContext {
 
 pub(crate) struct SelfHealingEditRunner;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SelfHealingEditStep {
-    Start,
-    ReadTarget,
-    ProposePatch,
-    ValidatePatch,
-    ApplyPatch,
-    RunCheck,
-    RepairPatch,
-    RecordResult,
-}
-
 impl SelfHealingEditRunner {
     pub(crate) fn new() -> Result<Self, CodingSessionError> {
         Ok(Self)
@@ -682,42 +655,35 @@ impl SelfHealingEditRunner {
         ctx: &mut SelfHealingEditContext,
         cancellation: Option<CancellationToken>,
     ) -> Result<(), CodingSessionError> {
-        let mut step = SelfHealingEditStep::Start;
-        loop {
-            if cancellation
-                .as_ref()
-                .is_some_and(|token| token.is_cancelled())
-            {
-                let error = CodingSessionError::Cancelled;
-                ctx.fail(error.clone());
-                return Err(error);
-            }
-            let result = match step {
-                SelfHealingEditStep::Start => ctx.start_edit_workflow(),
-                SelfHealingEditStep::ReadTarget => ctx.read_target().await,
-                SelfHealingEditStep::ProposePatch => ctx.propose_patch(),
-                SelfHealingEditStep::ValidatePatch => ctx.validate_patch(),
-                SelfHealingEditStep::ApplyPatch => ctx.apply_patch().await,
-                SelfHealingEditStep::RunCheck => ctx.run_check().await,
-                SelfHealingEditStep::RepairPatch => ctx.repair_patch().await,
-                SelfHealingEditStep::RecordResult => ctx.record_result(),
-            };
-            if let Err(error) = result {
-                return Err(CodingSessionError::Workflow {
-                    message: ctx.fail(error),
-                });
-            }
-            step = match step {
-                SelfHealingEditStep::Start => SelfHealingEditStep::ReadTarget,
-                SelfHealingEditStep::ReadTarget => SelfHealingEditStep::ProposePatch,
-                SelfHealingEditStep::ProposePatch => SelfHealingEditStep::ValidatePatch,
-                SelfHealingEditStep::ValidatePatch => SelfHealingEditStep::ApplyPatch,
-                SelfHealingEditStep::ApplyPatch => SelfHealingEditStep::RunCheck,
-                SelfHealingEditStep::RunCheck => SelfHealingEditStep::RepairPatch,
-                SelfHealingEditStep::RepairPatch => SelfHealingEditStep::RecordResult,
-                SelfHealingEditStep::RecordResult => return Ok(()),
-            };
+        Self::check_cancellation(&cancellation)?;
+        ctx.start_edit_workflow()?;
+        Self::check_cancellation(&cancellation)?;
+        ctx.read_target().await?;
+        Self::check_cancellation(&cancellation)?;
+        ctx.propose_patch()?;
+        Self::check_cancellation(&cancellation)?;
+        ctx.validate_patch()?;
+        Self::check_cancellation(&cancellation)?;
+        ctx.apply_patch().await?;
+        Self::check_cancellation(&cancellation)?;
+        ctx.run_check().await?;
+        Self::check_cancellation(&cancellation)?;
+        ctx.repair_patch().await?;
+        Self::check_cancellation(&cancellation)?;
+        ctx.record_result()?;
+        Ok(())
+    }
+
+    fn check_cancellation(
+        cancellation: &Option<CancellationToken>,
+    ) -> Result<(), CodingSessionError> {
+        if cancellation
+            .as_ref()
+            .is_some_and(|token| token.is_cancelled())
+        {
+            return Err(CodingSessionError::Cancelled);
         }
+        Ok(())
     }
 }
 

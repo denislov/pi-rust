@@ -50,10 +50,7 @@ impl CodingAgentSession {
             &self.runtime_host.operation_supervisor.control,
             QueryIntent::SessionView,
         );
-        let _ = (
-            &self.runtime_host.runtime_service,
-            &self.runtime_host.workflow_service,
-        );
+        let _ = &self.runtime_host.runtime_service;
         match &self.runtime_host.session_coordinator.persistence {
             SessionPersistence::Persistent(session_service) => session_service.view(),
             SessionPersistence::NonPersistent(state) => CodingAgentSessionView {

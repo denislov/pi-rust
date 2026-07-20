@@ -134,31 +134,13 @@ pub fn discover_context_files(cwd: &Path, agent_dir: &Path, disabled: bool) -> V
 fn load_context_file_from_dir(dir: &Path) -> Option<ContextFile> {
     for name in ["AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"] {
         let path = dir.join(name);
-        if path.exists() {
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                return Some(ContextFile { path, content });
-            }
+        if path.exists()
+            && let Ok(content) = std::fs::read_to_string(&path)
+        {
+            return Some(ContextFile { path, content });
         }
     }
     None
-}
-
-#[allow(clippy::type_complexity)]
-pub fn load_cli_resources(
-    skills_dirs: &[String],
-    template_paths: &[String],
-    cwd: &Path,
-) -> Result<(Vec<Skill>, Vec<PromptTemplate>, Vec<ResourceDiagnostic>), CliError> {
-    let resolved_skills = resolve_resource_paths(skills_dirs, cwd);
-    let resolved_templates = resolve_resource_paths(template_paths, cwd);
-
-    let (skills, skill_diags) = core_load_skills(&resolved_skills);
-    let (templates, template_diags) = core_load_templates(&resolved_templates);
-
-    let mut all_diags = skill_diags;
-    all_diags.extend(template_diags);
-
-    Ok((skills, templates, all_diags))
 }
 
 pub fn load_cli_resources_with_options(

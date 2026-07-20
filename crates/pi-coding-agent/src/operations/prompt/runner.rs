@@ -276,6 +276,10 @@ async fn run_agent_turn(ctx: &mut PromptTurnContext) -> Result<(), String> {
     step_complete()
 }
 
+#[allow(
+    clippy::large_enum_variant,
+    reason = "select-loop input owns one event at a time and avoids per-delta boxing"
+)]
 enum AgentTurnInput {
     Cancellation,
     Control(Option<PromptControlCommand>),

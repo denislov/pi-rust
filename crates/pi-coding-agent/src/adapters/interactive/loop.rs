@@ -11,7 +11,6 @@ use pi_tui::api::terminal::{
 };
 
 use crate::adapters::interactive::app::{PromptContext, build_prompt_context, session_label};
-use crate::adapters::interactive::event_bridge::UiProjection;
 use crate::adapters::interactive::input::InputPump;
 use crate::adapters::interactive::prompt_task::{
     PromptTask, PromptTaskCompletion, PromptTaskEvent, PromptTaskFailure, PromptTaskResult,
@@ -19,7 +18,8 @@ use crate::adapters::interactive::prompt_task::{
 use crate::adapters::interactive::root::{
     InteractiveAction, InteractiveRoot, InteractiveStatus, PendingAgentInvocationRequest,
     PendingAgentTeamRequest, PendingBranchSummaryRequest, PendingDelegationConfirmationCommand,
-    PendingDelegationConfirmationSelection, PendingForkRequest, PendingSelfHealingEditRequest,
+    PendingDelegationConfirmationSelection, PendingForkRequest, PendingInteractiveCommand,
+    PendingSelfHealingEditRequest,
 };
 use crate::adapters::interactive::session_actions::{
     SessionChoiceKind, hydrate_existing_session_target, hydrated_session_from_rust_native,
@@ -468,7 +468,6 @@ where
     let mut running: Option<PromptTask> = None;
     let mut coding_session: Option<CodingAgentSession> = None;
     let mut client_connection = None;
-    let mut ui_projection = UiProjection::new();
     let mut input_open = true;
     let mut terminal_size = tui.terminal().size();
     let mut render_scheduler = RenderScheduler::new(NORMAL_RENDER_INTERVAL);
@@ -567,7 +566,6 @@ where
                                 apply_prompt_task_event(
                                     tui,
                                     root_id,
-                                    &mut ui_projection,
                                     event,
                                 )?,
                             );
@@ -597,7 +595,6 @@ where
                             apply_prompt_task_event(
                                 tui,
                                 root_id,
-                                &mut ui_projection,
                                 event,
                             )?,
                         );
@@ -742,6 +739,10 @@ where
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "interactive loop dependencies remain explicit and borrow-scoped"
+)]
 fn process_input_events<T: Terminal>(
     tui: &mut Tui<T>,
     root_id: usize,
@@ -846,6 +847,10 @@ fn flush_pending_render<T: Terminal>(
     Ok(())
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "interactive input dispatch keeps mutable owners explicit and borrow-scoped"
+)]
 fn handle_input_event<T: Terminal>(
     tui: &mut Tui<T>,
     root_id: usize,
@@ -886,41 +891,46 @@ fn handle_input_event<T: Terminal>(
     ) = {
         let root = root_mut(tui, root_id)?;
         let action = root.take_action();
-        let prompt = if matches!(
-            action,
-            InteractiveAction::Submit | InteractiveAction::FollowUp
-        ) {
-            root.take_pending_submit()
-        } else {
-            None
-        };
+        let mut prompt = None;
+        let mut selected_agent_profile_id = None;
+        let mut compact_instructions = None;
+        let mut branch_summary_request = None;
+        let mut agent_invocation_request = None;
+        let mut agent_team_request = None;
+        let mut self_healing_edit_request = None;
+        let mut fork_request = None;
+        if let Some(command) = root.take_pending_command() {
+            debug_assert_eq!(action, command.action());
+            match command {
+                PendingInteractiveCommand::Submit(text)
+                | PendingInteractiveCommand::FollowUp(text) => prompt = Some(text),
+                PendingInteractiveCommand::Compact { instructions } => {
+                    compact_instructions = instructions;
+                }
+                PendingInteractiveCommand::BranchSummary(request) => {
+                    branch_summary_request = Some(request);
+                }
+                PendingInteractiveCommand::Fork(request) => fork_request = Some(request),
+                PendingInteractiveCommand::AgentInvocation(request) => {
+                    agent_invocation_request = Some(request);
+                }
+                PendingInteractiveCommand::AgentTeam(request) => {
+                    agent_team_request = Some(request);
+                }
+                PendingInteractiveCommand::SelfHealingEdit(request) => {
+                    self_healing_edit_request = Some(request);
+                }
+                PendingInteractiveCommand::UseAgentProfile(profile_id) => {
+                    selected_agent_profile_id = Some(profile_id);
+                }
+            }
+        }
         let selected_model = root.take_selected_model();
         let selected_thinking_level = root.take_selected_thinking_level();
-        let selected_agent_profile_id = root.take_selected_agent_profile_id();
         let selected_session = root.take_selected_session();
         let selected_session_hydrate = root.take_selected_session_hydrate();
         let settings_update = root.take_settings_update();
         let auth_update = root.take_auth_update();
-        let compact_instructions = if action == InteractiveAction::CompactSession {
-            root.take_pending_compact_instructions()
-        } else {
-            None
-        };
-        let branch_summary_request = if action == InteractiveAction::BranchSummary {
-            root.take_pending_branch_summary_request()
-        } else {
-            None
-        };
-        let agent_invocation_request = if action == InteractiveAction::AgentInvocation {
-            root.take_pending_agent_invocation_request()
-        } else {
-            None
-        };
-        let agent_team_request = if action == InteractiveAction::AgentTeam {
-            root.take_pending_agent_team_request()
-        } else {
-            None
-        };
         let delegation_confirmation_command = if action == InteractiveAction::DelegationConfirmation
         {
             root.take_pending_delegation_confirmation_command()
@@ -929,16 +939,6 @@ fn handle_input_event<T: Terminal>(
         };
         let tool_authorization_decision = if action == InteractiveAction::ToolAuthorization {
             root.take_pending_tool_authorization_decision()
-        } else {
-            None
-        };
-        let self_healing_edit_request = if action == InteractiveAction::SelfHealingEdit {
-            root.take_pending_self_healing_edit_request()
-        } else {
-            None
-        };
-        let fork_request = if action == InteractiveAction::Fork {
-            root.take_pending_fork_request()
         } else {
             None
         };
@@ -1294,10 +1294,10 @@ fn handle_input_event<T: Terminal>(
             if prompt.trim().is_empty() {
                 return Ok(LoopControl::Continue(render_request));
             }
-            if let Some(task) = running.as_ref() {
-                if task.follow_up(prompt) {
-                    return Ok(LoopControl::Continue(RenderRequest::FORCE));
-                }
+            if let Some(task) = running.as_ref()
+                && task.follow_up(prompt)
+            {
+                return Ok(LoopControl::Continue(RenderRequest::FORCE));
             }
             Ok(LoopControl::Continue(render_request))
         }
@@ -2186,23 +2186,20 @@ fn start_branch_summary_task<T: Terminal>(
 fn apply_prompt_task_event<T: Terminal>(
     tui: &mut Tui<T>,
     root_id: usize,
-    ui_projection: &mut UiProjection,
     event: PromptTaskEvent,
 ) -> Result<RenderRequest, CliError> {
-    match event {
-        PromptTaskEvent::Snapshot(snapshot) => {
-            *ui_projection = UiProjection::from_snapshot(snapshot);
-        }
-        PromptTaskEvent::Coding(event) => {
-            ui_projection.apply_product_event(&event);
-        }
-    }
-    let ui_events = ui_projection.drain();
-    let force_render = ui_events.iter().any(ui_event_updates_visible_block);
     let root = root_mut(tui, root_id)?;
     let before = root.render_state();
-    root.set_context_projection(ui_projection.context().clone());
-    root.set_capabilities(ui_projection.capabilities().cloned());
+    match event {
+        PromptTaskEvent::Snapshot(snapshot) => {
+            root.install_shared_snapshot(snapshot);
+        }
+        PromptTaskEvent::Coding(event) => {
+            root.apply_shared_product_event(&event);
+        }
+    }
+    let ui_events = root.drain_shared_ui_events();
+    let force_render = ui_events.iter().any(ui_event_updates_visible_block);
     root.apply_events(ui_events);
     let after = root.render_state();
     let changed = before != after;
@@ -2513,7 +2510,10 @@ mod tests {
     #[test]
     fn fullscreen_settings_overlay_traps_input_and_restores_root_focus() {
         let (mut tui, root_id) = fullscreen_test_tui();
-        root_mut(&mut tui, root_id).unwrap().selecting_settings = true;
+        root_mut(&mut tui, root_id)
+            .unwrap()
+            .local
+            .selecting_settings = true;
         sync_transient_overlays(&mut tui, root_id).unwrap();
 
         let (_, modal) = root_ref(&tui, root_id)
@@ -2534,7 +2534,7 @@ mod tests {
             .drain_modal_overlay_input();
         sync_transient_overlays(&mut tui, root_id).unwrap();
 
-        assert!(!root_ref(&tui, root_id).unwrap().selecting_settings);
+        assert!(!root_ref(&tui, root_id).unwrap().local.selecting_settings);
         assert!(!tui.has_overlay(modal));
         assert!(root_ref(&tui, root_id).unwrap().focused());
     }
@@ -2905,14 +2905,12 @@ mod tests {
     }
 
     fn assert_event_forces_render(setup: Vec<PromptStreamEvent>, event: PromptStreamEvent) {
-        let mut projection = UiProjection::new();
         let (mut tui, root_id) = test_tui();
         let mut sequence = ProductEventSequence::new(1);
         for setup_event in setup {
             apply_prompt_task_event(
                 &mut tui,
                 root_id,
-                &mut projection,
                 prompt_event_with_sequence(sequence, setup_event),
             )
             .unwrap();
@@ -2922,7 +2920,6 @@ mod tests {
         let request = apply_prompt_task_event(
             &mut tui,
             root_id,
-            &mut projection,
             prompt_event_with_sequence(sequence, event),
         )
         .unwrap();
@@ -3012,13 +3009,11 @@ mod tests {
 
     #[test]
     fn prompt_events_without_visible_ui_do_not_request_render() {
-        let mut projection = UiProjection::new();
         let (mut tui, root_id) = test_tui();
 
         let request = apply_prompt_task_event(
             &mut tui,
             root_id,
-            &mut projection,
             prompt_event(PromptStreamEvent::Message(MessageEvent::Started {
                 operation_id: "op_1".to_string(),
                 turn_id: "turn_1".to_string(),
@@ -3032,21 +3027,18 @@ mod tests {
 
     #[tokio::test]
     async fn prompt_task_snapshots_do_not_append_visible_restore_notices() {
-        let mut projection = UiProjection::new();
         let (mut tui, root_id) = test_tui();
         let before_items = root_ref(&tui, root_id).unwrap().transcript.items().len();
 
         let first = apply_prompt_task_event(
             &mut tui,
             root_id,
-            &mut projection,
             PromptTaskEvent::Snapshot(snapshot(ProductEventSequence::new(7), "sess_loop").await),
         )
         .unwrap();
         let second = apply_prompt_task_event(
             &mut tui,
             root_id,
-            &mut projection,
             PromptTaskEvent::Snapshot(snapshot(ProductEventSequence::new(7), "sess_loop").await),
         )
         .unwrap();
@@ -3248,9 +3240,8 @@ mod tests {
         );
 
         let (mut tui, root_id) = test_tui();
-        let mut projection = UiProjection::new();
         for event in events {
-            apply_prompt_task_event(&mut tui, root_id, &mut projection, event).unwrap();
+            apply_prompt_task_event(&mut tui, root_id, event).unwrap();
         }
         let expected_error_text = expected_error.to_string();
         let projected_before_finish = transcript_error_count(&tui, root_id, &expected_error_text);
@@ -3491,12 +3482,14 @@ mod tests {
     fn interactive_loop_restores_owner_and_projects_completion_without_compat_subscription() {
         let source = include_str!("loop.rs");
         let compatibility_subscription = [".", "subscribe()"].concat();
+        let loop_owned_projection = ["let mut ui_", "projection"].concat();
         let discarded_tree_label_intent =
             ["let _ = root.take_pending_tree_label_change", "()"].concat();
 
         assert!(!source.contains(&compatibility_subscription));
         assert!(!source.contains(&discarded_tree_label_intent));
-        assert!(source.contains("UiProjection::new()"));
+        assert!(!source.contains(&loop_owned_projection));
+        assert!(source.contains("root.install_shared_snapshot(snapshot)"));
         assert!(source.contains("let tree_label_change = if running.is_none()"));
         assert!(source.contains("take_pending_tree_label_change()"));
         assert!(source.contains("start_tree_label_task("));

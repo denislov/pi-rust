@@ -1,5 +1,5 @@
 use self::runner::{
-    BranchSummaryContext, BranchSummaryOptions, branch_summary_failed_outcome,
+    BranchSummaryContext, BranchSummaryOptions, BranchSummaryRunner, branch_summary_failed_outcome,
     branch_summary_outcome_text, branch_summary_success_outcome,
 };
 use crate::operations::prompt::context::{PromptTurnOptions, PromptTurnOutcome, RuntimeSnapshot};
@@ -10,7 +10,6 @@ use crate::runtime::control::OperationCancellationHandle;
 use crate::runtime::facade::CodingSessionError;
 use crate::services::event::EventService;
 use crate::services::session::apply_finalized_session_write;
-use crate::services::workflow::WorkflowService;
 use crate::session::id::{IdGenerator, SystemIdGenerator};
 use crate::session::service::{SessionPersistence, SessionService};
 use tokio_util::sync::CancellationToken;
@@ -46,9 +45,12 @@ pub(crate) fn reused_outcome(
     )))
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "typed runner entry keeps source, target, runtime, and cancellation facts explicit"
+)]
 pub(crate) async fn run(
     session_service: &mut SessionService,
-    workflow_service: &WorkflowService,
     event_service: &EventService,
     options: PromptTurnOptions,
     source_leaf_id: String,
@@ -75,13 +77,12 @@ pub(crate) async fn run(
     let operation_id = context.operation_id().to_owned();
     let turn_id = context.turn_id().to_owned();
 
-    let result = match cancellation.as_ref() {
-        Some(cancellation) => {
-            workflow_service
-                .run_branch_summary_with_cancellation(&mut context, cancellation.clone())
-                .await
-        }
-        None => workflow_service.run_branch_summary(&mut context).await,
+    let result = match BranchSummaryRunner::new()?
+        .run_typed(&mut context, cancellation.clone())
+        .await
+    {
+        Ok(_) => context.finish_success(),
+        Err(error) => Err(error),
     };
     match result {
         Ok(branch_summary) => {

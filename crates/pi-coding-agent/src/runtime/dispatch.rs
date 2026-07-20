@@ -33,7 +33,6 @@ impl CodingAgentSession {
                 options,
                 operation_permit.capability_snapshot(),
                 &self.runtime_host.session_coordinator.persistence,
-                &self.runtime_host.workflow_service,
             )
             .map(OperationOutcome::Export),
             Operation::RejectDelegationConfirmation { .. } => {
@@ -390,7 +389,6 @@ impl CodingAgentSession {
                             &mut self.runtime_host.operation_supervisor.control,
                             &self.runtime_host.profile_registry,
                             &self.runtime_host.event_hub.service,
-                            &self.runtime_host.workflow_service,
                             &mut self
                                 .runtime_host
                                 .session_coordinator
@@ -421,7 +419,6 @@ impl CodingAgentSession {
                         };
                         crate::operations::compaction::run(
                             session_service,
-                            &self.runtime_host.workflow_service,
                             &self.runtime_host.event_hub.service,
                             options,
                             &snapshot,
@@ -433,7 +430,6 @@ impl CodingAgentSession {
                     Operation::PluginLoad(options) => {
                         let execution = crate::operations::plugin_load::run(
                             &mut self.runtime_host.session_coordinator.persistence,
-                            &self.runtime_host.workflow_service,
                             &self.runtime_host.event_hub.service,
                             options,
                             &snapshot,
@@ -488,7 +484,6 @@ impl CodingAgentSession {
                         };
                         crate::operations::branch_summary::run(
                             session_service,
-                            &self.runtime_host.workflow_service,
                             &self.runtime_host.event_hub.service,
                             options,
                             source_leaf_id,
@@ -533,7 +528,6 @@ impl CodingAgentSession {
                         };
                         let outcome = crate::operations::self_healing_edit::run(
                             session_service,
-                            &self.runtime_host.workflow_service,
                             self.runtime_host.event_hub.service.clone(),
                             path,
                             replacements,
@@ -567,7 +561,6 @@ impl CodingAgentSession {
                             prompt_control_receiver,
                             &self.runtime_host.profile_registry,
                             &self.runtime_host.event_hub.service,
-                            &self.runtime_host.workflow_service,
                             &self.runtime_host.operation_supervisor.control,
                             snapshot.clone(),
                             operation_cancellation.clone(),
@@ -580,7 +573,6 @@ impl CodingAgentSession {
                         snapshot.operation_id.clone(),
                         &self.runtime_host.profile_registry,
                         &self.runtime_host.event_hub.service,
-                        &self.runtime_host.workflow_service,
                         &self.runtime_host.operation_supervisor.control,
                         snapshot.clone(),
                         operation_cancellation.clone(),
@@ -601,7 +593,6 @@ impl CodingAgentSession {
                     } => crate::operations::delegation::execution::approve(
                         &mut self.runtime_host.session_coordinator,
                         &self.runtime_host.runtime_service,
-                        &self.runtime_host.workflow_service,
                         &self.runtime_host.profile_registry,
                         &self.runtime_host.event_hub.service,
                         &self.runtime_host.operation_supervisor.control,

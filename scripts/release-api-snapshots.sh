@@ -65,9 +65,7 @@ cargo metadata --format-version 1 --no-deps > "$OUT_DIR/workspace-metadata.json"
   cd "$OUT_DIR"
   sha256sum \
     ./*.public-api.json \
-    ./*.rustdoc.json \
     ./toolchain.txt \
-    ./workspace-metadata.json \
     | sort > SHA256SUMS
 )
 

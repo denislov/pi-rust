@@ -6,7 +6,6 @@ use super::facade::{CodingAgentSession, CodingSessionError};
 use super::operation::{Operation, OperationClass, OperationDispatchMode, OperationOutcome};
 use super::outcome::{CodingAgentOperation, CodingAgentOperationOutcome};
 use super::scheduler::OperationScheduler;
-use crate::services::workflow::WorkflowService;
 
 #[derive(Debug)]
 #[must_use = "dropping the handle detaches the runtime-owned operation task"]
@@ -132,7 +131,6 @@ impl CodingAgentSession {
                         prompt_control_receiver,
                         &profile_registry,
                         &event_service,
-                        &WorkflowService::new(),
                         &operation_control,
                         snapshot.clone(),
                         operation_cancellation.clone(),
@@ -145,7 +143,6 @@ impl CodingAgentSession {
                     snapshot.operation_id.clone(),
                     &profile_registry,
                     &event_service,
-                    &WorkflowService::new(),
                     &operation_control,
                     snapshot.clone(),
                     operation_cancellation.clone(),

@@ -4,6 +4,10 @@ use tokio::sync::mpsc;
 pub(super) const RPC_PRODUCT_EVENT_QUEUE_CAPACITY: usize = 128;
 
 #[derive(Debug, Clone, PartialEq)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "bounded queue entries preserve ProductEvent ownership without another allocation"
+)]
 pub(super) enum RpcQueuedProductEvent {
     Event(ProductEvent),
     Overflow { skipped: u64 },
@@ -63,11 +67,8 @@ impl RpcProductEventQueue {
     }
 
     #[cfg(test)]
-    pub(super) fn try_send_event(
-        &self,
-        event: ProductEvent,
-    ) -> Result<(), mpsc::error::TrySendError<ProductEvent>> {
-        self.event_sender.try_send(event)
+    pub(super) fn try_send_event(&self, event: ProductEvent) -> bool {
+        self.event_sender.try_send(event).is_ok()
     }
 }
 
@@ -148,7 +149,7 @@ mod tests {
     #[tokio::test]
     async fn rpc_product_event_queue_prioritizes_overflow_over_full_data_lane() {
         let (sender, mut receiver) = RpcProductEventQueue::for_tests(1);
-        sender.try_send_event(event(1)).unwrap();
+        assert!(sender.try_send_event(event(1)));
         sender.send_overflow(2).await.unwrap();
 
         assert_eq!(

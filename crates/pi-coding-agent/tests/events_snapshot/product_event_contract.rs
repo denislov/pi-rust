@@ -5,13 +5,14 @@ use std::sync::Arc;
 use pi_agent_core::api::resources::AgentResources;
 use pi_ai::api::model::{Model, ModelCost, ModelInput};
 use pi_ai::api::testing::FauxProvider;
-use pi_coding_agent::api::cli::runtime::{PromptInvocation, PromptRunOptions, SessionRunOptions};
 use pi_coding_agent::api::event::{
     CodingAgentProductEvent, CodingAgentProductEventDurability, CodingAgentProductEventKind,
     CodingAgentProductEventTerminalOperationKind, CodingAgentProductEventTerminalStatus,
     CodingAgentSessionProductEvent, CodingAgentWorkflowProductEvent,
 };
 use pi_coding_agent::api::operation::{CodingAgentOperation, PromptTurnOptions};
+use pi_coding_agent::api::operation::{PromptInvocation, PromptRunOptions};
+use pi_coding_agent::api::runtime::SessionRunOptions;
 use pi_coding_agent::api::runtime::{CodingAgentSession, CodingAgentSessionOptions};
 use support::ProviderGuard;
 

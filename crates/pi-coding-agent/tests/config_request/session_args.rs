@@ -1,6 +1,6 @@
 //! Session-specific CLI argument behavior.
 
-use pi_coding_agent::api::cli::command::{CliArgs, CliError, help_text, parse_args};
+use crate::internal_tests::cli_fixture::command::{CliArgs, CliError, help_text, parse_args};
 
 fn parse(values: &[&str]) -> Result<CliArgs, CliError> {
     parse_args(values.iter().map(|value| value.to_string()))

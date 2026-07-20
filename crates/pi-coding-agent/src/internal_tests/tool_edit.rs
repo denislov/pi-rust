@@ -1,8 +1,8 @@
 //! Internal owner tests for the edit tool.
 
+use crate::internal_tests::cli_fixture::resources::builtin_tools;
 use pi_agent_core::api::tool::AgentToolOutput;
 use pi_ai::api::conversation::ContentBlock;
-use pi_coding_agent::api::cli::resources::builtin_tools;
 use pi_coding_agent::tools::filesystem::edit::edit_execute;
 use tempfile::tempdir;
 

@@ -1,5 +1,5 @@
 use crate::runtime::facade::ShellCapability;
-use crate::tools::output::{DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES};
+use crate::tools::output::{DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, TruncationLimit, truncate_tail};
 use futures::future::{BoxFuture, FutureExt};
 use pi_agent_core::api::tool::{AgentTool, AgentToolOutput, ToolFn, ToolUpdateCallback};
 use pi_ai::api::conversation::ContentBlock;
@@ -187,8 +187,9 @@ fn drain_byte(buf: &mut Vec<u8>, keep: usize) {
 
 struct OutputTail {
     buf: Vec<u8>,
-    total_lines: usize,
+    newline_count: usize,
     total_bytes: usize,
+    ends_with_newline: bool,
     overflowed: bool,
 }
 
@@ -196,8 +197,9 @@ impl OutputTail {
     fn new() -> Self {
         Self {
             buf: Vec::new(),
-            total_lines: 0,
+            newline_count: 0,
             total_bytes: 0,
+            ends_with_newline: false,
             overflowed: false,
         }
     }
@@ -206,8 +208,11 @@ impl OutputTail {
         self.total_bytes += data.len();
         for &b in data {
             if b == b'\n' {
-                self.total_lines += 1;
+                self.newline_count += 1;
             }
+        }
+        if let Some(last) = data.last() {
+            self.ends_with_newline = *last == b'\n';
         }
         self.buf.extend_from_slice(data);
         if self.buf.len() > BUFFER_KEEP * 2 {
@@ -219,59 +224,28 @@ impl OutputTail {
     fn buf_to_string(&self) -> String {
         String::from_utf8_lossy(&self.buf).into_owned()
     }
+
+    fn total_lines(&self) -> usize {
+        self.newline_count + usize::from(self.total_bytes > 0 && !self.ends_with_newline)
+    }
 }
 
 fn apply_truncation(text: &str, known_lines: usize, overflowed: bool) -> String {
-    let lines: Vec<&str> = if text.is_empty() {
-        Vec::new()
-    } else {
-        let mut ls: Vec<&str> = text.split('\n').collect();
-        if text.ends_with('\n') {
-            ls.pop();
-        }
-        ls
-    };
-    let buf_len = lines.len();
-    let buf_bytes = text.len();
-
-    if buf_len <= DEFAULT_MAX_LINES && buf_bytes <= DEFAULT_MAX_BYTES && !overflowed {
+    let truncation = truncate_tail(
+        text,
+        TruncationLimit {
+            max_lines: DEFAULT_MAX_LINES,
+            max_bytes: DEFAULT_MAX_BYTES,
+        },
+    );
+    if !truncation.truncated && !overflowed {
         return text.to_string();
     }
 
-    let mut out: Vec<String> = Vec::new();
-    let mut bytes = 0usize;
-    let mut byte_hit = false;
-    for line in lines.iter().rev() {
-        if out.len() >= DEFAULT_MAX_LINES {
-            break;
-        }
-        let lb = line.len() + if !out.is_empty() { 1 } else { 0 };
-        if bytes + lb > DEFAULT_MAX_BYTES {
-            byte_hit = true;
-            if out.is_empty() {
-                let b = line.as_bytes();
-                let keep = DEFAULT_MAX_BYTES.min(b.len());
-                let mut start = b.len() - keep;
-                while start < b.len() && (b[start] & 0xC0) == 0x80 {
-                    start += 1;
-                }
-                out.insert(0, String::from_utf8_lossy(&b[start..]).into_owned());
-            }
-            break;
-        }
-        out.insert(0, (*line).to_string());
-        bytes += lb;
-    }
-    let output = out.join("\n");
-    let output_lines = out.len();
-    let end = if overflowed || byte_hit || output_lines < buf_len {
-        format!(
-            "\n\n[Output truncated: showing last {output_lines} of {known_lines} lines (50KB/2000-line limit).]"
-        )
-    } else {
-        String::new()
-    };
-    format!("{output}{end}")
+    format!(
+        "{}\n\n[Output truncated: showing last {} of {known_lines} lines (50KB/2000-line limit).]",
+        truncation.content, truncation.output_lines
+    )
 }
 
 async fn drain_pipes(
@@ -317,7 +291,7 @@ async fn drain_with_grace(
 fn push_output(tail: &mut OutputTail, data: &[u8], on_update: Option<&ToolUpdateCallback>) {
     tail.push(data);
     if let Some(on_update) = on_update {
-        let text = apply_truncation(&tail.buf_to_string(), tail.total_lines, tail.overflowed);
+        let text = apply_truncation(&tail.buf_to_string(), tail.total_lines(), tail.overflowed);
         on_update(AgentToolOutput::new(vec![ContentBlock::Text {
             text,
             text_signature: None,
@@ -472,7 +446,7 @@ async fn bash_execute_real(
     }
 
     drain_with_grace(stdout, stderr, &mut tail, on_update.as_ref()).await;
-    let text = apply_truncation(&tail.buf_to_string(), tail.total_lines, tail.overflowed);
+    let text = apply_truncation(&tail.buf_to_string(), tail.total_lines(), tail.overflowed);
 
     if timed_out {
         return Err(format!(
@@ -508,11 +482,11 @@ async fn bash_execute_real(
 
 async fn terminate_child_process_tree(child: &mut tokio::process::Child) {
     #[cfg(unix)]
-    if let Some(pid) = child.id() {
-        if kill_process_group(pid).await {
-            let _ = child.wait().await;
-            return;
-        }
+    if let Some(pid) = child.id()
+        && kill_process_group(pid).await
+    {
+        let _ = child.wait().await;
+        return;
     }
 
     let _ = child.kill().await;
@@ -634,6 +608,26 @@ mod tests {
         ) -> BoxFuture<'a, Result<Vec<ContentBlock>, String>> {
             futures::future::pending().boxed()
         }
+    }
+
+    #[test]
+    fn output_tail_counts_unterminated_line() {
+        let mut tail = OutputTail::new();
+        tail.push(&vec![b'x'; DEFAULT_MAX_BYTES + 1]);
+
+        let rendered = apply_truncation(&tail.buf_to_string(), tail.total_lines(), tail.overflowed);
+
+        assert_eq!(tail.total_lines(), 1);
+        assert!(rendered.contains("showing last 1 of 1 lines"));
+    }
+
+    #[test]
+    fn output_tail_counts_lines_across_chunks() {
+        let mut tail = OutputTail::new();
+        tail.push(b"one\ntwo");
+        tail.push(b"\nthree");
+
+        assert_eq!(tail.total_lines(), 3);
     }
 
     #[tokio::test]

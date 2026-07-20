@@ -1,5 +1,6 @@
 //! Internal owner tests for interactive session handling.
 
+use crate::internal_tests::cli_fixture::command::CliArgs;
 use pi_agent_core::api::transcript::{
     SessionEntry, SessionHeader, StoredAgentMessage, StoredUsage, create_timestamp,
 };
@@ -9,7 +10,6 @@ use pi_coding_agent::adapters::interactive::test_harness::{
     run_scripted_interactive_with_args_and_session_dir, run_scripted_interactive_with_session_dir,
     run_scripted_interactive_with_session_dir_and_waits,
 };
-use pi_coding_agent::api::cli::command::CliArgs;
 
 fn text_response(text: &str) -> FauxResponse {
     FauxResponse {

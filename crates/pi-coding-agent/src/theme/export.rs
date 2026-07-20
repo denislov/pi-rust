@@ -4,7 +4,7 @@
 //! These convert resolved theme colors into CSS-compatible hex strings for
 //! `/export` HTML output.
 
-use super::{ColorValue, ResolvedColor, ThemeColor, ThemeJson, resolve};
+use super::{ColorValue, ResolvedColor, ThemeJson, resolve};
 
 /// Whether a theme is a "light" theme. Mirrors TS `isLightTheme` (currently a
 /// name check).
@@ -44,28 +44,6 @@ fn resolve_export_field(value: Option<&ColorValue>, theme: &ThemeJson) -> Option
         Ok(ResolvedColor::Ansi256(n)) => Some(ansi256_to_hex(n)),
         Err(_) => None,
     }
-}
-
-/// Resolve all 51 `colors` tokens to hex strings for CSS, mirroring
-/// `getResolvedThemeColors`. Empty/default values use `default_text`; 256-color
-/// values convert to hex. Returns `(key, hex)` pairs in theme-JSON key order
-/// is not guaranteed (HashMap); callers that need stable order should sort.
-pub fn get_resolved_theme_colors(theme: &ThemeJson, default_text: &str) -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    for (key, value) in &theme.colors {
-        // Only include recognized tokens.
-        if ThemeColor::from_key(key).is_none() && super::ThemeBg::from_key(key).is_none() {
-            continue;
-        }
-        let hex = match resolve(value, &theme.vars) {
-            Ok(ResolvedColor::Default) => default_text.to_string(),
-            Ok(ResolvedColor::Hex(r, g, b)) => rgb_to_hex(r, g, b),
-            Ok(ResolvedColor::Ansi256(n)) => ansi256_to_hex(n),
-            Err(_) => default_text.to_string(),
-        };
-        out.push((key.clone(), hex));
-    }
-    out
 }
 
 fn rgb_to_hex(r: u8, g: u8, b: u8) -> String {

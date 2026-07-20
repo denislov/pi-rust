@@ -1,14 +1,15 @@
-use crate::support;
+use crate::internal_tests::support;
 
+use crate::internal_tests::cli_fixture::resources::builtin_tools;
 use futures::stream;
 use pi_ai::api::conversation::{AssistantMessage, ContentBlock, Context, Message, StopReason};
 use pi_ai::api::model::{Model, ModelCost, ModelInput};
 use pi_ai::api::provider::ApiProvider;
 use pi_ai::api::stream::{AssistantMessageEvent, EventStream, StreamOptions};
 use pi_ai::api::testing::{FauxCall, FauxResponse, FauxToolCall};
-use pi_coding_agent::api::cli::print::{PrintModeOptions, run_print_mode};
-use pi_coding_agent::api::cli::resources::builtin_tools;
-use pi_coding_agent::api::cli::runtime::{PromptInvocation, SessionRunOptions};
+use pi_coding_agent::api::operation::PromptInvocation;
+use pi_coding_agent::api::protocol::{PrintModeOptions, run_print_mode};
+use pi_coding_agent::api::runtime::SessionRunOptions;
 use std::sync::{Arc, Mutex};
 use support::ProviderGuard;
 use tempfile::tempdir;

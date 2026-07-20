@@ -10,7 +10,7 @@ use crate::runtime::facade::{
     CodingAgentProductEventProfileKind, CodingAgentProductEventReplacement,
     CodingAgentProfileProductEvent, CodingAgentRuntimeProductEvent, CodingAgentSessionProductEvent,
     CodingAgentSessionWriteFailureStatus, CodingAgentTeamProductEvent, CodingAgentToolProductEvent,
-    CodingAgentWorkflowProductEvent, ProductEvent,
+    CodingAgentWorkflowProductEvent,
 };
 use pi_agent_core::api::transcript::{StoredAgentMessage, StoredUsage, StoredUsageCost};
 use pi_ai::api::conversation::{AssistantMessage, ContentBlock, StopReason};
@@ -37,14 +37,6 @@ impl CodingProtocolEventAdapter {
             current_tool_results: Vec::new(),
             assistant_open: false,
         }
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn push_internal_product_event(
-        &mut self,
-        event: &ProductEvent,
-    ) -> Vec<ProtocolEvent> {
-        self.push_typed(event.event())
     }
 
     pub fn push_product_event(&mut self, event: &CodingAgentProductEvent) -> Vec<ProtocolEvent> {
@@ -985,6 +977,10 @@ fn protocol_self_healing_check_output(
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "protocol projection keeps the complete typed delegation record explicit"
+)]
 fn delegation_folded_block(
     tool_call_id: &str,
     target_kind: CodingAgentProductEventProfileKind,
@@ -1151,7 +1147,7 @@ mod tests {
             None,
         );
 
-        let events = adapter.push_internal_product_event(&product_event);
+        let events = adapter.push_product_event(&product_event);
 
         assert!(matches!(
             &events[0],
@@ -1190,7 +1186,7 @@ mod tests {
             None,
         );
 
-        let events = adapter.push_internal_product_event(&product_event);
+        let events = adapter.push_product_event(&product_event);
 
         assert!(matches!(
             &events[0],
@@ -1230,11 +1226,7 @@ mod tests {
             None,
         );
 
-        assert!(
-            adapter
-                .push_internal_product_event(&product_event)
-                .is_empty()
-        );
+        assert!(adapter.push_product_event(&product_event).is_empty());
     }
 
     #[test]
@@ -1261,7 +1253,7 @@ mod tests {
             None,
         );
 
-        adapter.push_internal_product_event(&product_event);
+        adapter.push_product_event(&product_event);
 
         assert!(adapter.current_assistant.as_ref().is_some_and(|message| {
             message.content.iter().any(|block| {

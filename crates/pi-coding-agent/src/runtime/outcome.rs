@@ -917,6 +917,10 @@ impl CodingAgentOperation {
     }
 }
 
+#[allow(
+    clippy::result_large_err,
+    reason = "typed extractors intentionally return the intact mismatched outcome for diagnostics"
+)]
 impl CodingAgentOperationOutcome {
     pub(crate) fn from_internal(outcome: OperationOutcome) -> Self {
         match outcome {
@@ -945,6 +949,112 @@ impl CodingAgentOperationOutcome {
                 Some(path) => Self::ExportHtml(path),
                 None => Self::Export(outcome.export),
             },
+        }
+    }
+
+    pub(crate) fn into_prompt(self) -> Result<PromptTurnOutcome, Self> {
+        match self {
+            Self::Prompt(outcome) => Ok(outcome),
+            other => Err(other),
+        }
+    }
+
+    pub(crate) fn into_compact(self) -> Result<PromptTurnOutcome, Self> {
+        match self {
+            Self::Compact(outcome) => Ok(outcome),
+            other => Err(other),
+        }
+    }
+
+    pub(crate) fn into_branch_summary(self) -> Result<PromptTurnOutcome, Self> {
+        match self {
+            Self::BranchSummary(outcome) => Ok(outcome),
+            other => Err(other),
+        }
+    }
+
+    pub(crate) fn into_self_healing_edit(self) -> Result<SelfHealingEditOutcome, Self> {
+        match self {
+            Self::SelfHealingEdit(outcome) => Ok(outcome),
+            other => Err(other),
+        }
+    }
+
+    pub(crate) fn into_agent_invocation(self) -> Result<AgentInvocationOutcome, Self> {
+        match self {
+            Self::AgentInvocation(outcome) => Ok(outcome),
+            other => Err(other),
+        }
+    }
+
+    pub(crate) fn into_agent_team(self) -> Result<AgentTeamOutcome, Self> {
+        match self {
+            Self::AgentTeam(outcome) => Ok(outcome),
+            other => Err(other),
+        }
+    }
+
+    pub(crate) fn into_plugin_load(self) -> Result<CodingAgentPluginLoadOutcome, Self> {
+        match self {
+            Self::PluginLoad(outcome) => Ok(outcome),
+            other => Err(other),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn into_export(self) -> Result<CodingAgentSessionExport, Self> {
+        match self {
+            Self::Export(outcome) => Ok(outcome),
+            other => Err(other),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn into_export_html(self) -> Result<PathBuf, Self> {
+        match self {
+            Self::ExportHtml(path) => Ok(path),
+            other => Err(other),
+        }
+    }
+
+    pub(crate) fn into_delegation_approved(self) -> Result<(), Self> {
+        match self {
+            Self::DelegationApproved => Ok(()),
+            other => Err(other),
+        }
+    }
+
+    pub(crate) fn into_delegation_rejected(self) -> Result<(), Self> {
+        match self {
+            Self::DelegationRejected => Ok(()),
+            other => Err(other),
+        }
+    }
+
+    pub(crate) fn into_default_agent_profile_changed(self) -> Result<(), Self> {
+        match self {
+            Self::DefaultAgentProfileChanged => Ok(()),
+            other => Err(other),
+        }
+    }
+
+    pub(crate) fn into_session_forked(self) -> Result<(), Self> {
+        match self {
+            Self::SessionForked => Ok(()),
+            other => Err(other),
+        }
+    }
+
+    pub(crate) fn into_session_tree_label_changed(
+        self,
+    ) -> Result<(String, Option<String>, String), Self> {
+        match self {
+            Self::SessionTreeLabelChanged {
+                entry_id,
+                label,
+                updated_at,
+            } => Ok((entry_id, label, updated_at)),
+            other => Err(other),
         }
     }
 }

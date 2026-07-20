@@ -2095,6 +2095,11 @@ const ADAPTER_CLASSIFICATIONS: &[AdapterClassification] = &[
         rationale: "interactive ordinary-operation task runners",
     },
     AdapterClassification {
+        path: "crates/pi-coding-agent/src/adapters/interactive/root.rs",
+        ownership: AdapterOwnership::StateReplayControlConsumer,
+        rationale: "interactive renderer-owned snapshot and ordered product-event projection",
+    },
+    AdapterClassification {
         path: "crates/pi-coding-agent/src/lib.rs",
         ownership: AdapterOwnership::ApprovedNonRuntimeAdapter,
         rationale: "stable categorized facade only",
@@ -2889,6 +2894,39 @@ fn production_code_does_not_import_testing_facades() {
         "test-support facades must not enter product production code:\n{}",
         violations.join("\n")
     );
+}
+
+#[test]
+fn product_test_support_and_lint_exceptions_are_explicitly_scoped() {
+    let scan = SourceScan::new();
+    let manifest = fs::read_to_string(scan.crate_root.join("Cargo.toml"))
+        .expect("read pi-coding-agent manifest");
+    let library =
+        fs::read_to_string(scan.crate_root.join("src/lib.rs")).expect("read crate root source");
+
+    assert!(
+        !manifest.contains("test-harness"),
+        "the unused test-harness feature must not return"
+    );
+    assert!(
+        library.contains("#[cfg(any(test, feature = \"test-support\"))]"),
+        "test helpers must require cfg(test) or the explicit non-default test-support feature"
+    );
+    assert!(
+        !library.contains("debug_assertions"),
+        "ordinary debug builds must not include environment/provider mutation helpers"
+    );
+    for lint in [
+        "result_large_err",
+        "large_enum_variant",
+        "too_many_arguments",
+        "collapsible_if",
+    ] {
+        assert!(
+            !library.contains(&format!("#![allow(clippy::{lint})]")),
+            "crate-wide Clippy exception must not return: {lint}"
+        );
+    }
 }
 
 fn validate_adapter_classifications(

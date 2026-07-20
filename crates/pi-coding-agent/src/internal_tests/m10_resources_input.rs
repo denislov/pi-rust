@@ -1,24 +1,24 @@
 //! Internal owner tests spanning resources, input, tools, and the interactive harness.
 
 use super::support::ProviderGuard;
+use crate::internal_tests::cli_fixture::command::parse_args;
+use crate::internal_tests::cli_fixture::configuration::{parse_model_rotation, select_model};
+use crate::internal_tests::cli_fixture::input::{
+    ImageProcessingOptions, ImageResizeOptions, merge_stdin_prompt, process_at_file_references,
+    process_at_file_references_with_options, process_at_file_references_with_processing_options,
+};
+use crate::internal_tests::cli_fixture::resources::{
+    ResourceLoadOptions, ToolFilter, builtin_tools, discover_context_files, filter_tools,
+    load_cli_resources_with_options,
+};
 use pi_agent_core::api::agent::ThinkingLevel;
 use pi_ai::api::conversation::{AssistantMessage, ContentBlock, Context, Message, StopReason};
 use pi_ai::api::model::{Model, ModelCost, ModelInput};
 use pi_ai::api::provider::ApiProvider;
 use pi_ai::api::stream::{AssistantMessageEvent, EventStream, StreamOptions};
 use pi_coding_agent::adapters::interactive::test_harness::run_scripted_interactive_with_provider_chunks;
-use pi_coding_agent::api::cli::command::parse_args;
-use pi_coding_agent::api::cli::configuration::{parse_model_rotation, select_model};
-use pi_coding_agent::api::cli::input::{
-    ImageProcessingOptions, ImageResizeOptions, merge_stdin_prompt, process_at_file_references,
-    process_at_file_references_with_options, process_at_file_references_with_processing_options,
-};
-use pi_coding_agent::api::cli::print::{PrintModeOptions, run_print_mode};
-use pi_coding_agent::api::cli::resources::{
-    ResourceLoadOptions, ToolFilter, builtin_tools, discover_context_files, filter_tools,
-    load_cli_resources_with_options,
-};
-use pi_coding_agent::api::cli::runtime::PromptInvocation;
+use pi_coding_agent::api::operation::PromptInvocation;
+use pi_coding_agent::api::protocol::{PrintModeOptions, run_print_mode};
 use std::sync::{Arc, Mutex};
 
 #[test]

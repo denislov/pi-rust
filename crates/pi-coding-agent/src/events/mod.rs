@@ -221,6 +221,72 @@ pub struct CodingAgentProductEventCheckOutput {
     pub exit_code: i32,
 }
 
+impl From<pi_ai::api::conversation::Usage> for CodingAgentProductEventUsage {
+    fn from(usage: pi_ai::api::conversation::Usage) -> Self {
+        Self {
+            input: usage.input,
+            output: usage.output,
+            cache_read: usage.cache_read,
+            cache_write: usage.cache_write,
+            total_tokens: usage.total_tokens,
+            cost_known: usage.cost.known,
+            input_cost: usage.cost.input,
+            output_cost: usage.cost.output,
+            cache_read_cost: usage.cost.cache_read,
+            cache_write_cost: usage.cost.cache_write,
+        }
+    }
+}
+
+impl From<crate::runtime::facade::CodingSessionError> for CodingAgentProductEventError {
+    fn from(error: crate::runtime::facade::CodingSessionError) -> Self {
+        Self {
+            code: error.code().to_owned(),
+            message: error.to_string(),
+        }
+    }
+}
+
+impl From<crate::operations::self_healing_edit::runner::SelfHealingEditReplacement>
+    for CodingAgentProductEventReplacement
+{
+    fn from(
+        replacement: crate::operations::self_healing_edit::runner::SelfHealingEditReplacement,
+    ) -> Self {
+        Self {
+            old_text: replacement.old_text,
+            new_text: replacement.new_text,
+        }
+    }
+}
+
+impl From<crate::operations::self_healing_edit::runner::SelfHealingEditDiagnostic>
+    for CodingAgentProductEventDiagnostic
+{
+    fn from(
+        diagnostic: crate::operations::self_healing_edit::runner::SelfHealingEditDiagnostic,
+    ) -> Self {
+        Self {
+            message: diagnostic.message,
+        }
+    }
+}
+
+impl From<crate::operations::self_healing_edit::runner::SelfHealingEditCheckOutput>
+    for CodingAgentProductEventCheckOutput
+{
+    fn from(
+        output: crate::operations::self_healing_edit::runner::SelfHealingEditCheckOutput,
+    ) -> Self {
+        Self {
+            command: output.command,
+            stdout: output.stdout,
+            stderr: output.stderr,
+            exit_code: output.exit_code,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CodingAgentProductEventProfileKind {
@@ -399,6 +465,10 @@ pub struct CodingAgentImageContent {
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "public serialized event variants retain their stable typed payload shape"
+)]
 pub enum CodingAgentToolProductEvent {
     AuthorizationRequired {
         request: crate::authorization::ToolAuthorizationRequest,
@@ -801,6 +871,10 @@ pub struct CodingAgentProductEvent {
 }
 
 impl CodingAgentProductEvent {
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "event envelope construction keeps ordering, association, and durability explicit"
+    )]
     pub(crate) fn new(
         stream_id: String,
         sequence: ProductEventSequence,

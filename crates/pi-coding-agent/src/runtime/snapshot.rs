@@ -1264,10 +1264,9 @@ impl SnapshotCoordinator {
                 },
             ..
         }) = &record.submitted_operation
+            && sequence >= *terminal_sequence
         {
-            if sequence >= *terminal_sequence {
-                record.submitted_operation = None;
-            }
+            record.submitted_operation = None;
         }
         Ok(record.acknowledged_sequence)
     }

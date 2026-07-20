@@ -1,7 +1,7 @@
 use crate::runtime::facade::FilesystemCapability;
 use crate::tools::filesystem::path::resolve_to_cwd;
 use crate::tools::output::{
-    DEFAULT_MAX_BYTES, TruncatedBy, TruncationOptions, format_size, truncate_head,
+    DEFAULT_MAX_BYTES, default_truncation_limit, format_size, truncate_head,
 };
 use futures::future::{BoxFuture, FutureExt};
 use pi_agent_core::api::tool::{AgentTool, AgentToolOutput, ToolFn};
@@ -131,7 +131,7 @@ pub async fn read_execute_with_operations(
         None => (all[start..].join("\n"), None),
     };
 
-    let tr = truncate_head(&selected, &TruncationOptions::default());
+    let tr = truncate_head(&selected, default_truncation_limit());
     let out = if tr.first_line_exceeds_limit {
         let first_line_bytes = all[start].len();
         format!(
@@ -142,7 +142,7 @@ pub async fn read_execute_with_operations(
     } else if tr.truncated {
         let end_display = start_display + tr.output_lines - 1;
         let next = end_display + 1;
-        if tr.truncated_by == TruncatedBy::Lines {
+        if tr.truncated_by.as_deref() == Some("lines") {
             format!(
                 "{}\n\n[Showing lines {start_display}-{end_display} of {total}. Use offset={next} to continue.]",
                 tr.content

@@ -331,13 +331,14 @@ impl EventService {
             .retained_product_events
             .front()
             .map(ProductEvent::sequence_internal);
-        if let Some(oldest) = oldest_available {
-            if cursor < oldest && cursor != ProductEventSequence::default() {
-                return ProductEventRecovery::RetainedGap {
-                    requested_after: cursor,
-                    oldest_available: oldest,
-                };
-            }
+        if let Some(oldest) = oldest_available
+            && cursor < oldest
+            && cursor != ProductEventSequence::default()
+        {
+            return ProductEventRecovery::RetainedGap {
+                requested_after: cursor,
+                oldest_available: oldest,
+            };
         }
         let replayed_through =
             ProductEventSequence::new(state.next_event_sequence.saturating_sub(1));
@@ -1579,6 +1580,10 @@ impl EventService {
         )
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "recovery event emission keeps durable association metadata explicit"
+    )]
     pub(crate) fn emit_startup_recovery_pending(
         &self,
         operation_id: impl Into<String>,

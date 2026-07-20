@@ -1,10 +1,11 @@
-use crate::support;
+use crate::internal_tests::support;
 
-use pi_coding_agent::api::cli::command::{
+use crate::internal_tests::cli_fixture::command::{
     ResolvedSessionTarget, parse_args, resolve_cli_context, resolve_prompt_request,
 };
-use pi_coding_agent::api::cli::resources::builtin_tools;
-use pi_coding_agent::api::cli::runtime::{CliRunOptions, PromptInvocation, SessionRunOptions};
+use crate::internal_tests::cli_fixture::resources::builtin_tools;
+use pi_coding_agent::api::operation::PromptInvocation;
+use pi_coding_agent::api::runtime::{CliRunOptions, SessionRunOptions};
 use support::EnvGuard;
 
 #[test]

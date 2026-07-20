@@ -4,5 +4,3 @@ mod support;
 mod jsonl;
 #[path = "rpc/mode.rs"]
 mod mode;
-#[path = "rpc/protocol_args.rs"]
-mod protocol_args;

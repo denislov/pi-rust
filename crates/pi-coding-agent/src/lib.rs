@@ -1,8 +1,3 @@
-#![allow(clippy::result_large_err)]
-#![allow(clippy::large_enum_variant)]
-#![allow(clippy::too_many_arguments)]
-#![allow(clippy::collapsible_if)]
-
 mod adapters;
 mod app;
 mod authorization;
@@ -41,6 +36,7 @@ pub mod api {
 
     /// Session lifecycle and the product runtime entry point.
     pub mod runtime {
+        pub use crate::app::bootstrap::{CliRunOptions, SessionMode, SessionRunOptions};
         pub use crate::runtime::facade::{
             CodingAgentCapabilityControl, CodingAgentCapabilityRevocationOutcome,
             CodingAgentOperationTask, CodingAgentRecoveryResolutionRequest,
@@ -62,6 +58,8 @@ pub mod api {
 
     /// Commands and outcomes accepted by [`runtime::CodingAgentSession`].
     pub mod operation {
+        pub use crate::app::bootstrap::PromptInvocation;
+        pub use crate::app::cli::prompt_options::PromptRunOptions;
         pub use crate::runtime::facade::{
             AgentInvocationOptions, AgentInvocationOutcome, AgentTeamMemberOutcome,
             AgentTeamOptions, AgentTeamOutcome, BranchSummaryReusePolicy, CodingAgentOperation,
@@ -132,6 +130,7 @@ pub mod api {
     /// Versioned machine-readable adapter and wire contracts.
     pub mod protocol {
         pub use crate::adapters::events::CodingProtocolEventAdapter;
+        pub use crate::adapters::print::{PrintModeOptions, run_print_mode};
         pub use crate::adapters::rpc::{run_rpc_mode_for_io, run_rpc_mode_stdio};
         pub use crate::protocol::jsonl::{JsonlLineReader, read_jsonl_lines, serialize_json_line};
         pub use crate::protocol::types::{
@@ -152,105 +151,17 @@ pub mod api {
 
     /// Supported command-line scripting contracts.
     pub mod cli {
-        /// Argument parsing and resolved command/request values.
-        pub mod command {
-            pub use crate::app::cli::args::{CliArgs, CliMode, help_text, parse_args};
-            pub use crate::app::cli::error::CliError;
-            pub use crate::app::cli::request::{
-                CliDiagnostic, CliDiagnosticSeverity, ResolvedCliContext, ResolvedPromptRequest,
-                render_diagnostics, resolve_cli_context, resolve_prompt_request,
-                resolve_session_target,
-            };
-            pub use crate::app::session::{ResolvedSessionTarget, encode_cwd};
-        }
-
-        /// Configuration, credentials, settings, and model selection.
-        pub mod configuration {
-            pub use crate::app::bootstrap::{
-                DEFAULT_MODEL_ID, DEFAULT_SYSTEM_PROMPT, build_agent_config,
-                effective_no_context_files, effective_session_dir, select_model,
-            };
-            pub use crate::app::cli::models::{
-                ModelRotation, ModelRotationEntry, parse_model_rotation,
-            };
-            pub use crate::config::auth::{
-                AuthMaterialKind, KeySource, ResolvedKey, resolve_api_key,
-            };
-            pub use crate::config::settings::{
-                CompactionSettings, PartialCompaction, PartialRetry, PartialSettings,
-                PartialTerminal, PartialWarnings, RetrySettings, Settings, SettingsScope,
-                TerminalSettings, TuiMode, merge_and_save_settings,
-            };
-            pub use crate::config::{
-                AuthStore, Config, ConfigDiagnostic, ConfigPaths, DiagnosticSeverity,
-                drain_diagnostics, load_config, resolve_paths,
-            };
-        }
-
-        /// Prompt input preprocessing and attachment expansion.
-        pub mod input {
-            pub use crate::app::cli::input::{
-                ImageAttachment, ImageProcessingOptions, ImageResizeOptions, ProcessedPromptInput,
-                merge_stdin_prompt, process_at_file_references,
-                process_at_file_references_with_options,
-                process_at_file_references_with_processing_options,
-            };
-        }
-
-        /// Print-mode orchestration.
-        pub mod print {
-            pub use crate::adapters::print::{PrintModeOptions, run_print_mode};
-        }
-
-        /// Resource discovery and product tool construction.
-        pub mod resources {
-            pub use crate::resources::{
-                ContextFile, LoadedResources, ResourceLoadOptions, ThemeResource,
-                build_agent_resources, discover_context_files, find_skill, find_template,
-                load_cli_resources, load_cli_resources_with_options, resolve_resource_paths,
-                tui_theme_from_resource,
-            };
-            pub use crate::tools::{ToolFilter, builtin_tools, filter_tools};
-        }
-
-        /// CLI runtime options and invocation values.
-        pub mod runtime {
-            pub use crate::app::bootstrap::{
-                CliRunOptions, PromptInvocation, SessionMode, SessionRunOptions,
-            };
-            pub use crate::app::cli::prompt_options::PromptRunOptions;
-        }
-
         /// High-level process runner entrypoints.
         pub mod runner {
             pub use crate::app::cli::{
-                CliOutput, run_cli, run_cli_with_options, run_cli_with_options_and_stdin,
-            };
-        }
-
-        /// Theme loading, resolution, export, and syntax presentation values.
-        pub mod theme {
-            pub use crate::theme::{
-                ColorValue, DARK_JSON, DetectionConfidence, DetectionSource, ExportSection,
-                LIGHT_JSON, REQUIRED_TOKEN_KEYS, ResolveError, ResolvedColor, ResolvedTheme, Rgb,
-                SCHEMA_JSON, TerminalBackgroundDetection, TerminalTheme, ThemeBg, ThemeColor,
-                ThemeExportColors, ThemeJson, ThemeReloadSignal, ThemeWatcher, builtin_dark,
-                builtin_light, detect_terminal_background, get_default_theme,
-                get_language_from_path, get_resolved_theme_colors, get_theme_export_colors,
-                get_theme_for_rgb_color, highlight_code, is_light_theme,
-                parse_osc11_background_color, resolve, should_watch_target,
+                CliOutput, run_cli, run_cli_stdio, run_cli_with_options,
+                run_cli_with_options_and_stdin,
             };
         }
     }
-
-    /// Deterministic public test fixtures belong here when an external test
-    /// support feature is introduced. Production authority handles are never
-    /// exported through this category.
-    #[cfg(any(test, feature = "test-support"))]
-    pub mod testing {}
 }
 
-#[cfg(any(test, feature = "test-harness", debug_assertions))]
+#[cfg(any(test, feature = "test-support"))]
 #[allow(deprecated)]
 pub(crate) mod test_support {
     use std::ffi::{OsStr, OsString};

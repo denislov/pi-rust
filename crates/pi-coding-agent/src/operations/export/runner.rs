@@ -56,7 +56,6 @@ pub(crate) struct ExportContext {
     export: Option<CodingAgentSessionExport>,
     rendered_html: Option<String>,
     written_path: Option<PathBuf>,
-    failure_error: Option<CodingSessionError>,
 }
 
 impl ExportContext {
@@ -72,7 +71,6 @@ impl ExportContext {
             export: None,
             rendered_html: None,
             written_path: None,
-            failure_error: None,
         }
     }
 
@@ -91,16 +89,6 @@ impl ExportContext {
                 })?,
             path: self.written_path.clone(),
         })
-    }
-
-    pub(crate) fn take_failure_error(&mut self) -> Option<CodingSessionError> {
-        self.failure_error.take()
-    }
-
-    fn fail(&mut self, error: CodingSessionError) -> String {
-        let message = error.to_string();
-        self.failure_error = Some(error);
-        message
     }
 
     fn start_export(&mut self) -> Result<(), CodingSessionError> {
@@ -170,16 +158,6 @@ impl ExportContext {
 
 pub(crate) struct ExportRunner;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ExportStep {
-    Start,
-    LoadReplay,
-    SelectView,
-    Render,
-    Write,
-    EmitCompletion,
-}
-
 impl ExportRunner {
     pub(crate) fn new() -> Result<Self, CodingSessionError> {
         Ok(Self)
@@ -189,28 +167,11 @@ impl ExportRunner {
         &self,
         ctx: &mut ExportContext,
     ) -> Result<ExportOutcome, CodingSessionError> {
-        let mut step = ExportStep::Start;
-        loop {
-            let result = match step {
-                ExportStep::Start => ctx.start_export(),
-                ExportStep::LoadReplay => ctx.load_session_replay(),
-                ExportStep::SelectView => ctx.select_export_view(),
-                ExportStep::Render => ctx.render_export(),
-                ExportStep::Write => ctx.write_export(),
-                ExportStep::EmitCompletion => return ctx.finish_success(),
-            };
-            if let Err(error) = result {
-                let message = ctx.fail(error.clone());
-                return Err(CodingSessionError::Workflow { message });
-            }
-            step = match step {
-                ExportStep::Start => ExportStep::LoadReplay,
-                ExportStep::LoadReplay => ExportStep::SelectView,
-                ExportStep::SelectView => ExportStep::Render,
-                ExportStep::Render => ExportStep::Write,
-                ExportStep::Write => ExportStep::EmitCompletion,
-                ExportStep::EmitCompletion => unreachable!(),
-            };
-        }
+        ctx.start_export()?;
+        ctx.load_session_replay()?;
+        ctx.select_export_view()?;
+        ctx.render_export()?;
+        ctx.write_export()?;
+        ctx.finish_success()
     }
 }

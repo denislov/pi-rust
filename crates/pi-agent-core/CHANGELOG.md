@@ -1,5 +1,13 @@
 # Changes
 
+## 0.5.2 - 2026-07-20
+
+### Changed
+
+- Advanced with the workspace to `0.5.2`; the provider-neutral Agent,
+  transcript, resource, compaction, and execution contracts remain unchanged
+  by product runtime convergence.
+
 ## 0.5.0 - 2026-07-20
 
 ### Changed
@@ -9,7 +17,7 @@
 - Runtime behavior remains provider-neutral; the crate advances with the
   workspace to `0.5.0`.
 
-## 0.5.1 - Unreleased
+## 0.5.1 - 2026-07-20
 
 ### Runtime And API
 

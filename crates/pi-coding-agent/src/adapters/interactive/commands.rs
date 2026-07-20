@@ -10,8 +10,8 @@ use crate::adapters::interactive::render::{abbreviate_cwd, format_tokens};
 use crate::adapters::interactive::root::{
     InteractiveAction, InteractiveRoot, InteractiveStatus, PendingAgentInvocationRequest,
     PendingAgentTeamRequest, PendingBranchSummaryRequest, PendingDelegationConfirmationCommand,
-    PendingDelegationConfirmationSelection, PendingForkRequest, PendingSelfHealingEditModelRepair,
-    PendingSelfHealingEditRequest,
+    PendingDelegationConfirmationSelection, PendingForkRequest, PendingInteractiveCommand,
+    PendingSelfHealingEditModelRepair, PendingSelfHealingEditRequest,
 };
 use crate::adapters::interactive::session_actions::{
     SessionChoiceKind, clone_rust_native_choice, export_rust_native_choice,
@@ -129,9 +129,8 @@ pub(super) fn handle_slash_command(root: &mut InteractiveRoot, command: ParsedSl
         _ => {
             let expanded = root.expand_prompt_text(&command.original);
             if expanded != command.original {
-                root.editor.add_to_history(&expanded);
-                root.pending_submit = Some(expanded);
-                root.action = InteractiveAction::Submit;
+                root.local.editor.add_to_history(&expanded);
+                root.queue_command(PendingInteractiveCommand::Submit(expanded));
             } else {
                 root.transcript.push(TranscriptItem::system(format!(
                     "unknown command: {} - type /help for available commands",
@@ -145,7 +144,7 @@ pub(super) fn handle_slash_command(root: &mut InteractiveRoot, command: ParsedSl
 fn handle_agents_command(root: &mut InteractiveRoot) {
     let mut lines = vec!["Agent profiles:".to_string()];
     for profile in root.profile_registry.agents() {
-        let current = if profile.id == root.default_agent_profile_id {
+        let current = if profile.id == *root.display_default_agent_profile_id() {
             " (current)"
         } else {
             ""
@@ -206,11 +205,12 @@ fn handle_agent_colon_command(root: &mut InteractiveRoot, command_name: &str, ar
         )));
         return;
     };
-    root.pending_agent_invocation_request = Some(PendingAgentInvocationRequest {
-        profile_id: profile.id.clone(),
-        task: task.to_string(),
-    });
-    root.action = InteractiveAction::AgentInvocation;
+    root.queue_command(PendingInteractiveCommand::AgentInvocation(
+        PendingAgentInvocationRequest {
+            profile_id: profile.id.clone(),
+            task: task.to_string(),
+        },
+    ));
 }
 
 fn handle_team_command(root: &mut InteractiveRoot, args: &str) {
@@ -241,11 +241,12 @@ fn handle_team_colon_command(root: &mut InteractiveRoot, command_name: &str, arg
         )));
         return;
     }
-    root.pending_agent_team_request = Some(PendingAgentTeamRequest {
-        team_id: team_id.into(),
-        task: task.to_string(),
-    });
-    root.action = InteractiveAction::AgentTeam;
+    root.queue_command(PendingInteractiveCommand::AgentTeam(
+        PendingAgentTeamRequest {
+            team_id: team_id.into(),
+            task: task.to_string(),
+        },
+    ));
 }
 
 fn agent_usage_text() -> &'static str {
@@ -413,12 +414,9 @@ fn handle_compact_command(root: &mut InteractiveRoot, args: &str) {
     }
 
     let instructions = args.trim();
-    root.pending_compact_instructions = if instructions.is_empty() {
-        None
-    } else {
-        Some(instructions.to_string())
-    };
-    root.action = InteractiveAction::CompactSession;
+    root.queue_command(PendingInteractiveCommand::Compact {
+        instructions: (!instructions.is_empty()).then(|| instructions.to_string()),
+    });
 }
 
 fn handle_branch_summary_command(root: &mut InteractiveRoot, args: &str) {
@@ -460,12 +458,13 @@ fn handle_branch_summary_command(root: &mut InteractiveRoot, args: &str) {
             Some(instructions)
         }
     };
-    root.pending_branch_summary_request = Some(PendingBranchSummaryRequest {
-        source_leaf_id: source_leaf_id.to_owned(),
-        target_leaf_id: target_leaf_id.to_owned(),
-        custom_instructions,
-    });
-    root.action = InteractiveAction::BranchSummary;
+    root.queue_command(PendingInteractiveCommand::BranchSummary(
+        PendingBranchSummaryRequest {
+            source_leaf_id: source_leaf_id.to_owned(),
+            target_leaf_id: target_leaf_id.to_owned(),
+            custom_instructions,
+        },
+    ));
 }
 
 fn handle_self_healing_edit_command(root: &mut InteractiveRoot, args: &str) {
@@ -478,8 +477,7 @@ fn handle_self_healing_edit_command(root: &mut InteractiveRoot, args: &str) {
 
     match parse_self_healing_edit_args(args) {
         Ok(request) => {
-            root.pending_self_healing_edit_request = Some(request);
-            root.action = InteractiveAction::SelfHealingEdit;
+            root.queue_command(PendingInteractiveCommand::SelfHealingEdit(request));
         }
         Err(usage) => root.transcript.push(TranscriptItem::system(usage)),
     }
@@ -614,16 +612,17 @@ fn handle_copy_command(root: &mut InteractiveRoot) {
 
 fn handle_new_command(root: &mut InteractiveRoot) {
     root.transcript = Transcript::new();
-    root.transcript
-        .push(TranscriptItem::system(welcome_line(&root.keybindings)));
+    root.transcript.push(TranscriptItem::system(welcome_line(
+        &root.local.keybindings,
+    )));
     root.transcript
         .push(TranscriptItem::system("New session started"));
-    root.editor.set_text("");
-    root.selecting_model = false;
-    root.selecting_session = false;
-    root.selecting_settings = false;
-    root.model_selection_selected = 0;
-    root.session_selection_selected = 0;
+    root.local.editor.set_text("");
+    root.local.selecting_model = false;
+    root.local.selecting_session = false;
+    root.local.selecting_settings = false;
+    root.local.model_selection_selected = 0;
+    root.local.session_selection_selected = 0;
     root.stats = Default::default();
     root.session_label = "session".to_string();
     root.clear_active_session();
@@ -679,8 +678,9 @@ fn handle_fork_command(root: &mut InteractiveRoot, args: &str) {
         }
         Some(leaf_id.to_owned())
     };
-    root.pending_fork_request = Some(PendingForkRequest { target_leaf_id });
-    root.action = InteractiveAction::Fork;
+    root.queue_command(PendingInteractiveCommand::Fork(PendingForkRequest {
+        target_leaf_id,
+    }));
 }
 
 fn handle_reload_command(root: &mut InteractiveRoot) {
@@ -737,10 +737,10 @@ fn handle_tree_command(root: &mut InteractiveRoot) {
                 filter_mode,
                 root.viewport_width,
             );
-            root.selecting_tree = true;
-            root.tree_selector = Some(selector);
-            root.selected_tree_entry_id = None;
-            root.editor.set_text("");
+            root.local.selecting_tree = true;
+            root.local.tree_selector = Some(selector);
+            root.local.selected_tree_entry_id = None;
+            root.local.editor.set_text("");
         }
         Err(error) => root.transcript.push(TranscriptItem::system(format!(
             "Failed to open session: {error}"
@@ -767,19 +767,19 @@ fn export_transcript(root: &InteractiveRoot, args: &str) -> Result<PathBuf, Stri
 }
 
 fn handle_settings_command(root: &mut InteractiveRoot) {
-    root.selecting_settings = true;
-    root.selecting_model = false;
-    root.selecting_session = false;
-    root.editor.set_text("");
+    root.local.selecting_settings = true;
+    root.local.selecting_model = false;
+    root.local.selecting_session = false;
+    root.local.editor.set_text("");
 }
 
 fn handle_model_command(root: &mut InteractiveRoot, args: &str) {
     if args.is_empty() {
-        root.selecting_model = true;
-        root.selecting_settings = false;
-        root.selecting_session = false;
-        root.model_selection_selected = 0;
-        root.editor.set_text("");
+        root.local.selecting_model = true;
+        root.local.selecting_settings = false;
+        root.local.selecting_session = false;
+        root.local.model_selection_selected = 0;
+        root.local.editor.set_text("");
         return;
     }
 
@@ -823,11 +823,11 @@ fn handle_resume_command(root: &mut InteractiveRoot, args: &str) {
         return;
     }
 
-    root.selecting_session = true;
-    root.selecting_model = false;
-    root.selecting_settings = false;
-    root.session_selection_selected = 0;
-    root.editor.set_text("");
+    root.local.selecting_session = true;
+    root.local.selecting_model = false;
+    root.local.selecting_settings = false;
+    root.local.session_selection_selected = 0;
+    root.local.editor.set_text("");
 }
 
 fn handle_name_command(root: &mut InteractiveRoot, args: &str) {

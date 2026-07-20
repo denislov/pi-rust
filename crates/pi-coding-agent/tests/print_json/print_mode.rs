@@ -4,9 +4,8 @@ use pi_agent_core::api::tool::{AgentTool, AgentToolOutput};
 use pi_ai::api::conversation::{ContentBlock, StopReason};
 use pi_ai::api::model::{Model, ModelCost, ModelInput};
 use pi_ai::api::testing::{FauxCall, FauxProvider, FauxResponse, FauxToolCall};
-use pi_coding_agent::api::cli::command::CliError;
-use pi_coding_agent::api::cli::print::{PrintModeOptions, run_print_mode};
-use pi_coding_agent::api::cli::runtime::PromptInvocation;
+use pi_coding_agent::api::operation::PromptInvocation;
+use pi_coding_agent::api::protocol::{PrintModeOptions, run_print_mode};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use support::ProviderGuard;
@@ -185,7 +184,7 @@ async fn returns_agent_failure_on_error_stop_reason() {
     .await
     .unwrap_err();
 
-    assert_eq!(error, CliError::AgentFailure("LLM error".into()));
+    assert_eq!(error.to_string(), "agent failure: LLM error");
 }
 
 #[tokio::test]

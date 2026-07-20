@@ -1,7 +1,7 @@
 //! Product theme behavior, mirroring TypeScript
 //! `packages/coding-agent/test/test-theme-colors.ts` and `theme/theme.ts`.
 
-use pi_coding_agent::api::cli::theme::{
+use crate::internal_tests::cli_fixture::theme::{
     ColorValue, ResolveError, ResolvedColor, builtin_dark, resolve,
 };
 use serde_json::json;
@@ -92,7 +92,7 @@ fn parses_builtin_dark_theme_structure() {
 
 #[test]
 fn resolves_builtin_dark_colors_via_vars() {
-    use pi_coding_agent::api::cli::theme::{ThemeBg, ThemeColor};
+    use crate::internal_tests::cli_fixture::theme::{ThemeBg, ThemeColor};
     let theme = builtin_dark();
     let resolved = theme.resolve_colors().expect("dark theme resolves");
 
@@ -131,7 +131,8 @@ fn resolves_builtin_dark_colors_via_vars() {
 #[test]
 fn reports_missing_required_tokens() {
     let json = r#"{ "name": "broken", "colors": { "accent": 39, "border": 0 } }"#;
-    let theme: pi_coding_agent::api::cli::theme::ThemeJson = serde_json::from_str(json).unwrap();
+    let theme: crate::internal_tests::cli_fixture::theme::ThemeJson =
+        serde_json::from_str(json).unwrap();
     let missing = theme.missing_tokens();
     // 51 required - 2 present = 49 missing
     assert_eq!(missing.len(), 49);
@@ -144,10 +145,10 @@ fn reports_missing_required_tokens() {
 
 #[test]
 fn resource_loader_parses_ts_theme_format_and_reports_missing_tokens() {
-    use pi_coding_agent::api::cli::resources::{
+    use crate::internal_tests::cli_fixture::resources::{
         ResourceLoadOptions, load_cli_resources_with_options,
     };
-    use pi_coding_agent::api::cli::theme::DARK_JSON;
+    use crate::internal_tests::cli_fixture::theme::DARK_JSON;
     use std::fs;
     let temp = tempfile::tempdir().unwrap();
     let cwd = temp.path().join("work");
@@ -198,18 +199,18 @@ fn resource_loader_parses_ts_theme_format_and_reports_missing_tokens() {
 
 #[test]
 fn parses_builtin_light_theme_and_exposes_schema() {
-    let theme = pi_coding_agent::api::cli::theme::builtin_light();
+    let theme = crate::internal_tests::cli_fixture::theme::builtin_light();
     assert_eq!(theme.name, "light");
     assert_eq!(theme.colors.len(), 51);
     // light resolves its vars too (accent -> "teal" var -> "#5a8080")
     let resolved = theme.resolve_colors().expect("light theme resolves");
     assert_eq!(
-        resolved.fg(pi_coding_agent::api::cli::theme::ThemeColor::Accent),
+        resolved.fg(crate::internal_tests::cli_fixture::theme::ThemeColor::Accent),
         ResolvedColor::Hex(0x5a, 0x80, 0x80)
     );
     // the schema is embedded and parses as valid JSON
     let schema: serde_json::Value =
-        serde_json::from_str(pi_coding_agent::api::cli::theme::SCHEMA_JSON).unwrap();
+        serde_json::from_str(crate::internal_tests::cli_fixture::theme::SCHEMA_JSON).unwrap();
     assert_eq!(schema["title"], "Pi Coding Agent Theme");
 }
 
@@ -217,7 +218,7 @@ fn parses_builtin_light_theme_and_exposes_schema() {
 
 #[test]
 fn detects_light_background_from_colorfgbg() {
-    use pi_coding_agent::api::cli::theme::{
+    use crate::internal_tests::cli_fixture::theme::{
         DetectionConfidence, DetectionSource, TerminalTheme, detect_terminal_background,
     };
     let env = vec![("COLORFGBG".to_string(), "0;15".to_string())];
@@ -229,7 +230,7 @@ fn detects_light_background_from_colorfgbg() {
 
 #[test]
 fn detects_dark_background_from_colorfgbg() {
-    use pi_coding_agent::api::cli::theme::{
+    use crate::internal_tests::cli_fixture::theme::{
         DetectionConfidence, DetectionSource, TerminalTheme, detect_terminal_background,
     };
     let env = vec![("COLORFGBG".to_string(), "15;0".to_string())];
@@ -241,7 +242,7 @@ fn detects_dark_background_from_colorfgbg() {
 
 #[test]
 fn uses_last_colorfgbg_field_as_background() {
-    use pi_coding_agent::api::cli::theme::{TerminalTheme, detect_terminal_background};
+    use crate::internal_tests::cli_fixture::theme::{TerminalTheme, detect_terminal_background};
     // "0;7;15" -> last field 15 (bright white) -> light
     let env = vec![("COLORFGBG".to_string(), "0;7;15".to_string())];
     let detection = detect_terminal_background(env);
@@ -250,7 +251,7 @@ fn uses_last_colorfgbg_field_as_background() {
 
 #[test]
 fn defaults_to_dark_without_background_hints() {
-    use pi_coding_agent::api::cli::theme::{
+    use crate::internal_tests::cli_fixture::theme::{
         DetectionConfidence, DetectionSource, TerminalTheme, detect_terminal_background,
     };
     let detection = detect_terminal_background(std::iter::empty::<(String, String)>());
@@ -261,7 +262,7 @@ fn defaults_to_dark_without_background_hints() {
 
 #[test]
 fn parses_osc11_16bit_rgb_response() {
-    use pi_coding_agent::api::cli::theme::parse_osc11_background_color;
+    use crate::internal_tests::cli_fixture::theme::parse_osc11_background_color;
     // rgb:0000/8000/ffff -> (0, 128, 255)
     assert_eq!(
         parse_osc11_background_color("\x1b]11;rgb:0000/8000/ffff\x07"),
@@ -271,7 +272,7 @@ fn parses_osc11_16bit_rgb_response() {
 
 #[test]
 fn parses_osc11_hex_responses() {
-    use pi_coding_agent::api::cli::theme::parse_osc11_background_color;
+    use crate::internal_tests::cli_fixture::theme::parse_osc11_background_color;
     assert_eq!(
         parse_osc11_background_color("\x1b]11;#ffffff\x1b\\"),
         Some((255, 255, 255))
@@ -284,7 +285,7 @@ fn parses_osc11_hex_responses() {
 
 #[test]
 fn classifies_rgb_colors_by_luminance() {
-    use pi_coding_agent::api::cli::theme::{TerminalTheme, get_theme_for_rgb_color};
+    use crate::internal_tests::cli_fixture::theme::{TerminalTheme, get_theme_for_rgb_color};
     assert_eq!(get_theme_for_rgb_color((8, 8, 8)), TerminalTheme::Dark);
     assert_eq!(
         get_theme_for_rgb_color((250, 250, 250)),
@@ -294,7 +295,7 @@ fn classifies_rgb_colors_by_luminance() {
 
 // --- Theme hot reload (mirrors startThemeWatcher) ---
 
-use pi_coding_agent::api::cli::theme::ThemeWatcher;
+use crate::internal_tests::cli_fixture::theme::ThemeWatcher;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -314,12 +315,14 @@ async fn recv_theme_reload_signal<T>(
 
 #[test]
 fn watcher_skips_builtin_themes() {
+    use crate::internal_tests::cli_fixture::theme::should_watch_target;
+
     // Built-in dark/light are never watched (TS startThemeWatcher returns early).
-    assert!(ThemeWatcher::should_watch("dark").is_none());
-    assert!(ThemeWatcher::should_watch("light").is_none());
+    assert!(should_watch_target("dark").is_none());
+    assert!(should_watch_target("light").is_none());
     // A custom theme name resolves to a `<name>.json` watch target.
     assert_eq!(
-        ThemeWatcher::should_watch("ocean"),
+        should_watch_target("ocean"),
         Some(PathBuf::from("ocean.json"))
     );
 }
@@ -333,7 +336,7 @@ async fn watcher_reloads_custom_theme_on_file_change() {
     // Start with a valid complete theme (built-in dark, renamed).
     std::fs::write(
         &theme_file,
-        pi_coding_agent::api::cli::theme::DARK_JSON.replace("\"dark\"", "\"hot\""),
+        crate::internal_tests::cli_fixture::theme::DARK_JSON.replace("\"dark\"", "\"hot\""),
     )
     .unwrap();
 
@@ -347,7 +350,7 @@ async fn watcher_reloads_custom_theme_on_file_change() {
     // Edit the theme file; expect a reload signal within a generous window.
     std::fs::write(
         &theme_file,
-        pi_coding_agent::api::cli::theme::LIGHT_JSON.replace("\"light\"", "\"hot\""),
+        crate::internal_tests::cli_fixture::theme::LIGHT_JSON.replace("\"light\"", "\"hot\""),
     )
     .unwrap();
 
@@ -358,8 +361,8 @@ async fn watcher_reloads_custom_theme_on_file_change() {
     // light theme accent -> "teal" var -> "#5a8080"
     let resolved = reloaded.theme.resolve_colors().unwrap();
     assert_eq!(
-        resolved.fg(pi_coding_agent::api::cli::theme::ThemeColor::Accent),
-        pi_coding_agent::api::cli::theme::ResolvedColor::Hex(0x5a, 0x80, 0x80)
+        resolved.fg(crate::internal_tests::cli_fixture::theme::ThemeColor::Accent),
+        crate::internal_tests::cli_fixture::theme::ResolvedColor::Hex(0x5a, 0x80, 0x80)
     );
 
     drop(watcher);
@@ -373,7 +376,7 @@ async fn watcher_reloads_after_rapid_edits() {
     let theme_file = themes_dir.join("debounce.json");
     std::fs::write(
         &theme_file,
-        pi_coding_agent::api::cli::theme::DARK_JSON.replace("\"dark\"", "\"debounce\""),
+        crate::internal_tests::cli_fixture::theme::DARK_JSON.replace("\"dark\"", "\"debounce\""),
     )
     .unwrap();
 
@@ -387,7 +390,8 @@ async fn watcher_reloads_after_rapid_edits() {
     for _ in 0..3 {
         std::fs::write(
             &theme_file,
-            pi_coding_agent::api::cli::theme::DARK_JSON.replace("\"dark\"", "\"debounce\""),
+            crate::internal_tests::cli_fixture::theme::DARK_JSON
+                .replace("\"dark\"", "\"debounce\""),
         )
         .unwrap();
     }
@@ -402,7 +406,7 @@ async fn watcher_reloads_after_rapid_edits() {
 
 #[test]
 fn maps_file_extensions_to_languages() {
-    use pi_coding_agent::api::cli::theme::get_language_from_path;
+    use crate::internal_tests::cli_fixture::theme::get_language_from_path;
     assert_eq!(get_language_from_path("main.rs"), Some("rust"));
     assert_eq!(get_language_from_path("app.ts"), Some("typescript"));
     assert_eq!(get_language_from_path("App.tsx"), Some("typescript"));
@@ -415,8 +419,8 @@ fn maps_file_extensions_to_languages() {
 
 #[test]
 fn highlights_rust_code_with_syntax_tokens() {
-    use pi_coding_agent::api::cli::theme::highlight_code;
-    let theme = pi_coding_agent::api::cli::theme::builtin_dark()
+    use crate::internal_tests::cli_fixture::theme::highlight_code;
+    let theme = crate::internal_tests::cli_fixture::theme::builtin_dark()
         .resolve_colors()
         .unwrap();
     let lines = highlight_code("fn main() {}", Some("rust"), &theme);
@@ -438,8 +442,8 @@ fn highlights_rust_code_with_syntax_tokens() {
 
 #[test]
 fn highlight_falls_back_to_single_color_for_unknown_language() {
-    use pi_coding_agent::api::cli::theme::highlight_code;
-    let theme = pi_coding_agent::api::cli::theme::builtin_dark()
+    use crate::internal_tests::cli_fixture::theme::highlight_code;
+    let theme = crate::internal_tests::cli_fixture::theme::builtin_dark()
         .resolve_colors()
         .unwrap();
     // Unknown language -> single mdCodeBlock color per line (green in dark).
@@ -453,8 +457,8 @@ fn highlight_falls_back_to_single_color_for_unknown_language() {
 
 #[test]
 fn highlight_falls_back_for_no_language() {
-    use pi_coding_agent::api::cli::theme::highlight_code;
-    let theme = pi_coding_agent::api::cli::theme::builtin_dark()
+    use crate::internal_tests::cli_fixture::theme::highlight_code;
+    let theme = crate::internal_tests::cli_fixture::theme::builtin_dark()
         .resolve_colors()
         .unwrap();
     let lines = highlight_code("plain text\nline two", None, &theme);
@@ -467,7 +471,7 @@ fn highlight_falls_back_for_no_language() {
 
 #[test]
 fn is_light_theme_checks_name() {
-    use pi_coding_agent::api::cli::theme::is_light_theme;
+    use crate::internal_tests::cli_fixture::theme::is_light_theme;
     assert!(is_light_theme(Some("light")));
     assert!(!is_light_theme(Some("dark")));
     assert!(!is_light_theme(Some("custom")));
@@ -476,7 +480,7 @@ fn is_light_theme_checks_name() {
 
 #[test]
 fn export_colors_resolve_vars_and_convert_256_to_hex() {
-    use pi_coding_agent::api::cli::theme::{ThemeJson, get_theme_export_colors};
+    use crate::internal_tests::cli_fixture::theme::{ThemeJson, get_theme_export_colors};
     // Build a theme with export vars (recursive + 256-color + hex).
     let json: ThemeJson = serde_json::from_str(
         r##"{
@@ -526,7 +530,7 @@ fn export_colors_resolve_vars_and_convert_256_to_hex() {
 
 #[test]
 fn export_colors_omit_unset_and_convert_256() {
-    use pi_coding_agent::api::cli::theme::{ThemeJson, get_theme_export_colors};
+    use crate::internal_tests::cli_fixture::theme::{ThemeJson, get_theme_export_colors};
     // No export section -> all None.
     let json: ThemeJson = serde_json::from_str(
         r##"{"name":"noexport","colors":{"accent":"#000000","border":"#000000","borderAccent":"#000000","borderMuted":"#000000","success":"#000000","error":"#000000","warning":"#000000","muted":"#000000","dim":"#000000","text":"#000000","thinkingText":"#000000","selectedBg":"#000000","userMessageBg":"#000000","userMessageText":"#000000","customMessageBg":"#000000","customMessageText":"#000000","customMessageLabel":"#000000","toolPendingBg":"#000000","toolSuccessBg":"#000000","toolErrorBg":"#000000","toolTitle":"#000000","toolOutput":"#000000","mdHeading":"#000000","mdLink":"#000000","mdLinkUrl":"#000000","mdCode":"#000000","mdCodeBlock":"#000000","mdCodeBlockBorder":"#000000","mdQuote":"#000000","mdQuoteBorder":"#000000","mdHr":"#000000","mdListBullet":"#000000","toolDiffAdded":"#000000","toolDiffRemoved":"#000000","toolDiffContext":"#000000","syntaxComment":"#000000","syntaxKeyword":"#000000","syntaxFunction":"#000000","syntaxVariable":"#000000","syntaxString":"#000000","syntaxNumber":"#000000","syntaxType":"#000000","syntaxOperator":"#000000","syntaxPunctuation":"#000000","thinkingOff":"#000000","thinkingMinimal":"#000000","thinkingLow":"#000000","thinkingMedium":"#000000","thinkingHigh":"#000000","thinkingXhigh":"#000000","bashMode":"#000000"}}"##,

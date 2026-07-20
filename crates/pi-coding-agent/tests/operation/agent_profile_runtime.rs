@@ -5,13 +5,11 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use async_stream::stream;
-use pi_agent_core::api::resources::AgentResources;
 use pi_agent_core::api::tool::AgentTool;
 use pi_ai::api::conversation::{AssistantMessage, ContentBlock, Context, StopReason};
-use pi_ai::api::model::{Model, ModelCost, ModelInput};
+use pi_ai::api::model::Model;
 use pi_ai::api::provider::ApiProvider;
 use pi_ai::api::stream::{AssistantMessageEvent, EventStream, StreamOptions};
-use pi_coding_agent::api::cli::runtime::{PromptInvocation, PromptRunOptions, SessionRunOptions};
 use pi_coding_agent::api::operation::{
     CodingAgentOperation, CodingAgentOperationOutcome, PromptTurnOptions, PromptTurnOutcome,
 };
@@ -283,43 +281,7 @@ async fn built_in_default_profile_projects_helper_inventory_to_provider_request(
 }
 
 fn prompt_options(cwd: &Path, api: &str, prompt: &str) -> PromptTurnOptions {
-    PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
-        prompt: prompt.into(),
-        model: fallback_model(api),
-        api_key: None,
-        auth_diagnostics: Vec::new(),
-        system_prompt: Some("Runtime fallback instructions.".into()),
-        max_turns: Some(2),
-        tools: vec![echo_tool(), extra_tool()],
-        register_builtins: false,
-        ai_client: None,
-        session: Some(SessionRunOptions::disabled(cwd.to_path_buf())),
-        session_target: None,
-        session_name: None,
-        thinking_level: None,
-        tool_execution: None,
-        resources: AgentResources::default(),
-        settings: None,
-        invocation: PromptInvocation::Text(prompt.into()),
-    })
-}
-
-fn fallback_model(api: &str) -> Model {
-    Model {
-        id: "fallback-model".into(),
-        name: "Fallback Model".into(),
-        api: api.into(),
-        provider: "test".into(),
-        base_url: String::new(),
-        reasoning: false,
-        thinking_level_map: None,
-        input: vec![ModelInput::Text],
-        cost: ModelCost::default(),
-        context_window: 0,
-        max_tokens: 0,
-        headers: None,
-        compat: None,
-    }
+    support::prompt_options(cwd, api, prompt, vec![echo_tool(), extra_tool()], 2)
 }
 
 fn echo_tool() -> AgentTool {

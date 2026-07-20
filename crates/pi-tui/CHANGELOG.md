@@ -1,6 +1,14 @@
 # Changes
 
-## 0.5.1 - Unreleased
+## 0.5.2 - 2026-07-20
+
+### Changed
+
+- Advanced with the workspace to `0.5.2`; generic terminal lifecycle,
+  rendering, input, and component contracts are unchanged by product runtime
+  convergence.
+
+## 0.5.1 - 2026-07-20
 
 ### Changed
 

@@ -53,6 +53,7 @@ pub fn load_config(cwd: &Path) -> (Config, Vec<ConfigDiagnostic>) {
 }
 
 /// Render diagnostics for stderr. Empty string when there are none.
+#[cfg(test)]
 pub fn drain_diagnostics(diags: &[ConfigDiagnostic]) -> String {
     let mut out = String::new();
     for d in diags {

@@ -255,14 +255,14 @@ pub fn resolve_api_key(
     store: &AuthStore,
     diags: &mut Vec<ConfigDiagnostic>,
 ) -> Option<ResolvedKey> {
-    if let Some(key) = cli_key {
-        if !key.is_empty() {
-            return Some(ResolvedKey {
-                value: key.to_string(),
-                source: KeySource::Cli,
-                material: AuthMaterialKind::ApiKey,
-            });
-        }
+    if let Some(key) = cli_key
+        && !key.is_empty()
+    {
+        return Some(ResolvedKey {
+            value: key.to_string(),
+            source: KeySource::Cli,
+            material: AuthMaterialKind::ApiKey,
+        });
     }
     if let Some(value) = pi_ai::api::auth::env_api_key(provider) {
         return Some(ResolvedKey {
@@ -271,27 +271,25 @@ pub fn resolve_api_key(
             material: AuthMaterialKind::ApiKey,
         });
     }
-    if let Some(raw) = store.api_key_entry(provider) {
-        if let Some(value) = resolve_config_value(raw, diags) {
-            if !value.is_empty() {
-                return Some(ResolvedKey {
-                    value,
-                    source: KeySource::AuthFile,
-                    material: AuthMaterialKind::ApiKey,
-                });
-            }
-        }
+    if let Some(raw) = store.api_key_entry(provider)
+        && let Some(value) = resolve_config_value(raw, diags)
+        && !value.is_empty()
+    {
+        return Some(ResolvedKey {
+            value,
+            source: KeySource::AuthFile,
+            material: AuthMaterialKind::ApiKey,
+        });
     }
-    if let Some(raw) = store.oauth_access_entry(provider) {
-        if let Some(value) = resolve_config_value(raw, diags) {
-            if !value.is_empty() {
-                return Some(ResolvedKey {
-                    value,
-                    source: KeySource::AuthFile,
-                    material: AuthMaterialKind::OauthAccessToken,
-                });
-            }
-        }
+    if let Some(raw) = store.oauth_access_entry(provider)
+        && let Some(value) = resolve_config_value(raw, diags)
+        && !value.is_empty()
+    {
+        return Some(ResolvedKey {
+            value,
+            source: KeySource::AuthFile,
+            material: AuthMaterialKind::OauthAccessToken,
+        });
     }
     None
 }

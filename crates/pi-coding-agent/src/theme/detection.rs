@@ -15,8 +15,6 @@ pub enum TerminalTheme {
 /// How the terminal background was determined.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DetectionSource {
-    /// Direct terminal background query (OSC 11).
-    TerminalBackground,
     /// `COLORFGBG` environment variable.
     ColorFgbg,
     /// No hint found; defaulted to dark.
@@ -206,14 +204,5 @@ where
         source: DetectionSource::Fallback,
         detail: "no terminal background hint found".to_string(),
         confidence: DetectionConfidence::Low,
-    }
-}
-
-/// The default theme name, based on the detected terminal background.
-/// Mirrors `getDefaultTheme` (reads the real process environment).
-pub fn get_default_theme() -> String {
-    match detect_terminal_background(std::env::vars()).theme {
-        TerminalTheme::Dark => "dark".to_string(),
-        TerminalTheme::Light => "light".to_string(),
     }
 }

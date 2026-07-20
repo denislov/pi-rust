@@ -1,37 +1,15 @@
 use crate::support;
 
-use std::collections::HashMap;
 use std::fs;
 use std::sync::{Arc, Mutex};
 
 use pi_agent_core::api::resources::AgentResources;
 use pi_ai::api::conversation::{AssistantMessage, ContentBlock, Context, StopReason};
-use pi_ai::api::model::{Model, ModelCost, ModelInput};
+use pi_ai::api::model::Model;
 use pi_ai::api::provider::ApiProvider;
 use pi_ai::api::stream::{AssistantMessageEvent, EventStream, StreamOptions};
 use pi_ai::api::testing::FauxProvider;
-use pi_coding_agent::api::cli::command::{
-    CliArgs, CliDiagnostic, CliDiagnosticSeverity, CliError, help_text, parse_args,
-    render_diagnostics,
-};
-use pi_coding_agent::api::cli::configuration::{
-    ModelRotation, ModelRotationEntry, TuiMode, parse_model_rotation,
-};
-use pi_coding_agent::api::cli::print::PrintModeOptions;
-use pi_coding_agent::api::cli::resources::{
-    ContextFile, ResourceLoadOptions, ToolFilter, build_agent_resources, builtin_tools,
-    discover_context_files, filter_tools, resolve_resource_paths,
-};
 use pi_coding_agent::api::cli::runner::CliOutput;
-use pi_coding_agent::api::cli::runtime::{
-    CliRunOptions, PromptInvocation, PromptRunOptions, SessionMode,
-};
-use pi_coding_agent::api::cli::theme::{
-    ColorValue, DetectionConfidence, DetectionSource, REQUIRED_TOKEN_KEYS, ResolveError,
-    ResolvedColor, ResolvedTheme, TerminalTheme, ThemeBg, ThemeColor, ThemeExportColors, ThemeJson,
-    builtin_dark, detect_terminal_background, get_resolved_theme_colors, get_theme_export_colors,
-    get_theme_for_rgb_color, is_light_theme, parse_osc11_background_color, resolve,
-};
 use pi_coding_agent::api::client::{
     CodingAgentClientConnection, CodingAgentClientId, CodingAgentContextSnapshot,
     CodingAgentControlId, CodingAgentControlKind, CodingAgentControlRejectionReason,
@@ -71,6 +49,8 @@ use pi_coding_agent::api::operation::{
     SelfHealingEditModelRepairOptions, SelfHealingEditOutcome, SelfHealingEditRepairAttempt,
     SelfHealingEditReplacement, SelfHealingEditRequest,
 };
+use pi_coding_agent::api::operation::{PromptInvocation, PromptRunOptions};
+use pi_coding_agent::api::protocol::PrintModeOptions;
 use pi_coding_agent::api::protocol::{
     CompactionProtocolResult, CompactionReason, ProtocolDelegationFoldedBlock, ProtocolEvent,
     ProtocolSelfHealingEditCheckOutput, ProtocolSelfHealingEditReplacement, RpcCapabilities,
@@ -78,6 +58,7 @@ use pi_coding_agent::api::protocol::{
     RpcResponse, RpcSelfHealingEditModelRepair, RpcSelfHealingEditReplacement, RpcSessionState,
     StreamingBehavior, ToolExecutionResult,
 };
+use pi_coding_agent::api::runtime::{CliRunOptions, SessionMode};
 use pi_coding_agent::api::runtime::{
     CodingAgentCapabilityControl, CodingAgentCapabilityRevocationOutcome, CodingAgentOperationTask,
     CodingAgentRuntimeShutdownHandle, CodingAgentSession, CodingAgentSessionOptions,
@@ -479,41 +460,9 @@ async fn outcome_acknowledgement_is_distinct_from_event_acknowledgement() {
     assert!(connection.state().unwrap().submitted_operation.is_none());
 }
 
-fn model(api: &str) -> Model {
-    Model {
-        id: "test-model".into(),
-        name: "Test Model".into(),
-        api: api.into(),
-        provider: "test".into(),
-        base_url: String::new(),
-        reasoning: false,
-        thinking_level_map: None,
-        input: vec![ModelInput::Text],
-        cost: ModelCost {
-            known: true,
-            input: 0.0,
-            output: 0.0,
-            cache_read: 0.0,
-            cache_write: 0.0,
-        },
-        context_window: 0,
-        max_tokens: 0,
-        headers: None,
-        compat: None,
-    }
-}
-
 #[test]
 fn public_api_symbols_are_importable() {
-    let args = CliArgs::default();
-    assert_eq!(args.max_turns, None);
-    assert_eq!(TuiMode::default(), TuiMode::Inline);
-
-    let parsed = parse_args(vec!["-p".to_string(), "hello".to_string()]).unwrap();
-    assert!(parsed.print);
-    assert_eq!(parsed.prompt.as_deref(), Some("hello"));
-
-    let print_options = PrintModeOptions::new("hello", model("public-api-test"));
+    let print_options = PrintModeOptions::new("hello", support::model("public-api-test"));
     assert_eq!(print_options.prompt, "hello");
     assert!(!print_options.register_builtins);
 
@@ -532,31 +481,7 @@ fn public_api_symbols_are_importable() {
     let invocation = PromptInvocation::Text("hello".into());
     assert!(matches!(invocation, PromptInvocation::Text(_)));
 
-    let tools = builtin_tools(std::env::current_dir().unwrap());
-    let read_only = filter_tools(
-        tools,
-        &ToolFilter {
-            allow: vec!["read".into()],
-            ..ToolFilter::default()
-        },
-    );
-    assert_eq!(read_only.len(), 1);
-    assert_eq!(read_only[0].name, "read");
-
     let _prompt_run_type_name = std::any::type_name::<PromptRunOptions>();
-
-    let diagnostic_text = render_diagnostics(&[CliDiagnostic {
-        severity: CliDiagnosticSeverity::Warning,
-        message: "heads up".into(),
-        source: None,
-        code: None,
-    }]);
-    assert_eq!(diagnostic_text, "warning: heads up\n");
-
-    let err = CliError::MissingPrompt;
-    assert_eq!(err.to_string(), "missing prompt");
-
-    assert!(help_text().contains("Usage:"));
 }
 
 #[test]
@@ -1025,7 +950,7 @@ async fn shutdown_drains_slow_reconnect_terminal_event_before_runtime_shutdown_a
     );
     let prompt = PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
         prompt: "slow reconnect".into(),
-        model: model(api),
+        model: support::model(api),
         api_key: None,
         auth_diagnostics: Vec::new(),
         system_prompt: Some("test".into()),
@@ -1129,7 +1054,7 @@ async fn shutdown_drains_admitted_work_before_lifecycle_event_and_receiver_close
     );
     let prompt = PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
         prompt: "drain me".into(),
-        model: model(api),
+        model: support::model(api),
         api_key: None,
         auth_diagnostics: Vec::new(),
         system_prompt: Some("test".into()),
@@ -1414,7 +1339,7 @@ async fn submission_lease_canonical_run_clears_draft_and_records_terminal() {
     );
     let prompt = PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
         prompt: "tracked prompt".into(),
-        model: model(api),
+        model: support::model(api),
         api_key: None,
         auth_diagnostics: Vec::new(),
         system_prompt: Some("test".into()),
@@ -1748,116 +1673,6 @@ fn typed_event_family(event: &CodingAgentProductEventKind) -> CodingAgentProduct
 #[allow(dead_code)]
 fn typed_product_event_family(event: &CodingAgentProductEvent) -> CodingAgentProductEventFamily {
     event.family()
-}
-
-#[test]
-fn model_rotation_surface_is_importable_from_api_facade() {
-    let rotation = parse_model_rotation("gpt-4*:high,claude-*:medium").unwrap();
-    let _rotation_type_name = std::any::type_name::<ModelRotation>();
-    let _entry_type_name = std::any::type_name::<ModelRotationEntry>();
-
-    assert_eq!(rotation.entries.len(), 2);
-    assert_eq!(rotation.entries[0].pattern, "gpt-4*");
-    assert!(rotation.matches("gpt-4.1"));
-    assert!(rotation.matches("claude-sonnet"));
-    assert!(!rotation.matches("mistral-large"));
-}
-
-#[test]
-fn resource_surface_is_importable_from_api_facade() {
-    let temp = tempfile::tempdir().unwrap();
-    let workspace = temp.path().join("workspace");
-    let project = workspace.join("project");
-    let agent_dir = temp.path().join("agent-home");
-    std::fs::create_dir_all(&project).unwrap();
-    std::fs::create_dir_all(&agent_dir).unwrap();
-    std::fs::write(workspace.join("AGENTS.md"), "project instructions").unwrap();
-
-    let options = ResourceLoadOptions {
-        no_skills: true,
-        no_prompt_templates: true,
-        no_themes: true,
-        skill_paths: vec!["skills".into()],
-        prompt_paths: vec!["prompts".into()],
-        theme_paths: vec!["themes".into()],
-        theme: Some("dark".into()),
-    };
-    assert!(options.no_skills);
-
-    let resolved = resolve_resource_paths(&["relative".into()], &project);
-    assert_eq!(resolved, vec![project.join("relative")]);
-
-    let context_files = discover_context_files(&project, &agent_dir, false);
-    let _context_file_type_name = std::any::type_name::<ContextFile>();
-    assert_eq!(context_files.len(), 1);
-    assert_eq!(context_files[0].content, "project instructions");
-
-    let resources = build_agent_resources(Vec::new(), Vec::new());
-    let default_resources = AgentResources::default();
-    assert_eq!(resources.skills.len(), default_resources.skills.len());
-    assert_eq!(
-        resources.prompt_templates.len(),
-        default_resources.prompt_templates.len()
-    );
-}
-
-#[test]
-fn theme_model_types_are_importable_from_api_facade() {
-    let _theme_type_name = std::any::type_name::<ThemeJson>();
-    let _resolved_type_name = std::any::type_name::<ResolvedTheme>();
-    let _error_type_name = std::any::type_name::<ResolveError>();
-    assert!(REQUIRED_TOKEN_KEYS.contains(&"text"));
-    assert_eq!(ThemeColor::Text, ThemeColor::from_key("text").unwrap());
-    assert_eq!(ThemeBg::UserMessageBg.key(), "userMessageBg");
-
-    let parsed = ColorValue::parse(&serde_json::json!("#010203")).unwrap();
-    assert_eq!(parsed, ColorValue::Hex(1, 2, 3));
-    let vars = HashMap::from([("accent".to_string(), parsed.clone())]);
-    assert_eq!(
-        resolve(&ColorValue::Var("accent".into()), &vars),
-        Ok(ResolvedColor::Hex(1, 2, 3))
-    );
-
-    let theme = builtin_dark();
-    assert!(theme.missing_tokens().is_empty());
-    let resolved = theme.resolve_colors().unwrap();
-    let _ = resolved.fg(ThemeColor::Text);
-    let _ = resolved.bg(ThemeBg::UserMessageBg);
-}
-
-#[test]
-fn theme_detection_and_export_helpers_are_importable_from_api_facade() {
-    assert_eq!(
-        parse_osc11_background_color("\x1b]11;#fefefe\x07"),
-        Some((254, 254, 254))
-    );
-    assert_eq!(
-        get_theme_for_rgb_color((250, 250, 250)),
-        TerminalTheme::Light
-    );
-    assert_eq!(get_theme_for_rgb_color((1, 2, 3)), TerminalTheme::Dark);
-
-    let detection = detect_terminal_background([("COLORFGBG", "0;15")]);
-    assert_eq!(detection.theme, TerminalTheme::Light);
-    assert_eq!(detection.source, DetectionSource::ColorFgbg);
-    assert_eq!(detection.confidence, DetectionConfidence::High);
-
-    assert!(is_light_theme(Some("light")));
-    assert!(!is_light_theme(Some("dark")));
-
-    let theme = builtin_dark();
-    let export_colors = get_theme_export_colors(&theme);
-    let _export_type_name = std::any::type_name::<ThemeExportColors>();
-    assert!(
-        export_colors
-            .page_bg
-            .as_deref()
-            .unwrap_or("#000000")
-            .starts_with('#')
-    );
-
-    let resolved_colors = get_resolved_theme_colors(&theme, "#ffffff");
-    assert!(resolved_colors.iter().any(|(key, _)| key == "text"));
 }
 
 #[test]
@@ -2227,7 +2042,7 @@ async fn coding_session_self_healing_edit_uses_model_repair_strategy() {
     );
     let repair_options = PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
         prompt: String::new(),
-        model: model(api),
+        model: support::model(api),
         api_key: None,
         auth_diagnostics: Vec::new(),
         system_prompt: Some("Return only self-healing edit repair JSON.".into()),
@@ -2235,9 +2050,9 @@ async fn coding_session_self_healing_edit_uses_model_repair_strategy() {
         tools: Vec::new(),
         register_builtins: false,
         ai_client: Some(_provider_guard.ai_client()),
-        session: Some(
-            pi_coding_agent::api::cli::runtime::SessionRunOptions::disabled(workspace.clone()),
-        ),
+        session: Some(pi_coding_agent::api::runtime::SessionRunOptions::disabled(
+            workspace.clone(),
+        )),
         session_target: None,
         session_name: None,
         thinking_level: None,
@@ -2384,7 +2199,7 @@ async fn coding_session_self_healing_edit_model_repair_invalid_json_preserves_ch
     );
     let repair_options = PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
         prompt: String::new(),
-        model: model(api),
+        model: support::model(api),
         api_key: None,
         auth_diagnostics: Vec::new(),
         system_prompt: Some("Return only self-healing edit repair JSON.".into()),
@@ -2392,9 +2207,9 @@ async fn coding_session_self_healing_edit_model_repair_invalid_json_preserves_ch
         tools: Vec::new(),
         register_builtins: false,
         ai_client: Some(_provider_guard.ai_client()),
-        session: Some(
-            pi_coding_agent::api::cli::runtime::SessionRunOptions::disabled(workspace.clone()),
-        ),
+        session: Some(pi_coding_agent::api::runtime::SessionRunOptions::disabled(
+            workspace.clone(),
+        )),
         session_target: None,
         session_name: None,
         thinking_level: None,

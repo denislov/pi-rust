@@ -11,6 +11,7 @@ use crate::operations::prompt::context::{
     CodingDiagnostic, DelegationRequest, PromptTurnContext, PromptTurnIds, PromptTurnOptions,
     PromptTurnOutcome,
 };
+use crate::operations::prompt::runner::PromptTurnRunner;
 use crate::profiles::{
     AgentProfile, ProfileId, ProfileKind, ProfileRegistry, TeamProfile, TeamSupervisor,
 };
@@ -19,7 +20,6 @@ use crate::runtime::control::{OperationControl, OperationKind};
 use crate::runtime::facade::{CodingSessionError, PendingDelegationConfirmationState};
 use crate::runtime::scheduler::OperationScheduler;
 use crate::services::event::EventService;
-use crate::services::workflow::WorkflowService;
 use crate::session::id::{Clock, IdGenerator, SystemClock, SystemIdGenerator};
 
 const MAX_TEAM_MEMBER_CONCURRENCY: usize = 2;
@@ -105,16 +105,6 @@ pub struct AgentTeamOutcome {
 
 pub(crate) struct AgentTeamRunner;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AgentTeamStep {
-    Start,
-    PlanSubtasks,
-    RunMemberAgents,
-    CollectMemberResult,
-    MergeOrRejectResult,
-    Finalize,
-}
-
 impl AgentTeamRunner {
     pub(crate) fn new() -> Result<Self, CodingSessionError> {
         Ok(Self)
@@ -125,39 +115,37 @@ impl AgentTeamRunner {
         ctx: &mut AgentTeamContext,
         cancellation: Option<CancellationToken>,
     ) -> Result<(), CodingSessionError> {
-        let mut step = AgentTeamStep::Start;
-        loop {
-            if cancellation
-                .as_ref()
-                .is_some_and(|token| token.is_cancelled())
-                && !matches!(step, AgentTeamStep::RunMemberAgents)
-            {
-                let error = CodingSessionError::Cancelled;
-                ctx.fail(error.clone());
-                return Err(error);
-            }
-            let result = match step {
-                AgentTeamStep::Start => ctx.start_team(),
-                AgentTeamStep::PlanSubtasks => ctx.plan_subtasks(),
-                AgentTeamStep::RunMemberAgents => ctx.run_member_agents().await,
-                AgentTeamStep::CollectMemberResult => ctx.collect_member_result(),
-                AgentTeamStep::MergeOrRejectResult => ctx.merge_or_reject_result().await,
-                AgentTeamStep::Finalize => ctx.finalize_team(),
-            };
-            if let Err(error) = result {
-                return Err(CodingSessionError::Workflow {
-                    message: ctx.fail(error),
-                });
-            }
-            step = match step {
-                AgentTeamStep::Start => AgentTeamStep::PlanSubtasks,
-                AgentTeamStep::PlanSubtasks => AgentTeamStep::RunMemberAgents,
-                AgentTeamStep::RunMemberAgents => AgentTeamStep::CollectMemberResult,
-                AgentTeamStep::CollectMemberResult => AgentTeamStep::MergeOrRejectResult,
-                AgentTeamStep::MergeOrRejectResult => AgentTeamStep::Finalize,
-                AgentTeamStep::Finalize => return Ok(()),
-            };
+        let result: Result<(), CodingSessionError> = async {
+            Self::check_cancellation(&cancellation)?;
+            ctx.start_team()?;
+            Self::check_cancellation(&cancellation)?;
+            ctx.plan_subtasks()?;
+            ctx.run_member_agents().await?;
+            Self::check_cancellation(&cancellation)?;
+            ctx.collect_member_result()?;
+            Self::check_cancellation(&cancellation)?;
+            ctx.merge_or_reject_result().await?;
+            Self::check_cancellation(&cancellation)?;
+            ctx.finalize_team()?;
+            Ok(())
         }
+        .await;
+        if let Err(error) = &result {
+            ctx.record_failure_terminal(error);
+        }
+        result
+    }
+
+    fn check_cancellation(
+        cancellation: &Option<CancellationToken>,
+    ) -> Result<(), CodingSessionError> {
+        if cancellation
+            .as_ref()
+            .is_some_and(|token| token.is_cancelled())
+        {
+            return Err(CodingSessionError::Cancelled);
+        }
+        Ok(())
     }
 }
 
@@ -177,7 +165,7 @@ pub(crate) struct AgentTeamContext {
     parent_capability_snapshot: Option<OperationCapabilitySnapshot>,
     child_capability_snapshot: Option<OperationCapabilitySnapshot>,
     pending_delegation_confirmations: Vec<PendingDelegationConfirmationState>,
-    failure_error: Option<CodingSessionError>,
+    failure_terminal_recorded: bool,
     defer_terminal_publication: bool,
 }
 
@@ -204,7 +192,7 @@ impl AgentTeamContext {
             parent_capability_snapshot: None,
             child_capability_snapshot: None,
             pending_delegation_confirmations: Vec::new(),
-            failure_error: None,
+            failure_terminal_recorded: false,
             defer_terminal_publication: false,
         }
     }
@@ -220,10 +208,6 @@ impl AgentTeamContext {
     pub(crate) fn with_deferred_terminal_publication(mut self) -> Self {
         self.defer_terminal_publication = true;
         self
-    }
-
-    pub(crate) fn take_failure_error(&mut self) -> Option<CodingSessionError> {
-        self.failure_error.take()
     }
 
     pub(crate) fn ensure_failure_terminal_draft(&self, error: &CodingSessionError) {
@@ -471,10 +455,7 @@ impl AgentTeamContext {
         child_context.set_capability_snapshot(capability_snapshot);
 
         let mut finished_outcome = None;
-        let child_delegations = match WorkflowService::new()
-            .run_prompt_subflow_typed_for_agent_team_member(&mut child_context)
-            .await
-        {
+        let child_delegations = match PromptTurnRunner::new()?.run_typed(&mut child_context).await {
             Ok(_) => Some((
                 child_context
                     .authorize_delegation_requests_with_lineage(
@@ -623,7 +604,6 @@ impl AgentTeamContext {
         child_delegation_depth: usize,
     ) -> Result<(), CodingSessionError> {
         let outcome = Box::pin(crate::operations::delegation::execution::execute_agent(
-            &WorkflowService::new(),
             self.registry.clone(),
             self.event_service.clone(),
             self.operation_control.clone(),
@@ -646,7 +626,6 @@ impl AgentTeamContext {
         child_delegation_depth: usize,
     ) -> Result<(), CodingSessionError> {
         let outcome = Box::pin(crate::operations::delegation::execution::execute_team(
-            &WorkflowService::new(),
             self.registry.clone(),
             self.event_service.clone(),
             self.operation_control.clone(),
@@ -699,10 +678,10 @@ impl AgentTeamContext {
         diagnostics
     }
 
-    fn fail(&mut self, error: CodingSessionError) -> String {
-        if self.failure_error.is_none() {
-            self.failure_error = Some(error.clone());
-            match &error {
+    fn record_failure_terminal(&mut self, error: &CodingSessionError) {
+        if !self.failure_terminal_recorded {
+            self.failure_terminal_recorded = true;
+            match error {
                 CodingSessionError::Cancelled => {
                     let draft = EventService::agent_team_aborted_draft(
                         self.operation_id.clone(),
@@ -721,7 +700,7 @@ impl AgentTeamContext {
                     let draft = EventService::agent_team_failed_draft(
                         self.operation_id.clone(),
                         self.options.team_id.clone(),
-                        &error,
+                        error,
                     );
                     if self.defer_terminal_publication {
                         self.event_service
@@ -733,7 +712,6 @@ impl AgentTeamContext {
                 }
             }
         }
-        error.to_string()
     }
 }
 
@@ -760,8 +738,8 @@ mod tests {
             "op_team".into(),
         );
 
-        context.fail(CodingSessionError::Cancelled);
-        context.fail(CodingSessionError::Provider {
+        context.record_failure_terminal(&CodingSessionError::Cancelled);
+        context.record_failure_terminal(&CodingSessionError::Provider {
             message: "late failure".into(),
         });
 
@@ -778,9 +756,6 @@ mod tests {
             }) if operation_id == "op_team" && team_id == "review-team"
         ));
         assert_eq!(receiver.try_recv().unwrap(), None);
-        assert_eq!(
-            context.take_failure_error(),
-            Some(CodingSessionError::Cancelled)
-        );
+        assert!(context.failure_terminal_recorded);
     }
 }

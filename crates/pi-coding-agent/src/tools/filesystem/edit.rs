@@ -227,10 +227,10 @@ fn parse_edits(args: &serde_json::Value) -> Result<Vec<Edit>, String> {
         .get("edits")
         .cloned()
         .unwrap_or(serde_json::Value::Null);
-    if let Some(s) = edits_val.as_str() {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(s) {
-            edits_val = v;
-        }
+    if let Some(s) = edits_val.as_str()
+        && let Ok(v) = serde_json::from_str::<serde_json::Value>(s)
+    {
+        edits_val = v;
     }
     let mut out: Vec<Edit> = Vec::new();
     if let Some(arr) = edits_val.as_array() {
@@ -326,9 +326,7 @@ async fn edit_tool_execute_with_operations(
             .finish_success()
             .map(self_healing_outcome_to_tool_output)
             .map_err(coding_session_error_message),
-        Err(error) => Err(coding_session_error_message(
-            context.take_failure_error().unwrap_or(error),
-        )),
+        Err(error) => Err(coding_session_error_message(error)),
     }
 }
 

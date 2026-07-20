@@ -5,7 +5,7 @@ use pi_coding_agent::api::operation::{AgentInvocationOptions, AgentInvocationOut
 use pi_coding_agent::api::client::{CodingAgentSnapshot, CodingAgentSnapshotCursor};
 use pi_coding_agent::api::extension::{CodingAgentExtensionActivationRequest, CodingAgentExtensionPermission, CodingAgentInstalledExtensionPackage};
 use pi_coding_agent::api::view::{CodingAgentPluginDiagnostic, CodingAgentSessionExport, CodingAgentSessionSummary, CodingAgentSessionView, ProfileId};
-use pi_coding_agent::api::cli::runtime::{PromptInvocation};
+use pi_coding_agent::api::operation::{PromptInvocation};
 
 fn prompt() -> PromptTurnOptions {
     PromptTurnOptions::new(PromptInvocation::Text("fixture".into()))

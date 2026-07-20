@@ -26,3 +26,33 @@ fn runtime_service_validates_tools_before_provider_visibility() {
         "RuntimeService must not bypass tool validation with Agent::add_tool(tool)"
     );
 }
+
+#[test]
+fn product_output_reuses_core_shaping_without_absorbing_product_policy() {
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let output = fs::read_to_string(crate_root.join("src/tools/output.rs"))
+        .expect("read product output adapter");
+    let shell =
+        fs::read_to_string(crate_root.join("src/tools/shell.rs")).expect("read shell tool source");
+
+    assert!(
+        output.contains("pi_agent_core::api::execution"),
+        "product output adapter must reuse the frozen core execution facade"
+    );
+    assert!(
+        output.contains("pi_agent_core::api::execution::truncate_head"),
+        "product head adapter must delegate truncated output shaping to core"
+    );
+    assert!(
+        !output.contains("pub fn format_size("),
+        "product tools must not restore a duplicate size formatter"
+    );
+    assert!(
+        shell.contains("truncate_tail("),
+        "shell output must use the shared core tail truncation contract"
+    );
+    assert!(
+        shell.contains("[Output truncated:"),
+        "shell's user-facing truncation marker remains product-owned"
+    );
+}

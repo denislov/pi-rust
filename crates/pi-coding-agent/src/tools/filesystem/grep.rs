@@ -1,6 +1,6 @@
 use crate::runtime::facade::FilesystemCapability;
 use crate::tools::filesystem::path::resolve_to_cwd;
-use crate::tools::output::{DEFAULT_MAX_BYTES, TruncationOptions, format_size, truncate_head};
+use crate::tools::output::{DEFAULT_MAX_BYTES, TruncationLimit, format_size, truncate_head};
 use globset::{GlobBuilder, GlobMatcher};
 use ignore::{DirEntry, WalkBuilder};
 use pi_agent_core::api::tool::{AgentTool, AgentToolOutput, ToolFn};
@@ -304,9 +304,9 @@ pub async fn grep_execute(
     let output = output_lines.join("\n");
     let truncation = truncate_head(
         &output,
-        &TruncationOptions {
-            max_lines: Some(usize::MAX),
-            max_bytes: Some(DEFAULT_MAX_BYTES),
+        TruncationLimit {
+            max_lines: usize::MAX,
+            max_bytes: DEFAULT_MAX_BYTES,
         },
     );
     let mut output = truncation.content;

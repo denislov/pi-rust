@@ -290,6 +290,10 @@ impl CodingDiagnostic {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "typed prompt outcome preserves the final provider message without a second allocation"
+)]
 pub enum PromptTurnOutcome {
     Success {
         operation_id: String,

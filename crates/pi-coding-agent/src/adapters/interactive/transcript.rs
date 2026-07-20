@@ -178,11 +178,11 @@ impl TranscriptViewState {
             .collect::<HashSet<_>>();
         let new_last = entries.last().map(|(block_id, _)| *block_id);
         let selected_is_valid = self.selected.is_some_and(|id| visible_ids.contains(&id));
-        if !selected_is_valid || self.selected == self.last_selectable {
-            if self.selected != new_last {
-                self.selected = new_last;
-                changed = true;
-            }
+        if (!selected_is_valid || self.selected == self.last_selectable)
+            && self.selected != new_last
+        {
+            self.selected = new_last;
+            changed = true;
         }
         self.last_selectable = new_last;
 
@@ -1006,13 +1006,13 @@ fn delegation_args(
         "task": task,
         "status": status,
     });
-    if let Some(child_operation_id) = child_operation_id {
-        if let Some(object) = value.as_object_mut() {
-            object.insert(
-                "childOperationId".to_string(),
-                serde_json::Value::String(child_operation_id),
-            );
-        }
+    if let Some(child_operation_id) = child_operation_id
+        && let Some(object) = value.as_object_mut()
+    {
+        object.insert(
+            "childOperationId".to_string(),
+            serde_json::Value::String(child_operation_id),
+        );
     }
     value
 }

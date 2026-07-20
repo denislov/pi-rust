@@ -91,6 +91,10 @@ impl SessionEventEnvelope {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data")]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "durable session event variants retain their versioned serialized payload shape"
+)]
 pub(crate) enum SessionEventData {
     #[serde(rename = "session.created")]
     SessionCreated { cwd: Option<String> },

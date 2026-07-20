@@ -655,11 +655,11 @@ impl TreeSelectorState {
         }
 
         // Typing adds to label.
-        if let InputEvent::Key(ke) = event {
-            if let Key::Char(ch) = &ke.key {
-                self.label_input.push_str(ch);
-                return TreeSelectorInput::Handled;
-            }
+        if let InputEvent::Key(ke) = event
+            && let Key::Char(ch) = &ke.key
+        {
+            self.label_input.push_str(ch);
+            return TreeSelectorInput::Handled;
         }
 
         TreeSelectorInput::Handled
@@ -1531,17 +1531,15 @@ fn render_tree_row(
     let active_marker = if node.is_active { "• " } else { "" };
     let mut text = format!("{cursor}{prefix}{fold_marker}{active_marker}");
 
-    if let Some(label) = &node.label {
-        if !label.is_empty() {
-            text.push_str(&format!("[{}] ", label));
-        }
+    if let Some(label) = &node.label
+        && !label.is_empty()
+    {
+        text.push_str(&format!("[{}] ", label));
     }
 
-    if show_timestamps {
-        if let Some(ts) = &node.label_timestamp {
-            let formatted = format_label_timestamp(ts);
-            text.push_str(&format!("{formatted} "));
-        }
+    if show_timestamps && let Some(ts) = &node.label_timestamp {
+        let formatted = format_label_timestamp(ts);
+        text.push_str(&format!("{formatted} "));
     }
 
     text.push_str(&node.display_text);

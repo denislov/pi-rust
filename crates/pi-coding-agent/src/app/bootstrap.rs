@@ -165,6 +165,11 @@ fn first_model_for_provider(provider: &str) -> Option<Model> {
     models.into_iter().next()
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "public bootstrap compatibility keeps established configuration inputs explicit"
+)]
+#[cfg(test)]
 pub fn build_agent_config(
     model: Model,
     system_prompt: Option<String>,
@@ -188,6 +193,10 @@ pub fn build_agent_config(
     )
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "bootstrap assembly keeps resolved authentication and runtime inputs explicit"
+)]
 pub(crate) fn build_agent_config_with_auth_diagnostics(
     model: Model,
     system_prompt: Option<String>,

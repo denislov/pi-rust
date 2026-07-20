@@ -2,7 +2,6 @@ const AGENT_INVOCATION_RUNNER: &str =
     include_str!("../../src/operations/agent_invocation/runner.rs");
 const AGENT_TEAM_RUNNER: &str = include_str!("../../src/operations/team_invocation/runner.rs");
 const BRANCH_SUMMARY_SERVICE: &str = include_str!("../../src/operations/branch_summary/mod.rs");
-const WORKFLOW_SERVICE: &str = include_str!("../../src/services/workflow.rs");
 const MANUAL_COMPACTION_SERVICE: &str = include_str!("../../src/operations/compaction/mod.rs");
 const PROMPT_CONTEXT: &str = include_str!("../../src/operations/prompt/context.rs");
 const PROMPT_EXECUTION: &str = include_str!("../../src/operations/prompt/mod.rs");
@@ -10,6 +9,7 @@ const RPC_STATS: &str = include_str!("../../src/adapters/rpc/stats.rs");
 const INTERACTIVE_EVENT_BRIDGE: &str =
     include_str!("../../src/adapters/interactive/event_bridge.rs");
 const INTERACTIVE_LOOP: &str = include_str!("../../src/adapters/interactive/loop.rs");
+const INTERACTIVE_ROOT: &str = include_str!("../../src/adapters/interactive/root.rs");
 const SESSION_SERVICE: &str = include_str!("../../src/session/service.rs");
 const SESSION_FACADE_SERVICE: &str = include_str!("../../src/services/session.rs");
 const PUBLIC_EVENT: &str = include_str!("../../src/events/mod.rs");
@@ -455,20 +455,28 @@ fn workflow_flows_emit_diagnostics_through_event_service_helpers() {
 
 #[test]
 fn nested_workflows_use_explicit_typed_runners() {
-    for method in [
-        "run_prompt_subflow_typed_for_agent_invocation",
-        "run_prompt_subflow_typed_for_agent_team_member",
+    for (name, source) in [
+        ("agent_invocation_runner", AGENT_INVOCATION_RUNNER),
+        ("agent_team_runner", AGENT_TEAM_RUNNER),
     ] {
         assert!(
-            WORKFLOW_SERVICE.contains(method),
-            "WorkflowService should expose explicit nested typed runner `{method}`"
+            source.contains("PromptTurnRunner::new()?.run_typed"),
+            "{name} should invoke PromptTurnRunner directly for nested prompt subflows"
+        );
+        assert!(
+            !source.contains("WorkflowService"),
+            "{name} must not reference the removed WorkflowService"
         );
     }
 
     let delegation_execution = include_str!("../../src/operations/delegation/execution.rs");
     assert!(delegation_execution.contains("OperationScheduler::admit_child"));
-    assert!(delegation_execution.contains("run_agent_invocation"));
-    assert!(delegation_execution.contains("run_agent_team"));
+    assert!(!delegation_execution.contains("WorkflowService"));
+    assert!(
+        delegation_execution.contains("AgentInvocationRunner::new()")
+            && delegation_execution.contains("AgentTeamRunner::new()"),
+        "delegation execution should invoke typed runners directly"
+    );
 
     for (name, source) in [
         ("agent_invocation_runner", AGENT_INVOCATION_RUNNER),
@@ -478,10 +486,11 @@ fn nested_workflows_use_explicit_typed_runners() {
             "PromptTurnFlow::new()?.run",
             "AgentInvocationFlow::new()?.run",
             "AgentTeamFlow::new()?.run",
+            "WorkflowService::new()",
         ] {
             assert!(
                 !source.contains(needle),
-                "{name} should route nested workflow execution through WorkflowService subflow runners instead of `{needle}`"
+                "{name} should route nested workflow execution through direct typed runners instead of `{needle}`"
             );
         }
     }
@@ -644,16 +653,20 @@ fn interactive_projection_consumes_product_events() {
         "interactive projection should consume product events through UiProjection"
     );
     assert!(
-        INTERACTIVE_LOOP.contains("ui_projection: &mut UiProjection"),
-        "interactive prompt-task event application should receive a UiProjection instead of projecting directly through CodingEventBridge"
+        INTERACTIVE_ROOT.contains("shared_projection: UiProjection"),
+        "interactive root should own the sole ordered UiProjection"
     );
     assert!(
-        INTERACTIVE_LOOP.contains("UiProjection::from_snapshot"),
-        "interactive prompt-task event application should reset projection state from UiSnapshot"
+        INTERACTIVE_ROOT.contains("self.shared_projection = UiProjection::from_snapshot(snapshot)"),
+        "interactive root should reset projection state from UiSnapshot"
     );
     assert!(
-        INTERACTIVE_LOOP.contains("ui_projection.apply_product_event"),
-        "interactive prompt-task event application should consume ProductEvent through UiProjection"
+        INTERACTIVE_ROOT.contains("self.shared_projection.apply_product_event(event)"),
+        "interactive root should consume ProductEvent through its UiProjection"
+    );
+    assert!(
+        !INTERACTIVE_LOOP.contains("let mut ui_projection"),
+        "interactive loop must not maintain a second projection owner"
     );
 }
 
@@ -662,7 +675,7 @@ fn stable_facade_and_adapters_reject_raw_event_projection() {
     let stable_api = region(
         CRATE_ROOT,
         "pub mod api {",
-        "#[cfg(any(test, feature = \"test-harness\", debug_assertions))]",
+        "#[cfg(any(test, feature = \"test-support\"))]",
     );
     assert!(
         !stable_api.contains("CodingAgentEvent"),

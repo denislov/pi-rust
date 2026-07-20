@@ -3,7 +3,7 @@ use crate::support;
 use pi_ai::api::model::{Model, ModelCost, ModelInput};
 use pi_ai::api::testing::FauxProvider;
 use pi_coding_agent::api::cli::runner::run_cli_with_options;
-use pi_coding_agent::api::cli::runtime::{CliRunOptions, SessionMode, SessionRunOptions};
+use pi_coding_agent::api::runtime::{CliRunOptions, SessionMode, SessionRunOptions};
 use std::sync::Arc;
 use support::ProviderGuard;
 

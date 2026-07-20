@@ -61,7 +61,7 @@ pub enum CodingSessionError {
     SelfHealingEditFailed {
         message: String,
         diagnostics: Vec<SelfHealingEditDiagnostic>,
-        check_output: Option<SelfHealingEditCheckOutput>,
+        check_output: Option<Box<SelfHealingEditCheckOutput>>,
         repair_attempts: Vec<SelfHealingEditRepairAttempt>,
     },
     #[error("provider error: {message}")]

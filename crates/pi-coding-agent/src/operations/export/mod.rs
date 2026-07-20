@@ -4,7 +4,6 @@ use crate::profiles::{ProfileId, ProfileKind};
 use crate::runtime::capability::{OperationCapabilitySnapshot, SessionReadCapability};
 use crate::runtime::error::CodingSessionError;
 use crate::runtime::facade::context::CodingAgentSessionSummary;
-use crate::services::workflow::WorkflowService;
 use crate::session::event::{DiagnosticLevel, PersistedContentBlock, PersistedDelegationStatus};
 use crate::session::replay::{MessageStatus, SessionReplay, ToolCallStatus, TranscriptItem};
 use crate::session::service::SessionPersistence;
@@ -15,7 +14,6 @@ pub(crate) fn run(
     options: runner::ExportOptions,
     snapshot: &OperationCapabilitySnapshot,
     persistence: &SessionPersistence,
-    workflow_service: &WorkflowService,
 ) -> Result<runner::ExportOutcome, CodingSessionError> {
     SessionReadCapability::require(snapshot.session_read.as_ref())?;
     let SessionPersistence::Persistent(session_service) = persistence else {
@@ -24,7 +22,7 @@ pub(crate) fn run(
         });
     };
     let mut context = session_service.export_context(options)?;
-    workflow_service.run_export(&mut context)
+    runner::ExportRunner::new()?.run_typed(&mut context)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

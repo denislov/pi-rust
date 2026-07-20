@@ -3,7 +3,8 @@
 Cargo.lock
 node_modules/
 
-# Architecture prototypes are independent reproducibility fixtures. Their
-# product-independent lockfiles are committed even though nested Cargo locks are
-# otherwise ignored.
+# The product workspace and independent release/prototype fixtures commit their
+# lockfiles. Other nested Cargo lockfiles remain ignored.
+!/Cargo.lock
+!tools/public-api-snapshot/Cargo.lock
 !tools/architecture-prototypes/wasmtime-harness/Cargo.lock

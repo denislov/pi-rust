@@ -459,7 +459,6 @@ fn stable_api_has_only_scenario_categories_and_no_flat_exports() {
         "operation",
         "protocol",
         "runtime",
-        "testing",
         "view",
     ]);
     let mut actual = BTreeSet::new();
@@ -502,16 +501,7 @@ fn cli_facade_has_only_scripting_scenarios_and_no_flat_exports() {
         .expect("pi-coding-agent lib.rs should be readable");
     let cli_module =
         module_body(&lib_source, "pub mod cli {").expect("cli api module should be balanced");
-    let expected = BTreeSet::from([
-        "command",
-        "configuration",
-        "input",
-        "print",
-        "resources",
-        "runner",
-        "runtime",
-        "theme",
-    ]);
+    let expected = BTreeSet::from(["runner"]);
     let mut actual = BTreeSet::new();
     let mut flat_exports = Vec::new();
     let mut depth = 0usize;

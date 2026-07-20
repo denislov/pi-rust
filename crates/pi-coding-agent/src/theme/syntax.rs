@@ -19,6 +19,7 @@ use super::{ResolvedColor, ResolvedTheme, ThemeColor};
 
 /// Map a file path to a language identifier by extension, mirroring
 /// `getLanguageFromPath`. Returns `None` for unknown/missing extensions.
+#[cfg(test)]
 pub fn get_language_from_path(path: &str) -> Option<&'static str> {
     let ext = path.rsplit('.').next()?.to_ascii_lowercase();
     if ext == path {
@@ -32,6 +33,7 @@ pub fn get_language_from_path(path: &str) -> Option<&'static str> {
 }
 
 /// Extension -> language table, ported verbatim from TS `getLanguageFromPath`.
+#[cfg(test)]
 const EXT_TO_LANG: &[(&str, &str)] = &[
     ("ts", "typescript"),
     ("tsx", "typescript"),

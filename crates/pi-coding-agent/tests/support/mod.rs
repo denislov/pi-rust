@@ -3,8 +3,11 @@
 use std::ffi::{OsStr, OsString};
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use pi_agent_core::api::resources::AgentResources;
+use pi_agent_core::api::tool::AgentTool;
 use pi_ai::api::client::AiClient;
 use pi_ai::api::conversation::Usage;
+use pi_ai::api::model::{Model, ModelCost, ModelInput};
 use pi_ai::api::provider::ApiProvider;
 use pi_coding_agent::api::event::{
     CodingAgentProductEvent, CodingAgentProductEventCheckOutput, CodingAgentProductEventDiagnostic,
@@ -12,9 +15,10 @@ use pi_coding_agent::api::event::{
     CodingAgentProductEventUsage,
 };
 use pi_coding_agent::api::operation::{
-    SelfHealingEditCheckOutput, SelfHealingEditDiagnostic, SelfHealingEditReplacement,
+    PromptInvocation, PromptRunOptions, PromptTurnOptions, SelfHealingEditCheckOutput,
+    SelfHealingEditDiagnostic, SelfHealingEditReplacement,
 };
-use pi_coding_agent::api::runtime::CodingSessionError;
+use pi_coding_agent::api::runtime::{CodingSessionError, SessionRunOptions};
 use serde_json::json;
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -100,6 +104,63 @@ impl ProviderGuard {
 }
 
 #[allow(dead_code)]
+pub fn model(api: &str) -> Model {
+    named_model("test-model", "Test Model", api)
+}
+
+#[allow(dead_code)]
+pub fn fallback_model(api: &str) -> Model {
+    named_model("fallback-model", "Fallback Model", api)
+}
+
+fn named_model(id: &str, name: &str, api: &str) -> Model {
+    Model {
+        id: id.into(),
+        name: name.into(),
+        api: api.into(),
+        provider: "test".into(),
+        base_url: String::new(),
+        reasoning: false,
+        thinking_level_map: None,
+        input: vec![ModelInput::Text],
+        cost: ModelCost::default(),
+        context_window: 0,
+        max_tokens: 0,
+        headers: None,
+        compat: None,
+    }
+}
+
+#[allow(dead_code)]
+pub fn prompt_options(
+    cwd: &std::path::Path,
+    api: &str,
+    prompt: &str,
+    tools: Vec<AgentTool>,
+    max_turns: u32,
+) -> PromptTurnOptions {
+    PromptTurnOptions::from_prompt_run_options(PromptRunOptions {
+        prompt: prompt.into(),
+        model: fallback_model(api),
+        api_key: None,
+        auth_diagnostics: Vec::new(),
+        system_prompt: Some("Runtime fallback instructions.".into()),
+        max_turns: Some(max_turns),
+        tools,
+        register_builtins: false,
+        ai_client: None,
+        session: Some(SessionRunOptions::disabled(cwd.to_path_buf())),
+        session_target: None,
+        session_name: None,
+        thinking_level: None,
+        tool_execution: None,
+        resources: AgentResources::default(),
+        settings: None,
+        invocation: PromptInvocation::Text(prompt.into()),
+    })
+}
+
+#[allow(dead_code)]
 pub fn product_event(event: CodingAgentProductEventKind) -> CodingAgentProductEvent {
     let delivery_class = match &event {
         CodingAgentProductEventKind::Workflow(
@@ -128,55 +189,31 @@ pub fn product_event(event: CodingAgentProductEventKind) -> CodingAgentProductEv
 
 #[allow(dead_code)]
 pub fn product_usage(usage: Usage) -> CodingAgentProductEventUsage {
-    CodingAgentProductEventUsage {
-        input: usage.input,
-        output: usage.output,
-        cache_read: usage.cache_read,
-        cache_write: usage.cache_write,
-        total_tokens: usage.total_tokens,
-        cost_known: usage.cost.known,
-        input_cost: usage.cost.input,
-        output_cost: usage.cost.output,
-        cache_read_cost: usage.cost.cache_read,
-        cache_write_cost: usage.cost.cache_write,
-    }
+    usage.into()
 }
 
 #[allow(dead_code)]
 pub fn product_error(error: CodingSessionError) -> CodingAgentProductEventError {
-    CodingAgentProductEventError {
-        code: error.code().to_owned(),
-        message: error.to_string(),
-    }
+    error.into()
 }
 
 #[allow(dead_code)]
 pub fn product_replacement(
     replacement: SelfHealingEditReplacement,
 ) -> CodingAgentProductEventReplacement {
-    CodingAgentProductEventReplacement {
-        old_text: replacement.old_text,
-        new_text: replacement.new_text,
-    }
+    replacement.into()
 }
 
 #[allow(dead_code)]
 pub fn product_diagnostic(
     diagnostic: SelfHealingEditDiagnostic,
 ) -> CodingAgentProductEventDiagnostic {
-    CodingAgentProductEventDiagnostic {
-        message: diagnostic.message,
-    }
+    diagnostic.into()
 }
 
 #[allow(dead_code)]
 pub fn product_check_output(
     output: SelfHealingEditCheckOutput,
 ) -> CodingAgentProductEventCheckOutput {
-    CodingAgentProductEventCheckOutput {
-        command: output.command,
-        stdout: output.stdout,
-        stderr: output.stderr,
-        exit_code: output.exit_code,
-    }
+    output.into()
 }

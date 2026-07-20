@@ -164,7 +164,8 @@ impl CodingAgentSession {
     ) -> Result<PathBuf, CodingSessionError> {
         let session_service = SessionService::open(&options)?;
         let mut context = session_service.export_context(ExportOptions::html(path.as_ref()))?;
-        let outcome = WorkflowService::new().run_export(&mut context)?;
+        let outcome =
+            crate::operations::export::runner::ExportRunner::new()?.run_typed(&mut context)?;
         outcome.path.ok_or_else(|| CodingSessionError::Session {
             message: "export completed without a written html path".into(),
         })
@@ -215,7 +216,6 @@ impl CodingAgentSession {
                     pending_submission: None,
                 },
                 runtime_service,
-                workflow_service: WorkflowService::new(),
                 capability_service: CapabilityService::new(),
                 profile_registry,
                 default_plugin_load_options,
@@ -280,7 +280,6 @@ impl CodingAgentSession {
                     pending_submission: None,
                 },
                 runtime_service,
-                workflow_service: WorkflowService::new(),
                 capability_service: CapabilityService::new(),
                 profile_registry,
                 default_plugin_load_options,

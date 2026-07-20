@@ -4,6 +4,10 @@
 
 /// Background color tokens (6). All others are foreground ([`ThemeColor`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[allow(
+    clippy::enum_variant_names,
+    reason = "background variants intentionally mirror the external theme token names"
+)]
 pub enum ThemeBg {
     SelectedBg,
     UserMessageBg,

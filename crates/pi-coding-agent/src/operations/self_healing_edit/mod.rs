@@ -3,7 +3,7 @@ use std::sync::Arc;
 use self::runner::{
     ModelSelfHealingEditRepairStrategy, PlannedSelfHealingEditRepairStrategy,
     SelfHealingEditContext, SelfHealingEditOptions, SelfHealingEditOutcome,
-    SelfHealingEditRepairStrategy, SelfHealingEditReplacement,
+    SelfHealingEditRepairStrategy, SelfHealingEditReplacement, SelfHealingEditRunner,
 };
 use crate::operations::prompt::context::PromptTurnOptions;
 use crate::runtime::capability::{
@@ -13,7 +13,6 @@ use crate::runtime::control::OperationCancellationHandle;
 use crate::runtime::facade::CodingSessionError;
 use crate::services::event::{EventService, SelfHealingEditEventObserver};
 use crate::services::session::{default_cwd, session_cwd};
-use crate::services::workflow::WorkflowService;
 use crate::session::service::{FinalizedSessionWrite, SessionService};
 use tokio_util::sync::CancellationToken;
 
@@ -27,7 +26,6 @@ pub(crate) struct SelfHealingEditExecution {
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run(
     session_service: &mut SessionService,
-    workflow_service: &WorkflowService,
     event_service: EventService,
     path: String,
     replacements: Vec<SelfHealingEditReplacement>,
@@ -78,13 +76,12 @@ pub(crate) async fn run(
         context.set_cancellation_handle(cancellation_handle);
     }
 
-    let result = match cancellation.as_ref() {
-        Some(cancellation) => {
-            workflow_service
-                .run_self_healing_edit_with_cancellation(&mut context, cancellation.clone())
-                .await
-        }
-        None => workflow_service.run_self_healing_edit(&mut context).await,
+    let result = match SelfHealingEditRunner::new()?
+        .run_typed(&mut context, cancellation.clone())
+        .await
+    {
+        Ok(_) => context.finish_success(),
+        Err(error) => Err(error),
     };
     match result {
         Ok(outcome) => {

@@ -5,7 +5,6 @@ edition = "2024"
 
 [features]
 default = []
-test-harness = []
 test-support = ["pi-agent-core/test-support", "pi-ai/test-support", "pi-tui/test-support"]
 
 [dependencies]

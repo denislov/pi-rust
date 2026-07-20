@@ -7,8 +7,8 @@ use pi_ai::api::conversation::{
 use pi_ai::api::model::{Model, ModelCost, ModelInput};
 use pi_ai::api::stream::{AssistantMessageEvent, EventStream, StreamOptions};
 use pi_ai::api::testing::{FauxCall, FauxProvider, FauxResponse, FauxToolCall};
-use pi_coding_agent::api::cli::runtime::{CliRunOptions, SessionRunOptions};
 use pi_coding_agent::api::protocol::run_rpc_mode_for_io;
+use pi_coding_agent::api::runtime::{CliRunOptions, SessionRunOptions};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};

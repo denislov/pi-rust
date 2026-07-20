@@ -12,13 +12,13 @@ use crate::runtime::facade::CodingSessionError;
 use crate::services::authorization::AuthorizationService;
 use crate::services::event::EventService;
 use crate::services::session::apply_finalized_session_write;
-use crate::services::workflow::WorkflowService;
 use crate::session::event::PersistedDelegationStatus;
 use crate::session::id::{Clock, IdGenerator, SystemClock, SystemIdGenerator};
 use crate::session::service::{FinalizedSessionWrite, SessionPersistence, SessionService};
 use context::{
     CodingDiagnostic, PromptTurnContext, PromptTurnIds, PromptTurnOptions, PromptTurnOutcome,
 };
+use runner::PromptTurnRunner;
 use tokio_util::sync::CancellationToken;
 
 struct PromptOperation<'a> {
@@ -26,7 +26,6 @@ struct PromptOperation<'a> {
     operation_control: &'a mut OperationControl,
     profile_registry: &'a ProfileRegistry,
     event_service: &'a EventService,
-    workflow_service: &'a WorkflowService,
     pending_delegation_confirmations: &'a mut PendingDelegationConfirmationQueue,
     authorization_service: &'a AuthorizationService,
 }
@@ -37,7 +36,6 @@ pub(crate) async fn run(
     operation_control: &mut OperationControl,
     profile_registry: &ProfileRegistry,
     event_service: &EventService,
-    workflow_service: &WorkflowService,
     pending_delegation_confirmations: &mut PendingDelegationConfirmationQueue,
     authorization_service: &AuthorizationService,
     options: PromptTurnOptions,
@@ -49,7 +47,6 @@ pub(crate) async fn run(
         operation_control,
         profile_registry,
         event_service,
-        workflow_service,
         pending_delegation_confirmations,
         authorization_service,
     }
@@ -109,7 +106,19 @@ impl PromptOperation<'_> {
 
         self.event_service
             .emit_prompt_started(operation_id, turn_id);
-        let mut outcome = match self.workflow_service.run_prompt_turn(&mut context).await {
+        let turn_result: Result<PromptTurnOutcome, CodingSessionError> =
+            match PromptTurnRunner::new()?.run_typed(&mut context).await {
+                Ok(_) => {
+                    let session_id = context.session_id().map(str::to_owned);
+                    context.finish_success(session_id, None)
+                }
+                Err(error) => match context.abort_reason() {
+                    Some(reason) => Ok(context
+                        .finish_abort(reason.to_owned(), context.session_id().map(str::to_owned))),
+                    None => Ok(context.finish_failure(error)),
+                },
+            };
+        let mut outcome = match turn_result {
             Ok(outcome) => outcome,
             Err(error) => match context.abort_reason() {
                 Some(reason) => {
@@ -175,7 +184,6 @@ impl PromptOperation<'_> {
                     let outcome = match request.target_kind {
                         ProfileKind::Agent => {
                             crate::operations::delegation::execution::execute_agent(
-                                self.workflow_service,
                                 self.profile_registry.clone(),
                                 self.event_service.clone(),
                                 self.operation_control.clone(),
@@ -189,7 +197,6 @@ impl PromptOperation<'_> {
                         }
                         ProfileKind::Team => {
                             crate::operations::delegation::execution::execute_team(
-                                self.workflow_service,
                                 self.profile_registry.clone(),
                                 self.event_service.clone(),
                                 self.operation_control.clone(),

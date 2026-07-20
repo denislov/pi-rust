@@ -1,14 +1,14 @@
-use crate::support;
+use crate::internal_tests::support;
 
-use pi_coding_agent::api::cli::configuration::{
+use crate::internal_tests::cli_fixture::configuration::{
     KeySource, PartialSettings, load_config, resolve_api_key,
 };
 use support::EnvGuard;
 
 #[test]
 fn select_model_uses_default_model_when_no_flag() {
-    use pi_coding_agent::api::cli::command::CliArgs;
-    use pi_coding_agent::api::cli::configuration::select_model;
+    use crate::internal_tests::cli_fixture::command::CliArgs;
+    use crate::internal_tests::cli_fixture::configuration::select_model;
     let args = CliArgs::default(); // args.model is None
     // default_model resolves via lookup_model; use a known built-in id.
     let model = select_model(&args, None, Some("claude-sonnet-4-5"), None).expect("model");
@@ -66,8 +66,8 @@ fn config_auth_resolution_prefers_env_over_auth_file() {
 
 #[test]
 fn runtime_setting_helpers_consume_session_dir_and_context_flag() {
-    use pi_coding_agent::api::cli::command::parse_args;
-    use pi_coding_agent::api::cli::configuration::{
+    use crate::internal_tests::cli_fixture::command::parse_args;
+    use crate::internal_tests::cli_fixture::configuration::{
         effective_no_context_files, effective_session_dir,
     };
 

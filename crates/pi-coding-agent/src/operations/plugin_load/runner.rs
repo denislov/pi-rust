@@ -26,19 +26,11 @@ pub(crate) struct PluginLoadOutcome {
 
 pub(crate) struct PluginLoadContext {
     outcome: Option<PluginLoadOutcome>,
-    failure_error: Option<CodingSessionError>,
 }
 
 impl PluginLoadContext {
     pub(crate) fn new(_options: PluginLoadOptions) -> Self {
-        Self {
-            outcome: None,
-            failure_error: None,
-        }
-    }
-
-    pub(crate) fn take_failure_error(&mut self) -> Option<CodingSessionError> {
-        self.failure_error.take()
+        Self { outcome: None }
     }
 
     pub(crate) fn finish_success(&self) -> Result<PluginLoadOutcome, CodingSessionError> {
@@ -66,7 +58,6 @@ impl PluginLoadRunner {
             .as_ref()
             .is_some_and(|token| token.is_cancelled())
         {
-            ctx.failure_error = Some(CodingSessionError::Cancelled);
             return Err(CodingSessionError::Cancelled);
         }
         ctx.outcome = Some(PluginLoadOutcome {

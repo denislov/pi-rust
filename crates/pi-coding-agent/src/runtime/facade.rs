@@ -121,7 +121,6 @@ use crate::services::capability::CapabilityService;
 use crate::services::event::EventService;
 use crate::services::runtime::RuntimeService;
 use crate::services::session::{default_cwd, replay_derived_owner_state, session_cwd};
-use crate::services::workflow::WorkflowService;
 use crate::session::service::{SessionPersistence, SessionService, TransientSessionState};
 pub(in crate::runtime) use control::PromptControlCleanupGuard;
 use std::path::{Path, PathBuf};

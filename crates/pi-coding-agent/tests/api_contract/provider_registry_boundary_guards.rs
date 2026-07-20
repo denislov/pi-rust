@@ -251,6 +251,11 @@ fn production_and_examples_use_only_item_allowlisted_upstream_contracts() {
                 "ExecutionOutput",
                 "FileError",
                 "FileSystem",
+                "TruncationLimit",
+                "TruncationResult",
+                "format_size",
+                "truncate_head",
+                "truncate_tail",
             ],
         ),
         (

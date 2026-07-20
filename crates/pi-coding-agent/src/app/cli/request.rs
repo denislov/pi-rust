@@ -491,19 +491,19 @@ pub fn render_diagnostics(diagnostics: &[CliDiagnostic]) -> String {
 }
 
 fn validate_selected_resources(parsed: &CliArgs, loaded: &LoadedResources) -> Result<(), CliError> {
-    if let Some(ref skill_name) = parsed.skill {
-        if resources::find_skill(&loaded.skills, skill_name).is_none() {
-            return Err(CliError::InvalidInput(format!(
-                "skill '{skill_name}' not found in loaded skills"
-            )));
-        }
+    if let Some(ref skill_name) = parsed.skill
+        && resources::find_skill(&loaded.skills, skill_name).is_none()
+    {
+        return Err(CliError::InvalidInput(format!(
+            "skill '{skill_name}' not found in loaded skills"
+        )));
     }
-    if let Some(ref template_name) = parsed.prompt_template {
-        if resources::find_template(&loaded.prompt_templates, template_name).is_none() {
-            return Err(CliError::InvalidInput(format!(
-                "prompt template '{template_name}' not found in loaded templates"
-            )));
-        }
+    if let Some(ref template_name) = parsed.prompt_template
+        && resources::find_template(&loaded.prompt_templates, template_name).is_none()
+    {
+        return Err(CliError::InvalidInput(format!(
+            "prompt template '{template_name}' not found in loaded templates"
+        )));
     }
     Ok(())
 }

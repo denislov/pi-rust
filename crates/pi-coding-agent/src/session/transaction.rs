@@ -73,6 +73,10 @@ struct SessionTransactionWriterEnvelope {
 }
 
 #[derive(Debug)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "bounded writer commands move complete durable batches through a single owner"
+)]
 enum SessionTransactionWriterCommand {
     InitializeSession {
         event: SessionEventEnvelope,
@@ -812,6 +816,10 @@ where
         Ok(())
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "durable folded delegation updates retain every typed association fact"
+    )]
     pub(crate) fn record_delegation_folded_update(
         &mut self,
         tool_call_id: impl Into<String>,

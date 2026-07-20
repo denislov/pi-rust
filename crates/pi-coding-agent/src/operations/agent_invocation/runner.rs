@@ -9,13 +9,13 @@ use crate::operations::delegation::{
 use crate::operations::prompt::context::{
     CodingDiagnostic, PromptTurnContext, PromptTurnIds, PromptTurnOptions, PromptTurnOutcome,
 };
+use crate::operations::prompt::runner::PromptTurnRunner;
 use crate::profiles::{AgentProfile, ProfileId, ProfileKind, ProfileRegistry};
 use crate::runtime::capability::{ActorId, OperationCapabilitySnapshot};
 use crate::runtime::control::{OperationControl, OperationKind, PromptControlReceiver};
 use crate::runtime::facade::{CodingSessionError, PendingDelegationConfirmationState};
 use crate::runtime::scheduler::OperationScheduler;
 use crate::services::event::EventService;
-use crate::services::workflow::WorkflowService;
 use crate::session::id::{Clock, IdGenerator, SystemClock, SystemIdGenerator};
 
 #[derive(Debug, Clone)]
@@ -90,15 +90,6 @@ pub struct AgentInvocationOutcome {
 
 pub(crate) struct AgentInvocationRunner;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AgentInvocationStep {
-    Start,
-    ResolveProfile,
-    PrepareChildPrompt,
-    RunChildAgent,
-    Finalize,
-}
-
 impl AgentInvocationRunner {
     pub(crate) fn new() -> Result<Self, CodingSessionError> {
         Ok(Self)
@@ -109,44 +100,40 @@ impl AgentInvocationRunner {
         ctx: &mut AgentInvocationContext,
         cancellation: Option<CancellationToken>,
     ) -> Result<(), CodingSessionError> {
-        let mut step = AgentInvocationStep::Start;
-        loop {
-            if cancellation
-                .as_ref()
-                .is_some_and(|token| token.is_cancelled())
-                && !matches!(step, AgentInvocationStep::RunChildAgent)
+        let result: Result<(), CodingSessionError> = async {
+            Self::check_cancellation(&cancellation)?;
+            ctx.start_agent_invocation()?;
+            Self::check_cancellation(&cancellation)?;
+            ctx.resolve_agent_profile()?;
+            Self::check_cancellation(&cancellation)?;
+            ctx.prepare_child_prompt()?;
+            if let Some(token) = cancellation.as_ref()
+                && token.is_cancelled()
             {
-                let error = CodingSessionError::Cancelled;
-                ctx.fail(error.clone());
-                return Err(error);
+                ctx.propagate_child_cancellation(token.clone());
             }
-            let result = match step {
-                AgentInvocationStep::Start => ctx.start_agent_invocation(),
-                AgentInvocationStep::ResolveProfile => ctx.resolve_agent_profile(),
-                AgentInvocationStep::PrepareChildPrompt => ctx.prepare_child_prompt(),
-                AgentInvocationStep::RunChildAgent => {
-                    if let Some(token) = cancellation.as_ref()
-                        && token.is_cancelled()
-                    {
-                        ctx.propagate_child_cancellation(token.clone());
-                    }
-                    ctx.run_child_agent().await
-                }
-                AgentInvocationStep::Finalize => ctx.finalize_agent_invocation(),
-            };
-            if let Err(error) = result {
-                return Err(CodingSessionError::Workflow {
-                    message: ctx.fail(error),
-                });
-            }
-            step = match step {
-                AgentInvocationStep::Start => AgentInvocationStep::ResolveProfile,
-                AgentInvocationStep::ResolveProfile => AgentInvocationStep::PrepareChildPrompt,
-                AgentInvocationStep::PrepareChildPrompt => AgentInvocationStep::RunChildAgent,
-                AgentInvocationStep::RunChildAgent => AgentInvocationStep::Finalize,
-                AgentInvocationStep::Finalize => return Ok(()),
-            };
+            ctx.run_child_agent().await?;
+            Self::check_cancellation(&cancellation)?;
+            ctx.finalize_agent_invocation()?;
+            Ok(())
         }
+        .await;
+        if let Err(error) = &result {
+            ctx.record_failure_terminal(error);
+        }
+        result
+    }
+
+    fn check_cancellation(
+        cancellation: &Option<CancellationToken>,
+    ) -> Result<(), CodingSessionError> {
+        if cancellation
+            .as_ref()
+            .is_some_and(|token| token.is_cancelled())
+        {
+            return Err(CodingSessionError::Cancelled);
+        }
+        Ok(())
     }
 }
 
@@ -166,7 +153,7 @@ pub(crate) struct AgentInvocationContext {
     child_capability_snapshot: Option<OperationCapabilitySnapshot>,
     child_admission: Option<crate::runtime::intent::OperationPermit>,
     pending_delegation_confirmations: Vec<PendingDelegationConfirmationState>,
-    failure_error: Option<CodingSessionError>,
+    failure_terminal_recorded: bool,
     defer_terminal_publication: bool,
 }
 
@@ -195,7 +182,7 @@ impl AgentInvocationContext {
             child_capability_snapshot: None,
             child_admission: None,
             pending_delegation_confirmations: Vec::new(),
-            failure_error: None,
+            failure_terminal_recorded: false,
             defer_terminal_publication: false,
         }
     }
@@ -211,10 +198,6 @@ impl AgentInvocationContext {
     pub(crate) fn with_deferred_terminal_publication(mut self) -> Self {
         self.defer_terminal_publication = true;
         self
-    }
-
-    pub(crate) fn take_failure_error(&mut self) -> Option<CodingSessionError> {
-        self.failure_error.take()
     }
 
     pub(crate) fn ensure_failure_terminal_draft(&self, error: &CodingSessionError) {
@@ -379,10 +362,7 @@ impl AgentInvocationContext {
                         message: "agent invocation cannot run before child prompt preparation"
                             .into(),
                     })?;
-            match WorkflowService::new()
-                .run_prompt_subflow_typed_for_agent_invocation(child_context)
-                .await
-            {
+            match PromptTurnRunner::new()?.run_typed(child_context).await {
                 Ok(_) => Some((
                     child_context
                         .authorize_delegation_requests_with_lineage(
@@ -506,7 +486,6 @@ impl AgentInvocationContext {
         child_delegation_depth: usize,
     ) -> Result<(), CodingSessionError> {
         let outcome = Box::pin(crate::operations::delegation::execution::execute_agent(
-            &WorkflowService::new(),
             self.registry.clone(),
             self.event_service.clone(),
             self.operation_control.clone(),
@@ -529,7 +508,6 @@ impl AgentInvocationContext {
         child_delegation_depth: usize,
     ) -> Result<(), CodingSessionError> {
         let outcome = crate::operations::delegation::execution::execute_team(
-            &WorkflowService::new(),
             self.registry.clone(),
             self.event_service.clone(),
             self.operation_control.clone(),
@@ -585,7 +563,7 @@ impl AgentInvocationContext {
             }
             PromptTurnOutcome::Aborted { reason, .. } => {
                 let error = CodingSessionError::Cancelled;
-                self.failure_error = Some(error.clone());
+                self.failure_terminal_recorded = true;
                 self.event_service
                     .emit_prompt_aborted(self.child_operation_id.clone(), reason.clone());
                 let draft = EventService::agent_invocation_aborted_draft(
@@ -604,7 +582,7 @@ impl AgentInvocationContext {
                 Err(error)
             }
             PromptTurnOutcome::Failed { error, .. } => {
-                self.failure_error = Some(error.clone());
+                self.failure_terminal_recorded = true;
                 self.event_service
                     .emit_prompt_failed(self.child_operation_id.clone(), error.clone());
                 let draft = EventService::agent_invocation_failed_draft(
@@ -625,11 +603,11 @@ impl AgentInvocationContext {
         }
     }
 
-    fn fail(&mut self, error: CodingSessionError) -> String {
+    fn record_failure_terminal(&mut self, error: &CodingSessionError) {
         self.child_admission.take();
-        if self.failure_error.is_none() {
-            self.failure_error = Some(error.clone());
-            if error == CodingSessionError::Cancelled {
+        if !self.failure_terminal_recorded {
+            self.failure_terminal_recorded = true;
+            if *error == CodingSessionError::Cancelled {
                 let draft = EventService::agent_invocation_aborted_draft(
                     self.operation_id.clone(),
                     self.child_operation_id.clone(),
@@ -648,7 +626,7 @@ impl AgentInvocationContext {
                     self.operation_id.clone(),
                     self.child_operation_id.clone(),
                     self.options.profile_id.clone(),
-                    &error,
+                    error,
                 );
                 if self.defer_terminal_publication {
                     self.event_service
@@ -659,6 +637,5 @@ impl AgentInvocationContext {
                 }
             }
         }
-        error.to_string()
     }
 }

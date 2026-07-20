@@ -1,21 +1,166 @@
 # Changes
 
-## 0.5.2 - Unreleased
+## 0.5.2 - 2026-07-20
 
-### Planned
+### `pi-coding-agent` Lean Product-Runtime Convergence
 
-- Added the `pi-coding-agent` lean product-runtime plan, sequenced after `0.5.0`
-  and `0.5.1`. It removes stateless workflow/runner/adapter duplication,
-  contracts the stable facade, converges interactive client state and test
-  infrastructure, and preserves the runtime owner graph.
+Completed `PCLR-001` through `PCLR-011` and released all workspace packages at
+`0.5.2`.
+
+- Completed `PCLR-001`: captured post-`0.5.1` production/test/API/dependency/
+  build/runtime baselines under `target/perf-baseline/0.5.2-coding-agent/`.
+  Non-test `src/` baseline was 108,017 lines across 169 files; 292 API symbols
+  across 29 `pub use` statements; 477 dependency tree nodes; clean
+  `cargo check` in 10.84s with 1061 MB RSS. Inventoried the zero-state
+  `WorkflowService` (226 lines, 41 usage sites), all 8 runner Step-enum loops,
+  30+ adapter impossible-variant `unreachable!()` matches, 4 crate-wide Clippy
+  allowances, `debug_assertions` in `test_support` cfg, and the unused
+  `test-harness` feature.
+- Completed `PCLR-002`: removed the zero-state `WorkflowService` pass-through
+  layer (`services/workflow.rs`, 226 lines) and the `RuntimeHost.workflow_service`
+  field. Each operation module now invokes its dedicated runner directly and
+  normalizes its own outcome/error exactly once. Updated all 41 usage sites
+  across `runtime/dispatch.rs`, `runtime/execution.rs`,
+  `runtime/facade/lifecycle.rs`, `runtime/facade/view.rs`, `runtime/owners.rs`,
+  8 `operations/*/mod.rs` files, `operations/delegation/execution.rs`, and 3
+  runner internal subflow/delegation call sites. Preserved cancellation
+  propagation, root/sub-operation/structured-child invocation, and session
+  write/outbox/event authorization boundaries. No generic runner registry,
+  trait object, or service container was introduced.
+- Completed `PCLR-003`: converted all fixed-runner `Step enum + loop +
+  unreachable!()` patterns into direct typed async pipelines. Export,
+  ManualCompaction, BranchSummary, and SelfHealingEdit runners now use direct
+  sequential `?` propagation with local `check_cancellation` helpers; their
+  `failure_error` fields, `take_failure_error()`, `fail()` methods, and
+  `CodingSessionError::Workflow` wrapping were removed. AgentInvocation and
+  AgentTeam runners use an async block with unified `fail()` on error to
+  preserve the then-current failure terminal semantics required by other
+  context methods; that temporary state is removed by `PCLR-009`. PromptTurn's
+  dynamic provider/tool/control loop remains specialized. PluginLoad was
+  already direct. Removed 6 `Step` enums, 6 `loop` blocks, and 6
+  `unreachable!()` sites.
+- Completed `PCLR-004`: converged operation descriptor, outcome, terminal, and
+  adapter projections. Added typed extraction methods (`into_prompt`,
+  `into_compact`, `into_branch_summary`, `into_self_healing_edit`,
+  `into_agent_invocation`, `into_agent_team`, `into_plugin_load`, `into_export`,
+  `into_export_html`, `into_delegation_approved`, `into_delegation_rejected`,
+  `into_default_agent_profile_changed`, `into_session_forked`,
+  `into_session_tree_label_changed`) to `CodingAgentOperationOutcome` so that
+  each public-to-internal outcome conversion is defined once. Updated all 4
+  adapter surfaces (print, JSON, interactive, RPC) to use these methods,
+  eliminating 22 repeated operation-family `unreachable!()` matches. Removed
+  dead code: `Operation::kind()`, `Operation::origin()`, `Operation::class()`
+  moved to `#[cfg(test)]`; `OperationIdempotencyKey::as_str()` moved to
+  `#[cfg(test)]`; `OperationOrigin::RuntimeInternal` variant removed; incorrect
+  `#[allow(dead_code)]` removed from `OperationOrigin`, `OperationClass`,
+  `OperationOutcome::ForkSession`, and `OperationOutcome::SwitchActiveLeaf`.
+  Preserved the exhaustive descriptor table as sole metadata authority,
+  immutable `OperationExecution`, single terminal authority, and
+  durable/versioned ProductEvent terminal semantics.
+- Completed `PCLR-005`: contracted the stable product/CLI facade. Deleted the
+  empty `api::testing` module. Moved `PromptInvocation` and `PromptRunOptions`
+  from `api::cli::runtime` to `api::operation` (operation types). Moved
+  `CliRunOptions`, `SessionRunOptions`, and `SessionMode` from `api::cli::runtime`
+  to `api::runtime` (runtime types). Moved `PrintModeOptions` and `run_print_mode`
+  from `api::cli::print` to `api::protocol` (adapter entrypoint). Removed the
+  now-empty `api::cli::runtime` and `api::cli::print` submodules. The final
+  release audit then removed low-level `api::cli::{command, configuration,
+  input, resources, theme}` implementation categories and added the high-level
+  `run_cli_stdio` runner used by the product binary. Owner behavior tests now
+  compile against crate-private fixtures. Direct facade exports fell from 292
+  to 189 while runtime/operation/event/client/view/protocol/Extension and
+  high-level CLI contracts remain supported.
+- Completed `PCLR-006`: unified adapter event entrypoints and confirmed outcome
+  projection convergence. Removed the parallel `push_internal_product_event`
+  entrypoint from `CodingProtocolEventAdapter` (identical to `push_product_event`
+  since `ProductEvent` is a type alias for `CodingAgentProductEvent`). Removed
+  the parallel `push_public_product_event` entrypoint from `RpcCodingEventAdapter`.
+  All 4 adapter surfaces (print, JSON, interactive, RPC) now consume the typed
+  `CodingAgentProductEvent` contract through a single `push_product_event` method
+  and project `CodingAgentOperationOutcome` through the PCLR-004 typed extraction
+  methods without operation-specific impossible-variant matches. Preserved
+  adapter-specific presentation and machine wire DTOs, bounded queues,
+  sequence/cursor gaps, detach/reconnect/fresh-snapshot recovery, control
+  receipts, and stdout/stderr cleanliness.
+- Completed `PCLR-007`: replaced the mutually exclusive prompt/follow-up,
+  compact, branch-summary, fork, agent, team, self-healing-edit, and default
+  profile pending fields with one exhaustive `PendingInteractiveCommand` slot.
+  Queueing a new interactive command now replaces the prior command and updates
+  its action atomically; the event loop consumes and exhaustively reduces that
+  slot once per input dispatch. Authorization decisions and delegation
+  confirmations remain independently typed because they may coexist with a
+  running operation. Added `InteractiveLocalState` as the TUI-only owner for
+  editor/keybinding input state, transcript disclosure/scroll state, render
+  cache, focus/context selection, mouse hit regions, and transient overlays,
+  removing 21 local fields from `InteractiveRoot`. Moved the ordered
+  `UiProjection` into `InteractiveRoot` as the single snapshot/ProductEvent
+  projection owner and deleted the event-loop-owned projection plus cloned
+  context/capability mirrors. Projection-local timing now captures only prior
+  running operation IDs rather than cloning the complete context on every
+  streaming delta, preserving render coalescing. Session/model projection
+  convergence remains in progress. Moved another 17 model/session/tree/settings
+  selection and pending-configuration fields into `InteractiveLocalState`, for
+  38 explicitly TUI-local fields removed from the root in total.
+  `UiProjection` now also owns the snapshot session view and applies ordered
+  default-profile ProductEvents; profile menus, agent context, and the status
+  bar read that confirmed projection with a pre-session configuration fallback.
+  Confirmed model selection and active session path/leaf remain adapter-owned
+  next-run/navigation targets because the public snapshot contract does not
+  claim them as shared projection facts.
+- Completed `PCLR-008`: replaced the duplicate product size formatter,
+  truncation result/type machinery, head implementation, test-only tail
+  implementation, and shell tail loop with the frozen
+  `pi-agent-core::api::execution` contract. Retained a thin head adapter for the
+  established product convention that empty output has zero lines and a
+  trailing newline adds no empty line. Read/find/grep/ls limits and notices,
+  shell streaming/process control and marker text, filesystem capabilities,
+  authorization, and workspace policy remain product-owned. Added an exact
+  upstream edge allowlist and a boundary guard against restoring duplicate
+  mechanics. Fixed shell truncation metadata for an unterminated long line,
+  which previously reported zero total lines; it now reports one line while
+  retaining UTF-8-safe tail output.
+- Completed `PCLR-009`: removed the unused `test-harness` feature and stopped
+  exposing environment/provider mutation helpers in ordinary debug builds;
+  helpers now require `cfg(test)` or explicit non-default `test-support`.
+  Removed crate-wide Clippy allowances for `result_large_err`,
+  `large_enum_variant`, `too_many_arguments`, and `collapsible_if`. Collapsed
+  23 nested conditionals, boxed the large self-healing check payload in
+  `CodingSessionError`, simplified the RPC queue test helper, and documented
+  the remaining exceptions at their exact typed boundary. Added a regression
+  guard preventing the feature, debug cfg, and crate-wide allowances from
+  returning. Consolidated ProductEvent DTO conversion under the production
+  event owner and parameterized shared model/prompt runtime fixtures, removing
+  approximately 230 lines of repeated test mapping and builder code while
+  retaining distinct behavior matrices. Removed the AgentInvocation,
+  AgentTeam, and PluginLoad `failure_error` fields and take-back protocol;
+  typed errors now return directly while a separate boolean preserves
+  exactly-once failure terminal publication where required.
+- Completed `PCLR-010`: re-ran the retained Extension/Wasm security and
+  PluginLoad contract. All 33 Extension contract tests, TypeScript SDK/WIT
+  conformance, the production Wasm vertical slice, the four-case Wasmtime
+  isolation/resource prototype, public trusted-host install/activate/reload,
+  and durable PluginLoad restart/outbox evidence pass. The debug cold vertical
+  slice completed in 182.23 seconds against the approximately 187 second frozen
+  baseline. Wasmtime remains pinned to `46.0.1`, Rust 1.94 remains the minimum,
+  and previously Skipped Extension productization work remains Skipped.
+- Completed `PCLR-011`: advanced every workspace package to `0.5.2`, added the
+  migration guide and release evidence, refreshed current-state architecture,
+  froze and verified the 0.5.2 API snapshot, recorded the unchanged RPC 2.1,
+  ProductEvent 2.2, and UI snapshot 2.1 inventory, and passed architecture,
+  full workspace Clippy/tests, Extension, release, and TUI smoke gates.
+- Committed the product workspace and independent public-API snapshot tool
+  lockfiles so the release gate's `--locked` API freeze is reproducible from a
+  clean checkout. The checked-in API manifest now freezes normalized public API
+  surfaces and the toolchain while retaining path-dependent raw rustdoc and
+  workspace metadata as diagnostic artifacts rather than unstable baselines.
 - Retained the TypeScript/Wasm Extension framework as an explicit product
   decision. `0.5.2` must preserve package integrity, grants/leases, Wasmtime
   isolation, Host-call authorization, PluginLoad durability, and current public
   Extension contracts while performing ordinary cleanup.
-- The workspace is at released version `0.5.0`; this queued plan does not
-  claim `0.5.2` implementation or release completion.
+- The workspace is released at `0.5.2`; detailed measurements and gate output
+  are recorded in `docs/0.5.2-release-evidence.md`.
 
-## 0.5.1 - Unreleased
+## 0.5.1 - 2026-07-20
 
 ### `pi-agent-core` Lean Runtime Convergence
 

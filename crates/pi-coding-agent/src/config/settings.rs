@@ -36,7 +36,6 @@ impl From<TuiMode> for pi_tui::api::terminal::TerminalMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsScope {
     Global,
-    Project,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Deserialize, Serialize)]
@@ -386,7 +385,6 @@ pub fn merge_and_save_settings(
 ) {
     let path = match scope {
         SettingsScope::Global => paths.global_settings(),
-        SettingsScope::Project => paths.project_settings(),
     };
 
     // Serialize delta to TOML string, then parse as Value::Table.
@@ -456,16 +454,15 @@ pub fn merge_and_save_settings(
     };
 
     // Ensure parent directory exists
-    if let Some(parent) = path.parent() {
-        if !parent.exists() {
-            if let Err(err) = std::fs::create_dir_all(parent) {
-                diags.push(ConfigDiagnostic::warn(
-                    format!("failed to create settings dir: {err}"),
-                    Some(path),
-                ));
-                return;
-            }
-        }
+    if let Some(parent) = path.parent()
+        && !parent.exists()
+        && let Err(err) = std::fs::create_dir_all(parent)
+    {
+        diags.push(ConfigDiagnostic::warn(
+            format!("failed to create settings dir: {err}"),
+            Some(path),
+        ));
+        return;
     }
 
     if let Err(err) = std::fs::write(&path, merged_str) {

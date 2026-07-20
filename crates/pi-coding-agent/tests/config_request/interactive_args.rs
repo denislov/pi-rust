@@ -1,7 +1,7 @@
 //! Interactive-mode routing behavior.
 
 use pi_coding_agent::api::cli::runner::run_cli_with_options;
-use pi_coding_agent::api::cli::runtime::CliRunOptions;
+use pi_coding_agent::api::runtime::CliRunOptions;
 
 #[tokio::test]
 async fn default_invocation_routes_to_interactive_instead_of_unsupported_mode() {

@@ -6,7 +6,7 @@ mod state;
 mod stats;
 mod wire;
 
-use crate::api::cli::runtime::CliRunOptions;
+use crate::api::runtime::CliRunOptions;
 use crate::app::cli::error::CliError;
 use crate::protocol::jsonl::JsonlLineReader;
 use crate::protocol::types::{RpcCommand, RpcResponse};

@@ -6,7 +6,7 @@ use crate::adapters::rpc::state::{
     RpcBackgroundOperation, RpcForegroundOperation, RpcState,
 };
 use crate::adapters::rpc::wire::{write_json_line, write_rpc_response};
-use crate::api::operation::{CodingAgentOperation, CodingAgentOperationOutcome};
+use crate::api::operation::CodingAgentOperation;
 use crate::app::bootstrap::PromptInvocation;
 use crate::app::bootstrap::SessionMode;
 use crate::app::cli::error::CliError;
@@ -106,11 +106,10 @@ impl RpcState {
                     .run(operation)
                     .await
                     .map_err(CliError::from)
-                    .map(|operation_outcome| match operation_outcome {
-                        CodingAgentOperationOutcome::Compact(outcome) => outcome,
-                        _ => unreachable!(
-                            "manual compaction operation returned a different public outcome"
-                        ),
+                    .map(|operation_outcome| {
+                        operation_outcome.into_compact().expect(
+                            "manual compaction operation returned a different public outcome",
+                        )
                     });
             flush_session_product_events(event_flush).await;
             let _ = done_tx.send(CodingOperationTaskResult {
@@ -129,6 +128,10 @@ impl RpcState {
         Ok(())
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "RPC prompt fields and stream cursor remain explicit protocol inputs"
+    )]
     pub(super) async fn handle_prompt<W>(
         &mut self,
         id: Option<String>,
@@ -521,11 +524,10 @@ impl RpcState {
                     .join()
                     .await
                     .map_err(CliError::from)
-                    .map(|operation_outcome| match operation_outcome {
-                        CodingAgentOperationOutcome::AgentInvocation(outcome) => outcome,
-                        _ => unreachable!(
-                            "agent invocation operation returned a different public outcome"
-                        ),
+                    .map(|operation_outcome| {
+                        operation_outcome.into_agent_invocation().expect(
+                            "agent invocation operation returned a different public outcome",
+                        )
                     });
             flush_session_product_events(event_flush).await;
 
@@ -702,11 +704,10 @@ impl RpcState {
                     .join()
                     .await
                     .map_err(CliError::from)
-                    .map(|operation_outcome| match operation_outcome {
-                        CodingAgentOperationOutcome::AgentTeam(outcome) => outcome,
-                        _ => {
-                            unreachable!("agent team operation returned a different public outcome")
-                        }
+                    .map(|operation_outcome| {
+                        operation_outcome
+                            .into_agent_team()
+                            .expect("agent team operation returned a different public outcome")
                     });
             flush_session_product_events(event_flush).await;
 
@@ -857,11 +858,10 @@ impl RpcState {
                 })
                 .await
                 .map_err(CliError::from)
-                .map(|operation_outcome| match operation_outcome {
-                    CodingAgentOperationOutcome::DelegationApproved => (),
-                    _ => unreachable!(
-                        "delegation approval operation returned a different public outcome"
-                    ),
+                .map(|operation_outcome| {
+                    operation_outcome
+                        .into_delegation_approved()
+                        .expect("delegation approval operation returned a different public outcome")
                 });
             flush_session_product_events(event_flush).await;
 
@@ -946,9 +946,10 @@ impl RpcState {
                     .run(operation)
                     .await
                     .map_err(CliError::from)
-                    .map(|operation_outcome| match operation_outcome {
-                        CodingAgentOperationOutcome::Prompt(outcome) => outcome,
-                        _ => unreachable!("prompt operation returned a different public outcome"),
+                    .map(|operation_outcome| {
+                        operation_outcome
+                            .into_prompt()
+                            .expect("prompt operation returned a different public outcome")
                     });
             flush_session_product_events(event_flush).await;
 
@@ -1363,7 +1364,7 @@ pub(super) async fn reconnect_running_prompt_after(
             continue;
         }
         let sequence = ProductEventSequence::new(event.sequence());
-        protocol_events.extend(state.event_adapter.push_public_product_event(&event));
+        protocol_events.extend(state.event_adapter.push_product_event(&event));
         state.adapter_applied_sequence = state.adapter_applied_sequence.max(sequence);
     }
     connection.acknowledge(through)?;
@@ -1414,7 +1415,7 @@ fn prompt_outcome_leaf_id(outcome: &crate::runtime::facade::PromptTurnOutcome) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::cli::runtime::CliRunOptions;
+    use crate::api::runtime::CliRunOptions;
     use crate::runtime::facade::{CodingAgentSession, CodingAgentSessionOptions};
 
     #[tokio::test]

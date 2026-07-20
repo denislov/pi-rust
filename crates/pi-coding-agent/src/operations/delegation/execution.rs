@@ -2,9 +2,13 @@ use super::{
     DelegationLineageEntry, PendingDelegationConfirmationState,
     capability_snapshot_for_child_operation,
 };
-use crate::operations::agent_invocation::runner::{AgentInvocationContext, AgentInvocationOptions};
+use crate::operations::agent_invocation::runner::{
+    AgentInvocationContext, AgentInvocationOptions, AgentInvocationRunner,
+};
 use crate::operations::prompt::context::{DelegationRequest, PromptTurnOptions};
-use crate::operations::team_invocation::runner::{AgentTeamContext, AgentTeamOptions};
+use crate::operations::team_invocation::runner::{
+    AgentTeamContext, AgentTeamOptions, AgentTeamRunner,
+};
 use crate::profiles::{ProfileKind, ProfileRegistry};
 use crate::runtime::capability::{OperationCapabilitySnapshot, SessionWriteCapability};
 use crate::runtime::control::{OperationControl, OperationKind};
@@ -15,7 +19,6 @@ use crate::runtime::session_coordinator::{
 };
 use crate::services::event::EventService;
 use crate::services::runtime::RuntimeService;
-use crate::services::workflow::WorkflowService;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ApprovedDelegationExecution {
@@ -29,8 +32,11 @@ pub(crate) struct ApprovedDelegationExecutionOutcome {
     pub(crate) pending_confirmations: Vec<PendingDelegationConfirmationState>,
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "delegation execution keeps lineage and admitted child authorities explicit"
+)]
 pub(crate) async fn execute_agent(
-    workflow_service: &WorkflowService,
     profile_registry: ProfileRegistry,
     event_service: EventService,
     operation_control: OperationControl,
@@ -82,14 +88,15 @@ pub(crate) async fn execute_agent(
     };
     context = context.with_parent_capability_snapshot(child_snapshot);
     event_service.emit_delegation_started(request, child_operation_id.clone());
-    let result = match child_admission.cancellation_token() {
-        Some(cancellation) => {
-            Box::pin(
-                workflow_service.run_agent_invocation_with_cancellation(&mut context, cancellation),
-            )
+    let result = match AgentInvocationRunner::new() {
+        Ok(runner) => match runner
+            .run_typed(&mut context, child_admission.cancellation_token())
             .await
-        }
-        None => Box::pin(workflow_service.run_agent_invocation(&mut context)).await,
+        {
+            Ok(_) => context.finish_success(),
+            Err(error) => Err(error),
+        },
+        Err(error) => Err(error),
     };
     let pending_confirmations = context.take_pending_delegation_confirmations();
     let outcome = match result {
@@ -119,8 +126,11 @@ pub(crate) async fn execute_agent(
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "delegation execution keeps lineage and admitted child authorities explicit"
+)]
 pub(crate) async fn execute_team(
-    workflow_service: &WorkflowService,
     profile_registry: ProfileRegistry,
     event_service: EventService,
     operation_control: OperationControl,
@@ -171,12 +181,15 @@ pub(crate) async fn execute_team(
     };
     context = context.with_parent_capability_snapshot(child_snapshot);
     event_service.emit_delegation_started(request, child_operation_id.clone());
-    let result = match child_admission.cancellation_token() {
-        Some(cancellation) => {
-            Box::pin(workflow_service.run_agent_team_with_cancellation(&mut context, cancellation))
-                .await
-        }
-        None => Box::pin(workflow_service.run_agent_team(&mut context)).await,
+    let result = match AgentTeamRunner::new() {
+        Ok(runner) => match runner
+            .run_typed(&mut context, child_admission.cancellation_token())
+            .await
+        {
+            Ok(_) => context.finish_success(),
+            Err(error) => Err(error),
+        },
+        Err(error) => Err(error),
     };
     let pending_confirmations = context.take_pending_delegation_confirmations();
     let outcome = match result {
@@ -210,7 +223,6 @@ pub(crate) async fn execute_team(
 pub(crate) async fn approve(
     session_coordinator: &mut SessionCoordinator,
     runtime_service: &RuntimeService,
-    workflow_service: &WorkflowService,
     profile_registry: &ProfileRegistry,
     event_service: &EventService,
     operation_control: &OperationControl,
@@ -241,7 +253,6 @@ pub(crate) async fn approve(
     let outcome = match pending.request.target_kind {
         ProfileKind::Agent => {
             execute_agent(
-                workflow_service,
                 profile_registry.clone(),
                 event_service.clone(),
                 operation_control.clone(),
@@ -255,7 +266,6 @@ pub(crate) async fn approve(
         }
         ProfileKind::Team => {
             execute_team(
-                workflow_service,
                 profile_registry.clone(),
                 event_service.clone(),
                 operation_control.clone(),

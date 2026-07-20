@@ -9,7 +9,9 @@ pub struct ModelRotation {
 
 #[derive(Debug)]
 pub struct ModelRotationEntry {
+    #[cfg(test)]
     pub pattern: String,
+    #[cfg(test)]
     pub thinking: Option<ThinkingLevel>,
     matcher: GlobMatcher,
 }
@@ -31,7 +33,7 @@ pub fn parse_model_rotation(value: &str) -> Result<ModelRotation, CliError> {
     {
         let (pattern, thinking) = match raw.rsplit_once(':') {
             Some((pattern, level)) if !pattern.is_empty() && !level.is_empty() => {
-                let thinking = level.parse().map_err(CliError::InvalidInput)?;
+                let thinking: ThinkingLevel = level.parse().map_err(CliError::InvalidInput)?;
                 (pattern.to_string(), Some(thinking))
             }
             _ => (raw.to_string(), None),
@@ -42,10 +44,14 @@ pub fn parse_model_rotation(value: &str) -> Result<ModelRotation, CliError> {
             })?
             .compile_matcher();
         entries.push(ModelRotationEntry {
-            pattern,
+            #[cfg(test)]
+            pattern: pattern.clone(),
+            #[cfg(test)]
             thinking,
             matcher,
         });
+        #[cfg(not(test))]
+        let _ = thinking;
     }
     if entries.is_empty() {
         return Err(CliError::InvalidInput("--models cannot be empty".into()));

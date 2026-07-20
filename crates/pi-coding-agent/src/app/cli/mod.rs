@@ -12,6 +12,7 @@ use crate::config;
 use crate::tools::builtin_tools;
 use args::{CliMode, help_text, parse_args};
 use error::CliError;
+use std::io::{IsTerminal, Read};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CliOutput {
@@ -68,6 +69,32 @@ fn default_cli_options(cwd: std::path::PathBuf) -> CliRunOptions {
 pub async fn run_cli(args: impl IntoIterator<Item = String>) -> CliOutput {
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     run_cli_with_options(args, default_cli_options(cwd)).await
+}
+
+pub async fn run_cli_stdio(args: impl IntoIterator<Item = String>) -> CliOutput {
+    let args = args.into_iter().collect::<Vec<_>>();
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let options = default_cli_options(cwd);
+
+    if parse_args(args.clone()).is_ok_and(|parsed| parsed.mode == CliMode::Rpc) {
+        return match adapters::rpc::run_rpc_mode_stdio(options).await {
+            Ok(()) => CliOutput::success(String::new()),
+            Err(error) => CliOutput::failure(error),
+        };
+    }
+
+    let stdin = if std::io::stdin().is_terminal() {
+        None
+    } else {
+        let mut input = String::new();
+        if let Err(error) = std::io::stdin().read_to_string(&mut input) {
+            return CliOutput::failure(CliError::InvalidInput(format!(
+                "failed to read stdin: {error}"
+            )));
+        }
+        Some(input)
+    };
+    run_cli_with_options_and_stdin(args, options, stdin).await
 }
 
 pub async fn run_cli_with_options(

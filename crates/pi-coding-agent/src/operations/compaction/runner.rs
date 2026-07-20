@@ -143,7 +143,6 @@ pub(crate) struct ManualCompactionContext {
     stream_options: Option<StreamOptions>,
     summary: Option<String>,
     final_message: Option<AssistantMessage>,
-    failure_error: Option<CodingSessionError>,
 }
 
 impl ManualCompactionContext {
@@ -168,7 +167,6 @@ impl ManualCompactionContext {
             stream_options: None,
             summary: None,
             final_message: None,
-            failure_error: None,
         }
     }
 
@@ -178,10 +176,6 @@ impl ManualCompactionContext {
 
     pub(crate) fn options(&self) -> &ManualCompactionOptions {
         &self.options
-    }
-
-    pub(crate) fn take_failure_error(&mut self) -> Option<CodingSessionError> {
-        self.failure_error.take()
     }
 
     pub(crate) fn turn_id(&self) -> &str {
@@ -239,12 +233,6 @@ impl ManualCompactionContext {
                 }
             })?,
         })
-    }
-
-    fn fail(&mut self, error: CodingSessionError) -> String {
-        let message = error.to_string();
-        self.failure_error = Some(error);
-        message
     }
 
     fn transaction_mut_required(
@@ -400,17 +388,6 @@ impl ManualCompactionContext {
 
 pub(crate) struct ManualCompactionRunner;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ManualCompactionStep {
-    Start,
-    LoadReplay,
-    SelectRange,
-    PrepareSummary,
-    RunSummary,
-    RecordEvents,
-    Finalize,
-}
-
 impl ManualCompactionRunner {
     pub(crate) fn new() -> Result<Self, CodingSessionError> {
         Ok(Self)
@@ -420,43 +397,31 @@ impl ManualCompactionRunner {
         &self,
         ctx: &mut ManualCompactionContext,
     ) -> Result<ManualCompactionOutcome, CodingSessionError> {
-        let mut step = ManualCompactionStep::Start;
-        loop {
-            let result = match step {
-                ManualCompactionStep::Start => ctx.start_compaction(),
-                ManualCompactionStep::LoadReplay => ctx.load_session_replay(),
-                ManualCompactionStep::SelectRange => ctx.select_compaction_range(),
-                ManualCompactionStep::PrepareSummary => ctx.prepare_summary_context(),
-                ManualCompactionStep::RunSummary => ctx.run_summary_model().await,
-                ManualCompactionStep::RecordEvents => ctx.record_compaction_events(),
-                ManualCompactionStep::Finalize => ctx.finalize_compaction(),
-            };
-            if let Err(error) = result {
-                let message = ctx.fail(error.clone());
-                return Err(CodingSessionError::Workflow { message });
-            }
-            if ctx
-                .options()
-                .cancellation()
-                .is_some_and(|token| token.is_cancelled())
-            {
-                let error = CodingSessionError::Cancelled;
-                ctx.fail(error.clone());
-                return Err(error);
-            }
-            if step == ManualCompactionStep::Finalize {
-                return ctx.finish_success();
-            }
-            step = match step {
-                ManualCompactionStep::Start => ManualCompactionStep::LoadReplay,
-                ManualCompactionStep::LoadReplay => ManualCompactionStep::SelectRange,
-                ManualCompactionStep::SelectRange => ManualCompactionStep::PrepareSummary,
-                ManualCompactionStep::PrepareSummary => ManualCompactionStep::RunSummary,
-                ManualCompactionStep::RunSummary => ManualCompactionStep::RecordEvents,
-                ManualCompactionStep::RecordEvents => ManualCompactionStep::Finalize,
-                ManualCompactionStep::Finalize => unreachable!(),
-            };
+        ctx.start_compaction()?;
+        Self::check_cancellation(ctx)?;
+        ctx.load_session_replay()?;
+        Self::check_cancellation(ctx)?;
+        ctx.select_compaction_range()?;
+        Self::check_cancellation(ctx)?;
+        ctx.prepare_summary_context()?;
+        Self::check_cancellation(ctx)?;
+        ctx.run_summary_model().await?;
+        Self::check_cancellation(ctx)?;
+        ctx.record_compaction_events()?;
+        Self::check_cancellation(ctx)?;
+        ctx.finalize_compaction()?;
+        ctx.finish_success()
+    }
+
+    fn check_cancellation(ctx: &ManualCompactionContext) -> Result<(), CodingSessionError> {
+        if ctx
+            .options()
+            .cancellation()
+            .is_some_and(|token| token.is_cancelled())
+        {
+            return Err(CodingSessionError::Cancelled);
         }
+        Ok(())
     }
 }
 
@@ -510,8 +475,9 @@ mod tests {
             snapshot,
         );
 
-        let error = crate::services::workflow::WorkflowService::new()
-            .run_manual_compaction(&mut context)
+        let error = ManualCompactionRunner::new()
+            .unwrap()
+            .run_typed(&mut context)
             .await
             .unwrap_err();
         assert_eq!(error, CodingSessionError::Cancelled);

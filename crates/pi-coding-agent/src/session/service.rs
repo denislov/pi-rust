@@ -157,6 +157,10 @@ pub(crate) struct FinalizedSessionWrite {
 }
 
 #[derive(Debug)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "session persistence owns exactly one persistent or transient state implementation"
+)]
 pub(crate) enum SessionPersistence {
     Persistent(SessionService),
     NonPersistent(TransientSessionState),
@@ -481,6 +485,10 @@ impl SessionService {
             }))
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "durable delegation confirmation records retain every typed request fact"
+    )]
     pub(crate) fn record_delegation_confirmation_requested(
         &mut self,
         source_operation_id: String,

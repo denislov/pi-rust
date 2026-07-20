@@ -1,6 +1,6 @@
 # Changes
 
-## 0.5.1 - Unreleased
+## 0.5.1 - 2026-07-20
 
 ### Changed
 
@@ -20,9 +20,9 @@
 - Product runtime, adapters, protocols, Extension behavior, and TUI behavior
   are otherwise unchanged by the `pi-ai` lean-runtime release.
 
-## 0.5.2 - Unreleased
+## 0.5.2 - 2026-07-20
 
-### Planned
+### Changed
 
 - Remove the stateless `WorkflowService`, simplify fixed typed operation
   pipelines, converge operation/outcome/adapter projections, contract the stable
@@ -34,6 +34,60 @@
 - Track implementation, migration, API/protocol snapshots, architecture,
   Extension conformance, TUI smoke, and release evidence in
   `docs/0.5.2-pi-coding-agent-lean-runtime-plan.md`.
+- Contracted `api::cli` to the high-level runner surface. The binary now uses
+  `run_cli_stdio`; argument parsing, config/auth/settings resolution, input
+  preprocessing, resource/tool construction, and theme internals are private.
+  Their behavior matrices run as owner-crate tests, and the direct facade
+  export inventory is reduced from 292 to 189.
+- Replaced eight mutually exclusive interactive command fields with one typed
+  `PendingInteractiveCommand` slot while retaining independent authorization
+  and delegation queues. The remaining local-state/runtime-projection split is
+  still in progress.
+- Added a TUI-owned `InteractiveLocalState` for editor and keybinding input,
+  transcript disclosure/scroll state, render cache, focus/context selection,
+  mouse hit regions, and modal/support overlays. Shared snapshot/ProductEvent
+  projection data remains outside this local-state owner.
+- Made `InteractiveRoot` own the sole ordered `UiProjection`; snapshot and live
+  ProductEvents now update it directly. Removed the event-loop projection and
+  the duplicate context/capability fields previously cloned into the root after
+  every event.
+- Moved model, session, tree, and settings selector/modal state and pending
+  configuration deltas into `InteractiveLocalState`, separating uncommitted
+  client choices from confirmed active model/session display state.
+- Added the snapshot session view to `UiProjection` and update its default agent
+  profile only from ordered ProductEvents. Interactive profile surfaces now
+  read the projected value, falling back to configuration before a session is
+  established.
+- Completed `PCLR-007` interactive client-state convergence; active model
+  selection and session path/leaf are explicitly adapter-owned next-run and
+  navigation targets rather than invented snapshot facts.
+- Completed `PCLR-008` product tool output convergence. Read/find/grep/ls and
+  shell now reuse the frozen `pi-agent-core::api::execution` size/head/tail
+  shaping contract while product-specific limits, notices, streaming process
+  control, capabilities, authorization, and workspace policy remain local.
+  The thin read adapter preserves the established empty/trailing-newline line
+  convention. Shell truncation now counts an unterminated long line correctly
+  instead of reporting zero total lines, with a regression test for the marker.
+- Completed `PCLR-009` by removing `test-harness`, excluding test helpers from
+  ordinary debug builds, and deleting the four crate-wide Clippy allowances.
+  The large self-healing error payload is now boxed, collapsible conditions are
+  fixed directly, and unavoidable typed-boundary exceptions are item-scoped
+  with reasons. A boundary guard locks the feature/cfg/lint contract while the
+  ProductEvent DTO mappings and shared model/prompt runtime fixtures are now
+  single-owner helpers rather than repeated field lists. AgentInvocation,
+  AgentTeam, and PluginLoad now return typed errors directly without storing
+  and taking them back from runner contexts; failure terminal publication
+  remains exactly-once.
+- Completed `PCLR-010` with the full retained Extension contract gates: strict
+  manifest/lock/package/store/activation/grant/lease/Host tests, TypeScript/WIT
+  conformance, a 182.23 second debug cold production Wasm vertical slice, the
+  Wasmtime isolation and resource-limit prototype matrix, public trusted-host
+  reload, and durable PluginLoad restart/outbox evidence. Wasmtime remains
+  pinned to `46.0.1`; no previously Skipped Extension productization scope is
+  claimed.
+- Completed `PCLR-011`: published the 0.5.2 migration/API/protocol/architecture
+  evidence and passed full workspace, Extension, deterministic, release, and
+  TUI smoke gates.
 
 ## 0.4.2 - 2026-07-20
 

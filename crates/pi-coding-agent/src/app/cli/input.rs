@@ -61,6 +61,7 @@ pub fn merge_stdin_prompt(prompt: &str, stdin: Option<&str>) -> String {
     }
 }
 
+#[cfg(test)]
 pub fn process_at_file_references(
     prompt: &str,
     cwd: &Path,
@@ -68,6 +69,7 @@ pub fn process_at_file_references(
     process_at_file_references_with_options(prompt, cwd, ImageResizeOptions::default())
 }
 
+#[cfg(test)]
 pub fn process_at_file_references_with_options(
     prompt: &str,
     cwd: &Path,

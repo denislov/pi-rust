@@ -1,9 +1,9 @@
 //! General CLI argument parsing behavior.
 
+use crate::internal_tests::cli_fixture::command::{CliArgs, CliError, parse_args};
+use crate::internal_tests::cli_fixture::configuration::TuiMode;
 use pi_agent_core::api::agent::ThinkingLevel;
 use pi_agent_core::api::tool::ToolExecutionMode;
-use pi_coding_agent::api::cli::command::{CliArgs, CliError, parse_args};
-use pi_coding_agent::api::cli::configuration::TuiMode;
 
 fn parse(values: &[&str]) -> Result<CliArgs, CliError> {
     parse_args(values.iter().map(|value| value.to_string()))
@@ -269,7 +269,7 @@ fn rejects_invalid_agent_runtime_feature_values_and_conflicts() {
 
 #[test]
 fn help_lists_agent_runtime_feature_flags() {
-    let text = pi_coding_agent::api::cli::command::help_text();
+    let text = crate::internal_tests::cli_fixture::command::help_text();
     for flag in [
         "--thinking",
         "--tool-execution",

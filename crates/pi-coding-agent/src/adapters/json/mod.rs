@@ -1,5 +1,5 @@
 use crate::adapters::events::CodingProtocolEventAdapter;
-use crate::api::operation::{CodingAgentOperation, CodingAgentOperationOutcome};
+use crate::api::operation::CodingAgentOperation;
 use crate::app::cli::CliOutput;
 use crate::app::cli::prompt_options::PromptRunOptions;
 use crate::app::session::open_headless_prompt_session;
@@ -91,9 +91,10 @@ async fn run_json_prompt(
         let result = session
             .run(CodingAgentOperation::Prompt(prompt_options))
             .await
-            .map(|outcome| match outcome {
-                CodingAgentOperationOutcome::Prompt(outcome) => outcome,
-                _ => unreachable!("prompt operation returned a different public outcome"),
+            .map(|outcome| {
+                outcome
+                    .into_prompt()
+                    .expect("prompt operation returned a different public outcome")
             });
         let _ = done_tx.send(result);
     });
@@ -159,7 +160,7 @@ fn push_product_protocol_events(
     adapter: &mut CodingProtocolEventAdapter,
     event: &ProductEvent,
 ) -> Result<(), CodingSessionError> {
-    push_protocol_events(stdout, adapter.push_internal_product_event(event))
+    push_protocol_events(stdout, adapter.push_product_event(event))
 }
 
 #[cfg(test)]

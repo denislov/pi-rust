@@ -161,6 +161,10 @@ impl SessionLogStore {
         )))
     }
 
+    #[allow(
+        clippy::result_large_err,
+        reason = "session creation errors retain typed cleanup and partial-initialization evidence"
+    )]
     pub(crate) fn create_session(
         &self,
         options: CreateSessionOptions,
