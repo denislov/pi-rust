@@ -1,5 +1,15 @@
 # Changes
 
+## 0.5.1 - Unreleased
+
+### Changed
+
+- Advanced with the workspace to `0.5.1` and migrated the `/tree` selector's
+  private `TreeFilterMode` out of `pi-agent-core` without changing interactive
+  filtering behavior.
+- Retained sole product ownership of BranchSummary workflows while the unused
+  core alternative and test-only runtime surfaces were removed.
+
 ## 0.5.0 - 2026-07-20
 
 ### Changed

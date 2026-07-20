@@ -17,14 +17,71 @@
 
 ## 0.5.1 - Unreleased
 
-### Planned
+### `pi-agent-core` Lean Runtime Convergence
 
-- Added the `pi-agent-core` lean-runtime plan, sequenced after `0.5.0`. It
-  removes alternative branch/session/test runtimes, completes typed Agent-turn
-  convergence, reduces long-turn cloning, and contracts the facade with
-  downstream and API migration evidence.
-- The workspace version is the released `0.5.0`; this queued plan does not
-  claim `0.5.1` implementation as complete.
+Completed the `pi-agent-core` lean-runtime convergence, sequenced after `0.5.0`.
+Workspace packages are versioned `0.5.1`; architecture, API, workspace, and TUI
+release gates pass.
+
+- Completed `ACLR-001`: captured post-`0.5.0` source, API, dependency,
+  copy/allocation, and test baselines under `target/perf-baseline/0.5.1-agent-core/`.
+  Non-`test-support` source baseline was 8,160 lines; `test-support` was 1,852
+  lines; 197 test cases passed; `reqwest` was a direct dependency used only by
+  `testing/proxy.rs`.
+- Completed `ACLR-002`: removed the unused core Branch Summary workflow
+  alternative. Deleted `compaction/branch.rs` (495 lines) and
+  `compaction/branch_error.rs` (32 lines), removed their facade exports and
+  branch-summary-only tests, and preserved `serialize_conversation`, token
+  estimation, and `summarize_with_provider_streamer` as provider-neutral
+  primitives. `pi-coding-agent` remains the sole BranchSummary workflow owner.
+- Completed `ACLR-003`: removed the test-only Session Context/Memory/Error
+  subsystem. Deleted `context/assembly.rs`, `context/memory.rs`,
+  `context/error.rs`, `SessionContext`, `InMemorySessionStorage`, and their
+  `api::testing` exports. Preserved `context/conversion.rs` as the
+  provider-neutral conversion owner. Updated legacy-session boundary tests to
+  assert the subsystem is absent.
+- Completed `ACLR-004`: replaced residual string Agent-turn actions/errors with
+  exhaustive typed transitions. Deleted all `ACTION_*` string constants,
+  `as_str()`, `action(&str)`, and unknown-string transition paths. Introduced a
+  private typed `AgentTurnError` for invariant and compaction failures. Made
+  state/decision combinations exhaustive at compile time in `transition_from_decision`.
+  Removed node functions, `AgentTurnContext`, `PendingToolCall`,
+  `RuntimeCompactionState`, and decisions from the `test-support` facade.
+- Completed `ACLR-005`: made turn commit consuming and reduced state/history
+  cloning. Deleted the unused `AgentTurnContext.events` mirror; production
+  events now flow through the Agent stream once. `apply_to_state` now uses
+  `std::mem::take` for messages and queues instead of cloning. Removed the
+  duplicate `resources` field from `AgentTurnContext` (`config.resources`
+  remains the single owner). `emit` no longer clones events.
+- Completed `ACLR-006`: deleted the parallel test Harness/Proxy runtime.
+  Removed `testing/harness.rs` (1,000 lines), `testing/proxy.rs` (430 lines),
+  and `testing/error.rs` (44 lines). Removed the direct `reqwest` dependency
+  from `pi-agent-core`. Retained `InMemoryExecutionEnv` under non-default
+  `test-support`. `test-support` implementation reduced by 79.7% (1,852 to 375
+  lines).
+- Completed `ACLR-007`: consolidated shared resource discovery/read/provenance/
+  diagnostic mechanics. Extracted `read_resource_file` and
+  `parse_frontmatter_at_path` shared helpers used by both skills and prompt
+  templates. Preserved separately typed Skill and PromptTemplate naming,
+  validation, collision, and invocation semantics.
+- Completed `ACLR-008`: contracted and recategorized the stable facade. Moved
+  `TreeFilterMode` to `pi-coding-agent` (`/tree` selector filtering is product
+  presentation policy). Removed deleted branch/session/node/harness/proxy
+  contracts from the facade. Added `BeforeProviderRequestHook` to `api::agent`.
+- Completed `ACLR-009`: migrated downstream consumers, advanced every workspace
+  package to `0.5.1`, updated root and crate changelogs, added
+  `docs/0.5.1-migration-guide.md`, updated boundary allowlists and architecture
+  ownership tests. `pi-coding-agent` imports `TreeFilterMode` from its own
+  `tree_selector` module instead of `pi_agent_core::api::transcript`.
+
+### Release Evidence
+
+- Generated and verified `docs/api-snapshots/0.5.1/SHA256SUMS`, refreshed the
+  current architecture evidence, and updated the default release gate to
+  validate version `0.5.1` against its own API manifest.
+- Passed formatting, full workspace Clippy and tests, architecture gates,
+  binary version validation, TUI smoke, and `git diff --check` through the
+  default `scripts/release-gates.sh` entry point.
 
 ## 0.5.0 - 2026-07-20
 

@@ -1,5 +1,12 @@
 # Changes
 
+## 0.5.1 - Unreleased
+
+### Changed
+
+- Advanced with the workspace to `0.5.1`; generic terminal behavior is
+  unchanged by the `pi-agent-core` lean-runtime release.
+
 ## 0.5.0 - 2026-07-20
 
 ### Changed

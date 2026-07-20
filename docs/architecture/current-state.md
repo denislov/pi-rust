@@ -5,7 +5,7 @@
 Baseline version: `0.3.1`, released as annotated tag `v0.3.1`.
 
 Source baseline: commit `870d4bb`; dated release record: `180f219`; post-baseline
-`0.4.0` through completed `0.5.0` convergence evidence is recorded below. Last refreshed:
+`0.4.0` through completed `0.5.1` convergence evidence is recorded below. Last refreshed:
 2026-07-20.
 
 This file records implementation facts, not desired behavior. Cargo manifests,
@@ -18,7 +18,7 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   `pi-coding-agent -> {pi-agent-core, pi-ai, pi-tui}`.
 - `pi-ai` and `pi-tui` have no workspace dependencies.
 - `pi-mom`, `pi-pods`, and `pi-web-ui` are placeholder crates.
-- All workspace packages inherit version `0.5.0` from the root manifest.
+- All workspace packages inherit version `0.5.1` from the root manifest.
 - The reduced 0.4.x train ends at `0.4.2`; reserved Extension release plans
   `0.4.3` through `0.4.5` are Skip records and did not produce package versions.
 - `pi-rust` is a placeholder binary; `pi-coding-agent` is user-facing.
@@ -227,8 +227,14 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
 ## Agent, Workflows, And Extensions
 
 - The production Agent turn uses `AgentTurnRunner` with exhaustive typed states
-  and a dedicated decision enum. Fixed product workflows use operation-specific
-  runners behind `WorkflowService`; the generic graph engine is absent.
+  and a dedicated decision enum. Per-state transition functions enumerate every
+  decision variant, so new variants require a compile-time transition review.
+  Agent events have one stream owner, turn write-back consumes messages and
+  queues, and live steering/follow-up insertion remains preserved. The core
+  Branch Summary, Session Context/Memory, and Harness/Proxy alternatives are
+  deleted; product BranchSummary remains owned by `pi-coding-agent`. Fixed
+  product workflows use operation-specific runners behind `WorkflowService`;
+  the generic graph engine is absent.
 - The legacy Rust contribution-provider registry and Lua/`mlua` runtime are
   deleted. The replacement path has candidate
   Manifest/WIT/schema contracts, immutable packages, grant-backed activation,

@@ -8,10 +8,11 @@ pub mod agent {
     pub use crate::agent::{Agent, AgentAdmissionError};
     pub use crate::hooks::{
         AfterToolCallContext, AfterToolCallHook, AfterToolCallResult, AgentHooks,
-        AgentLoopTurnUpdate, BeforeProviderRequestContext, BeforeProviderRequestResult,
-        BeforeToolCallContext, BeforeToolCallHook, BeforeToolCallResult, ConvertToLlmHook,
-        HookFuture, PrepareNextTurnContext, PrepareNextTurnHook, ShouldStopAfterTurnContext,
-        ShouldStopAfterTurnHook, TransformContextHook,
+        AgentLoopTurnUpdate, BeforeProviderRequestContext, BeforeProviderRequestHook,
+        BeforeProviderRequestResult, BeforeToolCallContext, BeforeToolCallHook,
+        BeforeToolCallResult, ConvertToLlmHook, HookFuture, PrepareNextTurnContext,
+        PrepareNextTurnHook, ShouldStopAfterTurnContext, ShouldStopAfterTurnHook,
+        TransformContextHook,
     };
 }
 
@@ -56,12 +57,6 @@ pub mod resources {
 /// Token estimation and summarization primitives. Durable compaction policy
 /// remains owned by the product session layer.
 pub mod compaction {
-    pub use crate::compaction::branch::{
-        BranchPreparation, BranchSummaryOptions, BranchSummaryResult, CollectEntriesResult,
-        FileOperations, collect_entries_for_branch_summary, generate_branch_summary,
-        generate_branch_summary_with_provider_streamer, prepare_branch_entries,
-    };
-    pub use crate::compaction::branch_error::{BranchSummaryError, BranchSummaryErrorCode};
     pub use crate::compaction::estimate::{
         ContextUsageEstimate, calculate_context_tokens, estimate_context_tokens, estimate_tokens,
     };
@@ -76,7 +71,7 @@ pub mod compaction {
 pub mod transcript {
     pub use crate::transcript::{
         SessionEntry, SessionHeader, SessionIdGenerator, SessionMetadata, SessionTreeNode,
-        StoredAgentMessage, StoredUsage, StoredUsageCost, TranscriptIdError, TreeFilterMode,
+        StoredAgentMessage, StoredUsage, StoredUsageCost, TranscriptIdError,
         agent_message_to_stored, create_session_id, create_timestamp, generate_entry_id,
     };
 }
@@ -85,32 +80,9 @@ pub mod transcript {
 /// must not import this category.
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing {
-    pub use crate::agent::turn::{
-        AgentTurnContext, AgentTurnDecision, AgentTurnProviderRequestOverride, PendingToolCall,
-        RuntimeCompactionState, apply_before_provider_request_hook, decide_after_assistant,
-        drain_queued_input, execute_tools, maybe_compact_runtime_context, maybe_prepare_next_turn,
-        prepare_provider_request, start_turn, stream_provider,
-    };
     pub use crate::context::conversion::{
         assemble_context, convert_to_context, default_convert_to_llm,
     };
-    pub use crate::context::{
-        InMemorySessionStorage, SessionContext, SessionError, SessionErrorCode,
-        build_session_context,
-    };
     pub use crate::execution::capture::bash_execution_to_text;
     pub use crate::testing::environment::InMemoryExecutionEnv;
-    pub use crate::testing::harness::{
-        AbortResult, AgentHarness, AgentHarnessEvent, AgentHarnessHooks, AgentHarnessPhase,
-        BeforeAgentStartHook, BeforeProviderPayload, BeforeProviderPayloadHook,
-        BeforeProviderPayloadPatch, BeforeProviderRequest, BeforeProviderRequestHook,
-        BeforeProviderRequestPatch, ContextHook, GetApiKeyAndHeadersHook, HarnessContext,
-        HarnessHookFuture, HarnessHookKind, HeaderPatch, Observer, Patch, ProviderAuth,
-        ProviderResponse, StreamOptionsPatch, SubscriptionGuard, on_kind,
-    };
-    pub use crate::testing::proxy::{
-        ProxyAssistantMessageEvent, ProxyMessageState, ProxyRequest, ProxyStreamOptions,
-        ProxyTransportFuture, build_proxy_request_body, process_proxy_event, stream_proxy,
-        stream_proxy_with_transport,
-    };
 }

@@ -11,16 +11,20 @@
 
 ## 0.5.1 - Unreleased
 
-### Planned
+### Runtime And API
 
-- Remove the unused core Branch Summary workflow alternative and the test-only
+- Removed the unused core Branch Summary workflow alternative and the test-only
   Session Context/Memory subsystem while retaining provider-neutral
   summarization, conversion, transcript, and execution contracts.
-- Complete enum-only Agent-turn transitions, reduce message/config/resource
-  cloning and duplicate event retention, replace the parallel Harness/Proxy
-  runtime with narrow production-path fixtures, and consolidate resource-loader
+- Completed enum-only Agent-turn transitions with compile-time variant
+  coverage, reduced message/config/resource
+  cloning and duplicate event retention, replaced the parallel Harness/Proxy
+  runtime with narrow production-path fixtures, and consolidated resource-loader
   mechanics.
-- Track implementation, downstream migration, public API, architecture, and
+- Removed the retired branch/session/node/harness/proxy facade contracts, moved
+  product-specific tree filtering out of the core, and added
+  `BeforeProviderRequestHook` to `api::agent`.
+- Recorded implementation, downstream migration, public API, architecture, and
   release evidence in `docs/0.5.1-pi-agent-core-lean-runtime-plan.md`.
 
 ## 0.4.2 - 2026-07-20

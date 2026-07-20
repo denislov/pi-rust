@@ -1,12 +1,53 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 
-use pi_agent_core::api::transcript::{SessionTreeNode, TreeFilterMode};
+use pi_agent_core::api::transcript::SessionTreeNode;
 use pi_tui::api::input::{InputEvent, Key, KeybindingsManager};
 use pi_tui::api::render::{
     SYSTEM, USER, color_enabled, paint_with, truncate_to_width_with_ellipsis, visible_width,
 };
 
 use crate::adapters::interactive::render::fit_line;
+
+/// Filter mode for the `/tree` selector. Product presentation policy owned by
+/// `pi-coding-agent`; transcript DTOs remain in `pi-agent-core`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TreeFilterMode {
+    Default,
+    NoTools,
+    UserOnly,
+    LabeledOnly,
+    All,
+}
+
+impl TreeFilterMode {
+    pub(crate) fn from_str_name(s: &str) -> Self {
+        match s {
+            "default" => Self::Default,
+            "no-tools" => Self::NoTools,
+            "user-only" => Self::UserOnly,
+            "labeled-only" => Self::LabeledOnly,
+            "all" => Self::All,
+            _ => Self::Default,
+        }
+    }
+
+    pub(crate) fn as_str(&self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::NoTools => "no-tools",
+            Self::UserOnly => "user-only",
+            Self::LabeledOnly => "labeled-only",
+            Self::All => "all",
+        }
+    }
+}
+
+impl fmt::Display for TreeFilterMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
 
 /// Maximum number of tree rows shown per page.
 const PAGE_SIZE: usize = 10;

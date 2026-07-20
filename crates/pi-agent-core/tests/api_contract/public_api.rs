@@ -3,9 +3,9 @@
 use pi_agent_core::api::agent::{
     AfterToolCallContext, AfterToolCallHook, AfterToolCallResult, Agent, AgentConfig, AgentEvent,
     AgentHooks, AgentLoopTurnUpdate, AgentMessage, AgentResources, AgentStream,
-    BeforeProviderRequestContext, BeforeProviderRequestResult, BeforeToolCallContext,
-    BeforeToolCallHook, BeforeToolCallResult, CompactionConfig, CompactionSettings,
-    ConvertToLlmHook, HookFuture, PrepareNextTurnContext, PrepareNextTurnHook,
+    BeforeProviderRequestContext, BeforeProviderRequestHook, BeforeProviderRequestResult,
+    BeforeToolCallContext, BeforeToolCallHook, BeforeToolCallResult, CompactionConfig,
+    CompactionSettings, ConvertToLlmHook, HookFuture, PrepareNextTurnContext, PrepareNextTurnHook,
     ProviderRequestSnapshot, QueueMode, ShouldStopAfterTurnContext, ShouldStopAfterTurnHook,
     ThinkingLevel, TransformContextHook,
 };
@@ -23,8 +23,7 @@ use pi_agent_core::api::resources::{
     parse_command_args, parse_frontmatter, substitute_args,
 };
 use pi_agent_core::api::testing::{
-    BeforeProviderRequestHook, InMemoryExecutionEnv, assemble_context, convert_to_context,
-    default_convert_to_llm,
+    InMemoryExecutionEnv, assemble_context, convert_to_context, default_convert_to_llm,
 };
 use pi_agent_core::api::tool::{
     AgentTool, AgentToolDefinitionError, AgentToolOutput, AgentToolResult, ToolExecutionMode,
@@ -357,7 +356,7 @@ fn test_model() -> pi_ai::api::model::Model {
 fn transcript_types_are_importable_from_neutral_module() {
     use pi_agent_core::api::transcript::{
         SessionEntry, SessionHeader, SessionTreeNode, StoredAgentMessage, StoredUsage,
-        StoredUsageCost, TreeFilterMode, create_session_id, create_timestamp, generate_entry_id,
+        StoredUsageCost, create_session_id, create_timestamp, generate_entry_id,
     };
 
     let _ = std::any::type_name::<SessionHeader>();
@@ -366,7 +365,6 @@ fn transcript_types_are_importable_from_neutral_module() {
     let _ = std::any::type_name::<StoredAgentMessage>();
     let _ = std::any::type_name::<StoredUsage>();
     let _ = std::any::type_name::<StoredUsageCost>();
-    assert_eq!(TreeFilterMode::from_str_name("all"), TreeFilterMode::All);
     assert!(!create_session_id().is_empty());
     assert!(create_timestamp().ends_with('Z'));
     let existing = std::collections::HashSet::new();

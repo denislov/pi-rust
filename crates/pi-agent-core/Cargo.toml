@@ -21,7 +21,6 @@ ignore = "0.4"
 time = { version = "0.3", features = ["formatting", "macros"] }
 uuid = { version = "1", features = ["v7"] }
 regex = "1"
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 
 [dev-dependencies]
 pi-ai = { path = "../pi-ai", features = ["test-support"] }

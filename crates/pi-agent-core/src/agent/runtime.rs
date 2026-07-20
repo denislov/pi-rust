@@ -1,5 +1,3 @@
-#[cfg(any(test, feature = "test-support"))]
-use crate::agent::turn::AgentTurnContext;
 use crate::agent::turn::AgentTurnRunner;
 use crate::agent::types::{
     AgentConfig, AgentMessage, AgentResources, AgentStream, AgentTool, AgentToolDefinitionError,
@@ -101,12 +99,6 @@ impl Agent {
 
     pub fn messages(&self) -> Vec<AgentMessage> {
         self.state.read().unwrap().messages.clone()
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn agent_turn_context_snapshot(&self) -> AgentTurnContext {
-        let state = self.state.read().unwrap();
-        AgentTurnContext::from_state(&state)
     }
 
     pub fn before_provider_request_hook(&self) -> Option<BeforeProviderRequestHook> {

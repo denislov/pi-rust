@@ -293,7 +293,6 @@ fn production_and_examples_use_only_item_allowlisted_upstream_contracts() {
                 "StoredAgentMessage",
                 "StoredUsage",
                 "StoredUsageCost",
-                "TreeFilterMode",
                 "create_session_id",
                 "create_timestamp",
             ],

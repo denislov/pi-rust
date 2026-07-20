@@ -6,7 +6,7 @@ pub use id::{
 };
 pub use types::{
     SessionEntry, SessionHeader, SessionMetadata, SessionTreeNode, StoredAgentMessage, StoredUsage,
-    StoredUsageCost, TreeFilterMode,
+    StoredUsageCost,
 };
 
 pub fn agent_message_to_stored(

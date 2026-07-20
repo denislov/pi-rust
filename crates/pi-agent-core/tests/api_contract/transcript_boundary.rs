@@ -14,7 +14,6 @@ const TRANSCRIPT_SYMBOLS: &[&str] = &[
     "StoredAgentMessage",
     "StoredUsage",
     "StoredUsageCost",
-    "TreeFilterMode",
     "SessionIdGenerator",
     "create_session_id",
     "create_timestamp",

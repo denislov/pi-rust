@@ -727,9 +727,10 @@ fn handle_tree_command(root: &mut InteractiveRoot) {
                     .push(TranscriptItem::system("No entries in session"));
                 return;
             }
-            let filter_mode = pi_agent_core::api::transcript::TreeFilterMode::from_str_name(
-                &root.settings.tree_filter_mode,
-            );
+            let filter_mode =
+                crate::adapters::interactive::tree_selector::TreeFilterMode::from_str_name(
+                    &root.settings.tree_filter_mode,
+                );
             let selector = crate::adapters::interactive::tree_selector::TreeSelectorState::new(
                 tree,
                 leaf_id,

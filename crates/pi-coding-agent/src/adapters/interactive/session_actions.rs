@@ -484,12 +484,12 @@ fn session_choice_from_rust_native(hydration: &CodingAgentSessionHydration) -> S
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adapters::interactive::tree_selector::TreeFilterMode;
     use crate::runtime::facade::{CodingAgentSession, CodingAgentSessionOptions};
     use crate::session::event::{
         OperationKind, PersistedContentBlock, SessionEventData, SessionEventEnvelope,
     };
     use crate::session::repository::{CreateSessionOptions, ManifestPatch, SessionLogStore};
-    use pi_agent_core::api::transcript::TreeFilterMode;
 
     #[test]
     fn hydration_preserves_thinking_images_and_structured_delegation() {

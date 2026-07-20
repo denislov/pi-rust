@@ -29,16 +29,22 @@ use tokio_util::sync::CancellationToken;
 
 use super::context::{AgentTurnContext, PendingToolCall, RuntimeCompactionState};
 
-const ACTION_DEFAULT: &str = "default";
-const ACTION_CONTINUE: &str = "continue";
-const ACTION_CONTINUE_PROVIDER: &str = "continue_provider";
-const ACTION_TOOLS: &str = "tools";
-const ACTION_DONE: &str = "done";
-const ACTION_ERROR: &str = "error";
-const ACTION_ABORTED: &str = "aborted";
+#[derive(Debug, Clone)]
+pub(crate) enum AgentTurnError {
+    Invariant(String),
+    Compaction(String),
+}
+
+impl std::fmt::Display for AgentTurnError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Invariant(msg) | Self::Compaction(msg) => write!(f, "{msg}"),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AgentTurnDecision {
+pub(crate) enum AgentTurnDecision {
     Next,
     Continue,
     ContinueProvider,
@@ -48,27 +54,13 @@ pub enum AgentTurnDecision {
     Aborted,
 }
 
-impl AgentTurnDecision {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::Next => ACTION_DEFAULT,
-            Self::Continue => ACTION_CONTINUE,
-            Self::ContinueProvider => ACTION_CONTINUE_PROVIDER,
-            Self::Tools => ACTION_TOOLS,
-            Self::Done => ACTION_DONE,
-            Self::Error => ACTION_ERROR,
-            Self::Aborted => ACTION_ABORTED,
-        }
-    }
-}
-
-pub fn start_turn(ctx: &mut AgentTurnContext) -> Result<AgentTurnDecision, String> {
+pub(crate) fn start_turn(ctx: &mut AgentTurnContext) -> Result<AgentTurnDecision, AgentTurnError> {
     if ctx.cancel_token.is_cancelled() {
         ctx.should_finish = true;
         ctx.emit(AgentEvent::AgentError {
             error: "aborted".into(),
         });
-        return action(ACTION_ABORTED);
+        return Ok(AgentTurnDecision::Aborted);
     }
 
     ctx.turn += 1;
@@ -80,23 +72,23 @@ pub fn start_turn(ctx: &mut AgentTurnContext) -> Result<AgentTurnDecision, Strin
         ctx.emit(AgentEvent::AgentError {
             error: format!("max turns ({}) exceeded", max_turns),
         });
-        return action(ACTION_ERROR);
+        return Ok(AgentTurnDecision::Error);
     }
 
     ctx.emit(AgentEvent::TurnStart { turn: ctx.turn });
-    default_action()
+    Ok(AgentTurnDecision::Next)
 }
 
-pub fn drain_queued_input(ctx: &mut AgentTurnContext) {
+pub(crate) fn drain_queued_input(ctx: &mut AgentTurnContext) {
     ctx.sync_live_queues();
     let steered = drain_queue(&mut ctx.steering_queue, ctx.config.steering_mode);
     ctx.messages.extend(steered);
     ctx.has_more_queued_input = !ctx.steering_queue.is_empty() || !ctx.follow_up_queue.is_empty();
 }
 
-pub async fn prepare_provider_request(
+pub(crate) async fn prepare_provider_request(
     ctx: &mut AgentTurnContext,
-) -> Result<AgentTurnDecision, String> {
+) -> Result<AgentTurnDecision, AgentTurnError> {
     let transformed_messages = if let Some(hook) = ctx.config.hooks.transform_context.clone() {
         let cancellation_token = ctx.cancel_token.clone();
         match tokio::select! {
@@ -108,7 +100,7 @@ pub async fn prepare_provider_request(
                 ctx.emit(AgentEvent::AgentError {
                     error: error.clone(),
                 });
-                return action(ACTION_ERROR);
+                return Ok(AgentTurnDecision::Error);
             }
         }
     } else {
@@ -122,14 +114,14 @@ pub async fn prepare_provider_request(
         let cancellation_token = ctx.cancel_token.clone();
         match tokio::select! {
             _ = cancellation_token.clone().cancelled_owned() => return aborted(ctx),
-            result = hook(messages, ctx.resources.clone()) => result,
+            result = hook(messages, ctx.config.resources.clone()) => result,
         } {
             Ok(llm_messages) => Some(llm_messages),
             Err(error) => {
                 ctx.emit(AgentEvent::AgentError {
                     error: error.clone(),
                 });
-                return action(ACTION_ERROR);
+                return Ok(AgentTurnDecision::Error);
             }
         }
     } else {
@@ -143,23 +135,23 @@ pub async fn prepare_provider_request(
             messages_for_context,
             llm_messages,
             &ctx.tools,
-            &ctx.resources,
+            &ctx.config.resources,
         )
     } else if transformed_messages.is_some() {
-        let llm_messages = default_convert_to_llm(messages_for_context, &ctx.resources);
+        let llm_messages = default_convert_to_llm(messages_for_context, &ctx.config.resources);
         assemble_context(
             &ctx.config.system_prompt,
             messages_for_context,
             llm_messages,
             &ctx.tools,
-            &ctx.resources,
+            &ctx.config.resources,
         )
     } else {
         convert_to_context(
             &ctx.config.system_prompt,
             &ctx.messages,
             &ctx.tools,
-            &ctx.resources,
+            &ctx.config.resources,
         )
     };
 
@@ -186,12 +178,12 @@ pub async fn prepare_provider_request(
 
     ctx.provider_request = Some(request);
 
-    default_action()
+    Ok(AgentTurnDecision::Next)
 }
 
-pub async fn apply_before_provider_request_hook(
+pub(crate) async fn apply_before_provider_request_hook(
     ctx: &mut AgentTurnContext,
-) -> Result<AgentTurnDecision, String> {
+) -> Result<AgentTurnDecision, AgentTurnError> {
     let mut request = match ctx.provider_request.clone() {
         Some(request) => request,
         None => {
@@ -199,7 +191,7 @@ pub async fn apply_before_provider_request_hook(
             ctx.emit(AgentEvent::AgentError {
                 error: error.clone(),
             });
-            return action(ACTION_ERROR);
+            return Ok(AgentTurnDecision::Error);
         }
     };
 
@@ -223,17 +215,19 @@ pub async fn apply_before_provider_request_hook(
                 ctx.emit(AgentEvent::AgentError {
                     error: error.clone(),
                 });
-                return action(ACTION_ERROR);
+                return Ok(AgentTurnDecision::Error);
             }
         }
     }
 
     ctx.provider_request = Some(request.clone());
     ctx.emit(AgentEvent::BeforeProviderRequest { request });
-    default_action()
+    Ok(AgentTurnDecision::Next)
 }
 
-pub async fn maybe_compact_runtime_context(ctx: &mut AgentTurnContext) -> Result<(), String> {
+pub(crate) async fn maybe_compact_runtime_context(
+    ctx: &mut AgentTurnContext,
+) -> Result<(), AgentTurnError> {
     let Some(config) = ctx.config.compaction.clone() else {
         return Ok(());
     };
@@ -266,7 +260,7 @@ pub async fn maybe_compact_runtime_context(ctx: &mut AgentTurnContext) -> Result
         ctx.config.provider_streamer.clone(),
     )
     .await
-    .map_err(|err| err.to_string())?;
+    .map_err(|err| AgentTurnError::Compaction(err.to_string()))?;
 
     let first_kept_message_id = keep.first().map(message_id).unwrap_or("none").to_string();
     for message in &mut keep {
@@ -297,11 +291,13 @@ pub async fn maybe_compact_runtime_context(ctx: &mut AgentTurnContext) -> Result
     Ok(())
 }
 
-pub async fn stream_provider(ctx: &mut AgentTurnContext) -> Result<AgentTurnDecision, String> {
+pub(crate) async fn stream_provider(
+    ctx: &mut AgentTurnContext,
+) -> Result<AgentTurnDecision, AgentTurnError> {
     let request = ctx
         .provider_request
         .clone()
-        .ok_or_else(|| "provider request is not prepared".to_string())?;
+        .ok_or_else(|| AgentTurnError::Invariant("provider request is not prepared".into()))?;
     let mut llm_stream = stream_model_with_provider_streamer(
         &request.model,
         request.context,
@@ -339,7 +335,7 @@ pub async fn stream_provider(ctx: &mut AgentTurnContext) -> Result<AgentTurnDeci
 
     if let Some(message) = assistant_message {
         ctx.assistant_message = Some(message);
-        return default_action();
+        return Ok(AgentTurnDecision::Next);
     }
 
     let error = stream_error.unwrap_or_else(|| "LLM stream ended without Done event".into());
@@ -347,11 +343,13 @@ pub async fn stream_provider(ctx: &mut AgentTurnContext) -> Result<AgentTurnDeci
     Ok(AgentTurnDecision::Error)
 }
 
-pub fn decide_after_assistant(ctx: &mut AgentTurnContext) -> Result<AgentTurnDecision, String> {
+pub(crate) fn decide_after_assistant(
+    ctx: &mut AgentTurnContext,
+) -> Result<AgentTurnDecision, AgentTurnError> {
     let assistant = ctx
         .assistant_message
         .clone()
-        .ok_or_else(|| "assistant message is not available".to_string())?;
+        .ok_or_else(|| AgentTurnError::Invariant("assistant message is not available".into()))?;
 
     let assistant_id = unique_message_id(
         &ctx.messages,
@@ -366,7 +364,7 @@ pub fn decide_after_assistant(ctx: &mut AgentTurnContext) -> Result<AgentTurnDec
     });
 
     match assistant.stop_reason {
-        StopReason::Stop | StopReason::Length => action(ACTION_CONTINUE),
+        StopReason::Stop | StopReason::Length => Ok(AgentTurnDecision::Continue),
         StopReason::Error => {
             let error = assistant
                 .error_message
@@ -374,14 +372,14 @@ pub fn decide_after_assistant(ctx: &mut AgentTurnContext) -> Result<AgentTurnDec
                 .unwrap_or_else(|| "LLM error".into());
             ctx.should_finish = true;
             ctx.emit(AgentEvent::AgentError { error });
-            action(ACTION_ERROR)
+            Ok(AgentTurnDecision::Error)
         }
         StopReason::Aborted => {
             ctx.should_finish = true;
             ctx.emit(AgentEvent::AgentError {
                 error: "aborted".into(),
             });
-            action(ACTION_ABORTED)
+            Ok(AgentTurnDecision::Aborted)
         }
         StopReason::ToolUse => {
             let tool_calls = extract_tool_calls(&assistant);
@@ -390,7 +388,7 @@ pub fn decide_after_assistant(ctx: &mut AgentTurnContext) -> Result<AgentTurnDec
                 ctx.emit(AgentEvent::AgentError {
                     error: "tool-use response contained no tool calls".into(),
                 });
-                return action(ACTION_ERROR);
+                return Ok(AgentTurnDecision::Error);
             }
             let mut used = ctx
                 .messages
@@ -411,30 +409,30 @@ pub fn decide_after_assistant(ctx: &mut AgentTurnContext) -> Result<AgentTurnDec
                     }
                 })
                 .collect();
-            action(ACTION_TOOLS)
+            Ok(AgentTurnDecision::Tools)
         }
     }
 }
 
-pub async fn maybe_prepare_next_turn(
+pub(crate) async fn maybe_prepare_next_turn(
     ctx: &mut AgentTurnContext,
-) -> Result<AgentTurnDecision, String> {
+) -> Result<AgentTurnDecision, AgentTurnError> {
     let assistant = ctx
         .assistant_message
         .clone()
-        .ok_or_else(|| "assistant message is not available".to_string())?;
+        .ok_or_else(|| AgentTurnError::Invariant("assistant message is not available".into()))?;
     ctx.sync_live_queues();
 
     match assistant.stop_reason {
         StopReason::Stop | StopReason::Length => {
             let Some(should_stop) = should_stop_after_turn(ctx, &assistant).await? else {
-                return action(ACTION_ERROR);
+                return Ok(AgentTurnDecision::Error);
             };
             if should_stop {
                 ctx.should_finish = true;
                 ctx.has_more_queued_input = false;
                 ctx.emit(AgentEvent::AgentDone { message: assistant });
-                return action(ACTION_DONE);
+                return Ok(AgentTurnDecision::Done);
             }
 
             if let Some(action) = prepare_next_turn_or_error(ctx).await? {
@@ -447,29 +445,29 @@ pub async fn maybe_prepare_next_turn(
                 let follow_ups = drain_queue(&mut ctx.follow_up_queue, ctx.config.follow_up_mode);
                 ctx.messages.extend(follow_ups);
                 ctx.should_finish = false;
-                action(ACTION_CONTINUE)
+                Ok(AgentTurnDecision::Continue)
             } else {
                 ctx.should_finish = true;
                 ctx.emit(AgentEvent::AgentDone { message: assistant });
-                action(ACTION_DONE)
+                Ok(AgentTurnDecision::Done)
             }
         }
         StopReason::ToolUse => {
             let Some(should_stop) = should_stop_after_turn(ctx, &assistant).await? else {
-                return action(ACTION_ERROR);
+                return Ok(AgentTurnDecision::Error);
             };
             if should_stop {
                 ctx.should_finish = true;
                 ctx.has_more_queued_input = false;
                 ctx.emit(AgentEvent::AgentDone { message: assistant });
-                return action(ACTION_DONE);
+                return Ok(AgentTurnDecision::Done);
             }
 
             if ctx.tool_results_all_terminate {
                 ctx.should_finish = true;
                 ctx.has_more_queued_input = false;
                 ctx.emit(AgentEvent::AgentDone { message: assistant });
-                return action(ACTION_DONE);
+                return Ok(AgentTurnDecision::Done);
             }
 
             if let Some(action) = prepare_next_turn_or_error(ctx).await? {
@@ -479,24 +477,26 @@ pub async fn maybe_prepare_next_turn(
             ctx.should_finish = false;
             ctx.has_more_queued_input =
                 !ctx.follow_up_queue.is_empty() || !ctx.steering_queue.is_empty();
-            action(ACTION_CONTINUE)
+            Ok(AgentTurnDecision::Continue)
         }
         StopReason::Error => {
             ctx.should_finish = true;
-            action(ACTION_ERROR)
+            Ok(AgentTurnDecision::Error)
         }
         StopReason::Aborted => {
             ctx.should_finish = true;
-            action(ACTION_ABORTED)
+            Ok(AgentTurnDecision::Aborted)
         }
     }
 }
 
-pub async fn execute_tools(ctx: &mut AgentTurnContext) -> Result<AgentTurnDecision, String> {
+pub(crate) async fn execute_tools(
+    ctx: &mut AgentTurnContext,
+) -> Result<AgentTurnDecision, AgentTurnError> {
     ctx.tool_results_all_terminate = false;
     let pending = std::mem::take(&mut ctx.pending_tool_calls);
     if pending.is_empty() {
-        return action(ACTION_CONTINUE_PROVIDER);
+        return Ok(AgentTurnDecision::ContinueProvider);
     }
 
     let requests: Vec<_> = pending
@@ -836,16 +836,12 @@ async fn execute_tool(
     }
 }
 
-fn default_action() -> Result<AgentTurnDecision, String> {
-    Ok(AgentTurnDecision::Next)
-}
-
-fn aborted(ctx: &mut AgentTurnContext) -> Result<AgentTurnDecision, String> {
+fn aborted(ctx: &mut AgentTurnContext) -> Result<AgentTurnDecision, AgentTurnError> {
     ctx.should_finish = true;
     ctx.emit(AgentEvent::AgentError {
         error: "aborted".into(),
     });
-    action(ACTION_ABORTED)
+    Ok(AgentTurnDecision::Aborted)
 }
 
 fn unique_message_id(messages: &[AgentMessage], preferred: String) -> String {
@@ -871,23 +867,10 @@ fn unique_id(used: &HashSet<String>, preferred: String) -> String {
     }
 }
 
-fn action(value: &str) -> Result<AgentTurnDecision, String> {
-    match value {
-        ACTION_DEFAULT => Ok(AgentTurnDecision::Next),
-        ACTION_CONTINUE => Ok(AgentTurnDecision::Continue),
-        ACTION_CONTINUE_PROVIDER => Ok(AgentTurnDecision::ContinueProvider),
-        ACTION_TOOLS => Ok(AgentTurnDecision::Tools),
-        ACTION_DONE => Ok(AgentTurnDecision::Done),
-        ACTION_ERROR => Ok(AgentTurnDecision::Error),
-        ACTION_ABORTED => Ok(AgentTurnDecision::Aborted),
-        value => Err(format!("unknown agent turn decision '{value}'")),
-    }
-}
-
 async fn should_stop_after_turn(
     ctx: &mut AgentTurnContext,
     assistant: &AssistantMessage,
-) -> Result<Option<bool>, String> {
+) -> Result<Option<bool>, AgentTurnError> {
     let Some(hook) = ctx.config.hooks.should_stop_after_turn.clone() else {
         return Ok(Some(false));
     };
@@ -911,7 +894,7 @@ async fn should_stop_after_turn(
 
 async fn prepare_next_turn_or_error(
     ctx: &mut AgentTurnContext,
-) -> Result<Option<AgentTurnDecision>, String> {
+) -> Result<Option<AgentTurnDecision>, AgentTurnError> {
     let Some(hook) = ctx.config.hooks.prepare_next_turn.clone() else {
         return Ok(None);
     };
@@ -928,7 +911,7 @@ async fn prepare_next_turn_or_error(
             ctx.emit(AgentEvent::AgentError {
                 error: error.clone(),
             });
-            return Ok(Some(action(ACTION_ERROR)?));
+            return Ok(Some(AgentTurnDecision::Error));
         }
     };
 

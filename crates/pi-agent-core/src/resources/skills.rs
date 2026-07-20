@@ -2,7 +2,7 @@ use crate::agent::types::{
     DiagnosticSeverity, ResourceDiagnostic, Skill, SourceTag, SourcedResourceDiagnostic,
     SourcedSkill,
 };
-use crate::resources::frontmatter::parse_frontmatter;
+use crate::resources::{parse_frontmatter_at_path, read_resource_file};
 use ignore::WalkBuilder;
 use std::path::{Path, PathBuf};
 
@@ -107,28 +107,13 @@ fn load_skills_from_dir(
 }
 
 fn load_skill_file(
-    path: &PathBuf,
+    path: &Path,
     diagnostics: &mut Vec<ResourceDiagnostic>,
     _is_template: bool,
 ) -> Option<Skill> {
-    let content = match std::fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(e) => {
-            diagnostics.push(ResourceDiagnostic {
-                severity: DiagnosticSeverity::Warning,
-                code: "skill_read_error".into(),
-                message: format!("failed to read {}: {}", path.display(), e),
-                path: path.clone(),
-            });
-            return None;
-        }
-    };
+    let content = read_resource_file(path, "skill_read_error", diagnostics)?;
 
-    let (meta, body, mut meta_diags) = parse_frontmatter(&content);
-    for d in &mut meta_diags {
-        d.path = path.clone();
-    }
-    diagnostics.append(&mut meta_diags);
+    let (meta, body) = parse_frontmatter_at_path(&content, path, diagnostics);
 
     let parent_dir_name = path
         .parent()
@@ -152,7 +137,7 @@ fn load_skill_file(
             message: format!(
                 "name \"{fm_name}\" does not match parent directory \"{parent_name}\""
             ),
-            path: path.clone(),
+            path: path.to_path_buf(),
         });
     }
     for error in validate_skill_name(frontmatter_name.as_deref().unwrap_or(&name)) {
@@ -160,7 +145,7 @@ fn load_skill_file(
             severity: DiagnosticSeverity::Warning,
             code: "invalid_metadata".into(),
             message: error,
-            path: path.clone(),
+            path: path.to_path_buf(),
         });
     }
 
@@ -178,7 +163,7 @@ fn load_skill_file(
             severity: DiagnosticSeverity::Warning,
             code: "invalid_metadata".into(),
             message: "description is required".into(),
-            path: path.clone(),
+            path: path.to_path_buf(),
         });
         return None;
     }
@@ -194,7 +179,7 @@ fn load_skill_file(
                 1024,
                 desc.chars().count()
             ),
-            path: path.clone(),
+            path: path.to_path_buf(),
         });
     }
     let description = description.unwrap(); // safe: we returned None above if None/empty

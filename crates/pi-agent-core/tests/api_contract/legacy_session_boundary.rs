@@ -44,25 +44,58 @@ fn legacy_jsonl_storage_and_repo_are_removed_from_pi_agent_core() {
 }
 
 #[test]
-fn session_context_sources_live_outside_legacy_session_module() {
+fn session_context_subsystem_is_removed_from_pi_agent_core() {
     let crate_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
 
     for relative in [
         "src/session/context.rs",
         "src/session/error.rs",
         "src/session/memory.rs",
+        "src/context/assembly.rs",
+        "src/context/error.rs",
+        "src/context/memory.rs",
     ] {
         assert!(
             !crate_dir.join(relative).exists(),
-            "real session-context source should not live under legacy session path: {relative}"
+            "test-only session-context subsystem should be removed: {relative}"
         );
     }
 
-    let session_context_dir = crate_dir.join("src/context");
-    for relative in ["assembly.rs", "error.rs", "memory.rs"] {
-        assert!(
-            session_context_dir.join(relative).is_file(),
-            "session-context source should live under src/context/{relative}"
-        );
-    }
+    let context_mod = std::fs::read_to_string(crate_dir.join("src/context/mod.rs"))
+        .expect("context module should be readable");
+    assert!(
+        !context_mod.contains("pub mod assembly"),
+        "context module should not export the retired assembly submodule"
+    );
+    assert!(
+        !context_mod.contains("pub mod memory"),
+        "context module should not export the retired memory submodule"
+    );
+    assert!(
+        !context_mod.contains("pub mod error"),
+        "context module should not export the retired session error submodule"
+    );
+    assert!(
+        !context_mod.contains("SessionContext"),
+        "context module should not re-export the retired SessionContext type"
+    );
+    assert!(
+        !context_mod.contains("InMemorySessionStorage"),
+        "context module should not re-export the retired InMemorySessionStorage type"
+    );
+
+    let api_rs = std::fs::read_to_string(crate_dir.join("src/api.rs"))
+        .expect("api facade should be readable");
+    assert!(
+        !api_rs.contains("SessionContext"),
+        "api facade should not re-export the retired SessionContext type"
+    );
+    assert!(
+        !api_rs.contains("InMemorySessionStorage"),
+        "api facade should not re-export the retired InMemorySessionStorage type"
+    );
+    assert!(
+        !api_rs.contains("build_session_context"),
+        "api facade should not re-export the retired build_session_context helper"
+    );
 }

@@ -2,7 +2,7 @@ use crate::agent::types::{
     DiagnosticSeverity, PromptTemplate, ResourceDiagnostic, SourceTag, SourcedPromptTemplate,
     SourcedResourceDiagnostic,
 };
-use crate::resources::frontmatter::parse_frontmatter;
+use crate::resources::{parse_frontmatter_at_path, read_resource_file};
 use std::path::PathBuf;
 
 pub fn load_prompt_templates(paths: &[PathBuf]) -> (Vec<PromptTemplate>, Vec<ResourceDiagnostic>) {
@@ -89,27 +89,12 @@ pub fn load_sourced_prompt_templates(
 }
 
 fn load_template_file(
-    path: &PathBuf,
+    path: &std::path::Path,
     diagnostics: &mut Vec<ResourceDiagnostic>,
 ) -> Option<PromptTemplate> {
-    let content = match std::fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(e) => {
-            diagnostics.push(ResourceDiagnostic {
-                severity: DiagnosticSeverity::Warning,
-                code: "template_read_error".into(),
-                message: format!("failed to read {}: {}", path.display(), e),
-                path: path.clone(),
-            });
-            return None;
-        }
-    };
+    let content = read_resource_file(path, "template_read_error", diagnostics)?;
 
-    let (meta, body, mut meta_diags) = parse_frontmatter(&content);
-    for d in &mut meta_diags {
-        d.path = path.clone();
-    }
-    diagnostics.append(&mut meta_diags);
+    let (meta, body) = parse_frontmatter_at_path(&content, path, diagnostics);
 
     let name = meta
         .get("name")

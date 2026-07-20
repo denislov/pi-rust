@@ -6,12 +6,9 @@ use pi_ai::api::conversation::{AssistantMessage, Context};
 use pi_ai::api::stream::StreamOptions;
 use tokio_util::sync::CancellationToken;
 
-#[cfg(any(test, feature = "test-support"))]
-use crate::agent::Agent;
 use crate::agent::AgentState;
 use crate::agent::types::{
-    AgentConfig, AgentEvent, AgentMessage, AgentResources, AgentTool, AgentToolResult,
-    ProviderRequestSnapshot,
+    AgentConfig, AgentEvent, AgentMessage, AgentTool, AgentToolResult, ProviderRequestSnapshot,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -40,7 +37,6 @@ pub struct AgentTurnContext {
     pub config: AgentConfig,
     pub messages: Vec<AgentMessage>,
     pub tools: Vec<AgentTool>,
-    pub resources: AgentResources,
     pub steering_queue: VecDeque<AgentMessage>,
     pub follow_up_queue: VecDeque<AgentMessage>,
     pub cancel_token: CancellationToken,
@@ -56,23 +52,16 @@ pub struct AgentTurnContext {
     pub max_turns_exceeded: Option<u32>,
     pub should_finish: bool,
     pub has_more_queued_input: bool,
-    pub events: Vec<AgentEvent>,
     pub(crate) live_state: Option<Arc<RwLock<AgentState>>>,
     event_sender: Option<mpsc::UnboundedSender<AgentEvent>>,
 }
 
 impl AgentTurnContext {
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn from_agent(agent: &Agent) -> Self {
-        agent.agent_turn_context_snapshot()
-    }
-
     pub(crate) fn from_state(state: &AgentState) -> Self {
         Self {
             config: state.config.clone(),
             messages: state.messages.clone(),
             tools: state.tools.clone(),
-            resources: state.config.resources.clone(),
             steering_queue: state.steering_queue.clone(),
             follow_up_queue: state.follow_up_queue.clone(),
             cancel_token: state.cancel_token.clone(),
@@ -93,7 +82,6 @@ impl AgentTurnContext {
             max_turns_exceeded: None,
             should_finish: false,
             has_more_queued_input: false,
-            events: Vec::new(),
             live_state: None,
             event_sender: None,
         }
@@ -110,9 +98,8 @@ impl AgentTurnContext {
 
     pub(crate) fn emit(&mut self, event: AgentEvent) {
         if let Some(sender) = &self.event_sender {
-            let _ = sender.unbounded_send(event.clone());
+            let _ = sender.unbounded_send(event);
         }
-        self.events.push(event);
     }
 
     pub(crate) fn sync_live_queues(&mut self) {
@@ -144,18 +131,19 @@ impl AgentTurnContext {
         request
     }
 
-    pub(crate) fn apply_to_state(&self, state: &mut AgentState) {
-        let mut steering_queue = self.steering_queue.clone();
-        steering_queue.extend(state.steering_queue.drain(..));
-        let mut follow_up_queue = self.follow_up_queue.clone();
-        follow_up_queue.extend(state.follow_up_queue.drain(..));
-
-        state.messages = self.messages.clone();
+    pub(crate) fn apply_to_state(&mut self, state: &mut AgentState) {
+        state.messages = std::mem::take(&mut self.messages);
         state.config.model = self.config.model.clone();
         state.config.stream_options = self.config.stream_options.clone();
         state.config.thinking_level = self.config.thinking_level;
         state.cancel_token = self.cancel_token.clone();
+
+        let mut steering_queue = std::mem::take(&mut self.steering_queue);
+        steering_queue.extend(state.steering_queue.drain(..));
         state.steering_queue = steering_queue;
+
+        let mut follow_up_queue = std::mem::take(&mut self.follow_up_queue);
+        follow_up_queue.extend(state.follow_up_queue.drain(..));
         state.follow_up_queue = follow_up_queue;
 
         if self.live_state.is_none() && self.provider_request_override_consumed {
