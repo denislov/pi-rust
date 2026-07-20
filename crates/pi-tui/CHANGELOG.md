@@ -1,5 +1,12 @@
 # Changes
 
+## 0.5.0 - 2026-07-20
+
+### Changed
+
+- Advanced with the workspace to `0.5.0`; generic terminal behavior is
+  unchanged by the provider-runtime release.
+
 ## 0.4.2 - 2026-07-20
 
 ### Changed

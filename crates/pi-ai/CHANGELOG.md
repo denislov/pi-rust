@@ -1,5 +1,34 @@
 # Changes
 
+## 0.5.0 - 2026-07-20
+
+### Scope
+
+- Removed the Bedrock provider, AWS credential/SigV4 implementation and
+  dependencies, Bedrock authentication branches, tests, built-in API
+  registration, and all Bedrock model catalog records.
+- Converged repeated retained-provider stream mechanics behind private helpers,
+  tighten implementation visibility, remove DTO-only image experiments, and
+  audit the stable facade without moving provider ownership into higher crates.
+- Recorded implementation, baseline, migration, API, and release evidence under
+  `docs/`; the crate and workspace are released at `0.5.0`.
+
+### Removed
+
+- Removed the complete Bedrock provider, AWS credential/SigV4 implementation,
+  AWS dependencies, Bedrock auth/stream options, built-in API registration, and
+  all 90 Bedrock model records.
+- Removed the private test-only image-generation DTO and OpenRouter mapper;
+  multimodal conversation image input remains supported.
+- Removed the provider-tree-wide dead-code/unused-import allowance. Remaining
+  intentional wire fields use narrow field-local treatment.
+
+### Runtime
+
+- Consolidated retained OpenAI Completions/Mistral start emission, streaming
+  tool-argument assembly, and required terminal-marker validation behind
+  private provider-neutral helpers while preserving their wire parsers.
+
 ## 0.4.2 - 2026-07-20
 
 ### Changed

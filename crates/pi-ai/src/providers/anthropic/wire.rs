@@ -74,11 +74,15 @@ pub enum StreamEvent {
     },
     #[serde(rename = "content_block_delta")]
     ContentBlockDelta {
+        #[allow(dead_code)]
         index: u32,
         delta: ContentBlockDelta,
     },
     #[serde(rename = "content_block_stop")]
-    ContentBlockStop { index: u32 },
+    ContentBlockStop {
+        #[allow(dead_code)]
+        index: u32,
+    },
     #[serde(rename = "message_delta")]
     MessageDelta {
         delta: MessageDelta,
@@ -94,7 +98,9 @@ pub enum StreamEvent {
 pub struct MessageInfo {
     pub id: String,
     #[serde(rename = "type")]
+    #[allow(dead_code)]
     pub msg_type: String,
+    #[allow(dead_code)]
     pub role: String,
     pub model: String,
     pub usage: MessageUsage,
@@ -120,7 +126,10 @@ pub enum ContentBlockStart {
     #[serde(rename = "thinking")]
     Thinking { thinking: String },
     #[serde(rename = "redacted_thinking")]
-    RedactedThinking { data: String },
+    RedactedThinking {
+        #[allow(dead_code)]
+        data: String,
+    },
     #[serde(rename = "tool_use")]
     ToolUse { id: String, name: String },
 }
@@ -145,5 +154,6 @@ pub enum ContentBlockDelta {
 pub struct MessageDelta {
     pub stop_reason: Option<String>,
     #[serde(rename = "stop_sequence")]
+    #[allow(dead_code)]
     pub stop_sequence: Option<String>,
 }

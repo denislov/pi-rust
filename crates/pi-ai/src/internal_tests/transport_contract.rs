@@ -92,7 +92,6 @@ fn contract_model(api: &str, base_url: String) -> Model {
     let provider = match api {
         "anthropic-messages" => "anthropic",
         "azure-openai-responses" => "azure-openai-responses",
-        "bedrock-converse-stream" => "amazon-bedrock",
         "deepseek-chat-completions" => "deepseek",
         "google-generative-ai" => "google",
         "mistral-conversations" => "mistral",
@@ -129,13 +128,6 @@ fn contract_options(api: &str, base_url: &str) -> StreamOptions {
         options.azure_base_url = Some(base_url.into());
         options.azure_api_version = Some("2025-01-01-preview".into());
         options.azure_deployment_name = Some("contract-deployment".into());
-    }
-    if api == "bedrock-converse-stream" {
-        options.api_key = None;
-        options.bedrock_region = Some("us-east-1".into());
-        options.bedrock_access_key_id = Some("CONTRACT_ACCESS".into());
-        options.bedrock_secret_access_key = Some("CONTRACT_SECRET".into());
-        options.bedrock_session_token = Some("CONTRACT_SESSION".into());
     }
     options
 }
@@ -329,18 +321,6 @@ fn provider_option_matrix_rejects_inert_explicit_options() {
         pi_ai::transport::http::validate_options("azure-openai-responses", Some(&azure)).is_ok()
     );
     assert!(pi_ai::transport::http::validate_options("openai-responses", Some(&azure)).is_err());
-
-    let bedrock = StreamOptions {
-        bedrock_region: Some("us-east-1".into()),
-        cache_retention: Some(serde_json::json!("long")),
-        ..Default::default()
-    };
-    assert!(
-        pi_ai::transport::http::validate_options("bedrock-converse-stream", Some(&bedrock)).is_ok()
-    );
-    assert!(
-        pi_ai::transport::http::validate_options("anthropic-messages", Some(&bedrock)).is_err()
-    );
 
     let invalid_headers = StreamOptions {
         headers: Some(serde_json::json!({"x-value": 3})),
@@ -550,15 +530,11 @@ async fn every_builtin_provider_applies_one_deadline_to_a_stalled_send() {
 }
 
 #[tokio::test]
-async fn every_non_bedrock_builtin_provider_rejects_missing_credentials_before_network_io() {
+async fn every_builtin_provider_rejects_missing_credentials_before_network_io() {
     let registry = ProviderRegistry::new();
     register_builtins_into(&registry);
 
-    for api in builtin_provider_apis()
-        .iter()
-        .copied()
-        .filter(|api| *api != "bedrock-converse-stream")
-    {
+    for api in builtin_provider_apis().iter().copied() {
         let provider = registry.lookup(api).unwrap();
         let model = contract_model(api, "http://127.0.0.1:1".into());
         let events = provider

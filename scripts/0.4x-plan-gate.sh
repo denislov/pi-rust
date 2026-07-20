@@ -42,8 +42,8 @@ for prefix in ESS WAP DXH; do
 done
 
 workspace_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)"
-if [[ "$workspace_version" != "0.4.2" ]]; then
-  echo "reduced 0.4.x train must end at workspace version 0.4.2" >&2
+if [[ "$workspace_version" != "0.4.2" && "$workspace_version" != 0.5.* ]]; then
+  echo "workspace must preserve the completed 0.4.2 train or advance into 0.5.x" >&2
   exit 1
 fi
 

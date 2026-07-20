@@ -109,46 +109,44 @@ fn pi_ai_provider_modules_do_not_read_process_env_directly() {
 }
 
 #[test]
-fn bedrock_env_defaults_stay_behind_provider_auth_resolver() {
+fn retired_bedrock_and_aws_surface_is_absent() {
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = crate_root
-        .parent()
-        .and_then(Path::parent)
-        .expect("crate should live under crates/pi-ai");
-    let mut violations = Vec::new();
+    assert!(!crate_root.join("src/providers/bedrock").exists());
 
-    collect_provider_env_patterns(
-        repo_root,
-        &crate_root.join("src/providers/bedrock/mod.rs"),
-        &[
-            "AWS_BEARER_TOKEN_BEDROCK",
-            "AWS_REGION",
-            "AWS_DEFAULT_REGION",
+    let implementation_files = [
+        "Cargo.toml",
+        "src/providers/mod.rs",
+        "src/protocol/request.rs",
+        "src/registry/auth.rs",
+        "src/registry/env.rs",
+        "src/transport/http.rs",
+        "src/model/generated.json",
+    ];
+    for relative in implementation_files {
+        let content = fs::read_to_string(crate_root.join(relative)).expect("read implementation");
+        for retired in [
+            "amazon-bedrock",
+            "bedrock-converse-stream",
+            "aws-config",
+            "aws-credential-types",
+            "aws-sigv4",
             "AWS_ACCESS_KEY_ID",
-            "AWS_SECRET_ACCESS_KEY",
-            "AWS_SESSION_TOKEN",
-        ],
-        &mut violations,
-    );
-    collect_provider_env_patterns(
-        repo_root,
-        &crate_root.join("src/providers/bedrock/auth.rs"),
-        &[
-            "AWS_BEARER_TOKEN_BEDROCK",
-            "AWS_REGION",
-            "AWS_DEFAULT_REGION",
-            "AWS_ACCESS_KEY_ID",
-            "AWS_SECRET_ACCESS_KEY",
-            "AWS_SESSION_TOKEN",
-        ],
-        &mut violations,
-    );
+            "AWS_PROFILE",
+            "SigV4",
+        ] {
+            assert!(
+                !content.contains(retired),
+                "retired Bedrock/AWS surface `{retired}` remains in {relative}"
+            );
+        }
+    }
 
-    assert!(
-        violations.is_empty(),
-        "Bedrock env defaults must be resolved by ProviderAuthResolver and injected through StreamOptions, not read directly inside the provider:\n{}",
-        violations.join("\n")
-    );
+    let generator = fs::read_to_string(crate_root.join("tools/generate_models.cjs"))
+        .expect("read catalog generator");
+    assert!(generator.contains("RETIRED_PROVIDERS"));
+    assert!(generator.contains("RETIRED_APIS"));
+    assert!(generator.contains("amazon-bedrock"));
+    assert!(generator.contains("bedrock-converse-stream"));
 }
 
 #[test]

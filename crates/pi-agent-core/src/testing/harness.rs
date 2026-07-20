@@ -103,9 +103,6 @@ pub struct StreamOptionsPatch {
     pub azure_resource_name: Option<Patch<String>>,
     pub azure_base_url: Option<Patch<String>>,
     pub azure_deployment_name: Option<Patch<String>>,
-    pub bedrock_region: Option<Patch<String>>,
-    pub bedrock_profile: Option<Patch<String>>,
-    pub bedrock_bearer_token: Option<Patch<String>>,
     pub headers: Option<HeaderPatch>,
     pub timeout_ms: Option<Patch<u64>>,
     pub max_retries: Option<Patch<u32>>,
@@ -937,9 +934,6 @@ pub fn apply_stream_options_patch(
     apply_patch_value(&mut base.azure_resource_name, patch.azure_resource_name);
     apply_patch_value(&mut base.azure_base_url, patch.azure_base_url);
     apply_patch_value(&mut base.azure_deployment_name, patch.azure_deployment_name);
-    apply_patch_value(&mut base.bedrock_region, patch.bedrock_region);
-    apply_patch_value(&mut base.bedrock_profile, patch.bedrock_profile);
-    apply_patch_value(&mut base.bedrock_bearer_token, patch.bedrock_bearer_token);
     apply_patch_value(&mut base.timeout_ms, patch.timeout_ms);
     apply_patch_value(&mut base.max_retries, patch.max_retries);
     apply_patch_value(&mut base.max_retry_delay_ms, patch.max_retry_delay_ms);

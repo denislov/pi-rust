@@ -1,5 +1,28 @@
 # Changes
 
+## 0.5.0 - 2026-07-20
+
+### Changed
+
+- Removed retired Bedrock fields from the test-support `StreamOptionsPatch`
+  surface after `pi-ai` removed the provider and its authentication options.
+- Runtime behavior remains provider-neutral; the crate advances with the
+  workspace to `0.5.0`.
+
+## 0.5.1 - Unreleased
+
+### Planned
+
+- Remove the unused core Branch Summary workflow alternative and the test-only
+  Session Context/Memory subsystem while retaining provider-neutral
+  summarization, conversion, transcript, and execution contracts.
+- Complete enum-only Agent-turn transitions, reduce message/config/resource
+  cloning and duplicate event retention, replace the parallel Harness/Proxy
+  runtime with narrow production-path fixtures, and consolidate resource-loader
+  mechanics.
+- Track implementation, downstream migration, public API, architecture, and
+  release evidence in `docs/0.5.1-pi-agent-core-lean-runtime-plan.md`.
+
 ## 0.4.2 - 2026-07-20
 
 ### Breaking Changes

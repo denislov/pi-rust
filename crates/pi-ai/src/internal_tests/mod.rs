@@ -1,13 +1,11 @@
 mod anthropic_mapping;
 mod azure_openai_responses;
-mod bedrock;
 mod cost;
 mod deepseek;
 mod env_keys;
 mod faux;
 mod google_generative_ai;
 mod http_retry;
-mod images;
 mod m8_utilities;
 mod mistral;
 mod model_registry;

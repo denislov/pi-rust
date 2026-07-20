@@ -1,13 +1,13 @@
 use super::wire;
 use crate::model::Model;
 use crate::model::calculate_cost;
-use crate::protocol::json::parse_streaming_json;
 use crate::protocol::stream::EventStream;
 use crate::protocol::{
     AssistantMessage, AssistantMessageEvent, ContentBlock, Cost, StopReason, Usage,
 };
 use crate::providers::common::{
-    SseEventHandler, SseEventResult, SseTransportTerminal, process_sse,
+    ProviderTerminalLatch, SseEventHandler, SseEventResult, SseTransportTerminal,
+    ToolArgumentAssembler, process_sse, start_once,
 };
 use bytes::Bytes;
 use futures::Stream;
@@ -42,8 +42,9 @@ struct MistralHandler {
     first_event: bool,
     current_block: Option<OpenBlock>,
     tool_index_map: HashMap<u32, u32>,
-    tool_args_acc: HashMap<u32, String>,
+    tool_args: ToolArgumentAssembler,
     finish_reason: Option<String>,
+    terminal: ProviderTerminalLatch,
 }
 
 impl SseEventHandler for MistralHandler {
@@ -58,18 +59,13 @@ impl SseEventHandler for MistralHandler {
 
         let mut events = Vec::new();
 
-        if !self.first_event {
-            partial.response_id = Some(chunk.id.clone());
-            partial.response_model = Some(chunk.model.clone());
-            partial.timestamp = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
-            events.push(AssistantMessageEvent::Start {
-                content_index: None,
-                partial: partial.clone(),
-            });
-            self.first_event = true;
+        if let Some(event) = start_once(
+            &mut self.first_event,
+            partial,
+            chunk.id.clone(),
+            chunk.model.clone(),
+        ) {
+            events.push(event);
         }
 
         for choice in chunk.choices {
@@ -78,6 +74,7 @@ impl SseEventHandler for MistralHandler {
                 && reason != "null"
             {
                 self.finish_reason = choice.finish_reason.clone();
+                self.terminal.observe();
             }
 
             if let Some(content) = choice.delta.content {
@@ -162,9 +159,7 @@ impl SseEventHandler for MistralHandler {
                             *block_name = name;
                         }
                         if let Some(args) = function.arguments {
-                            let acc = self.tool_args_acc.entry(provider_index).or_default();
-                            acc.push_str(&args);
-                            let parsed = parse_streaming_json(acc);
+                            let parsed = self.tool_args.append(provider_index, &args);
                             if let Some(ContentBlock::ToolCall { arguments, .. }) =
                                 partial.content.get_mut(content_pos as usize)
                             {
@@ -200,12 +195,7 @@ impl SseEventHandler for MistralHandler {
         }
 
         for (provider_index, content_pos) in &self.tool_index_map {
-            let acc = self
-                .tool_args_acc
-                .get(provider_index)
-                .map(String::as_str)
-                .unwrap_or("");
-            let parsed = parse_streaming_json(acc);
+            let parsed = self.tool_args.finish(*provider_index);
             if let Some(ContentBlock::ToolCall { arguments, .. }) =
                 partial.content.get_mut(*content_pos as usize)
             {
@@ -223,15 +213,7 @@ impl SseEventHandler for MistralHandler {
     }
 
     fn accept_transport_terminal(&self, terminal: SseTransportTerminal) -> Result<(), String> {
-        match terminal {
-            SseTransportTerminal::DoneMarker if self.finish_reason.is_some() => Ok(()),
-            SseTransportTerminal::DoneMarker => {
-                Err("received [DONE] before a usable finish reason".into())
-            }
-            SseTransportTerminal::Eof => {
-                Err("stream ended before the required [DONE] marker".into())
-            }
-        }
+        self.terminal.accept(terminal)
     }
 }
 

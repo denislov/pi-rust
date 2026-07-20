@@ -1,5 +1,30 @@
 # Changes
 
+## 0.5.0 - 2026-07-20
+
+### Changed
+
+- Advanced with the workspace to `0.5.0` and retained scoped registration for
+  all eight remaining `pi-ai` built-in providers. Bedrock is no longer
+  registered or advertised by the lower-level provider runtime.
+- Product runtime, adapters, protocols, Extension behavior, and TUI behavior
+  are otherwise unchanged by the `pi-ai` lean-runtime release.
+
+## 0.5.2 - Unreleased
+
+### Planned
+
+- Remove the stateless `WorkflowService`, simplify fixed typed operation
+  pipelines, converge operation/outcome/adapter projections, contract the stable
+  facade, separate TUI-local state from runtime projection, and consolidate
+  product tool output and test infrastructure.
+- Retain the complete current TypeScript/Wasm Extension framework and PluginLoad
+  lifecycle, including package quarantine, grants/leases, Host-call checks,
+  per-invocation Wasmtime isolation, durability, restart, and public contracts.
+- Track implementation, migration, API/protocol snapshots, architecture,
+  Extension conformance, TUI smoke, and release evidence in
+  `docs/0.5.2-pi-coding-agent-lean-runtime-plan.md`.
+
 ## 0.4.2 - 2026-07-20
 
 ### Extension Kernel Replacement

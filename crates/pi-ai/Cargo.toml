@@ -23,11 +23,6 @@ tokio-util = "0.7"
 ring = "0.17"
 base64 = "0.22"
 thiserror = "2"
-aws-config = { version = "=0.56.1", default-features = false, features = ["rt-tokio", "rustls"] }
-aws-credential-types = "=0.56.1"
-aws-sigv4 = "=0.56.1"
-http-02 = { package = "http", version = "0.2" }
-time = "=0.3.36"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "fs"] }

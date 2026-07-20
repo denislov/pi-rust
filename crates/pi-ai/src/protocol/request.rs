@@ -50,7 +50,7 @@ pub struct StreamOptions {
     /// from `Debug`.
     #[serde(skip)]
     pub api_key: Option<String>,
-    /// Provider-specific cache retention. Currently accepted only by Bedrock.
+    /// Provider-specific cache retention, when supported by the selected API.
     #[serde(rename = "cacheRetention", skip_serializing_if = "Option::is_none")]
     pub cache_retention: Option<serde_json::Value>,
     /// Provider-neutral reasoning/thinking request.
@@ -73,21 +73,6 @@ pub struct StreamOptions {
         skip_serializing_if = "Option::is_none"
     )]
     pub azure_deployment_name: Option<String>,
-    /// Bedrock signing region. When absent it is inferred from the endpoint or
-    /// defaults to `us-east-1`.
-    #[serde(rename = "bedrockRegion", skip_serializing_if = "Option::is_none")]
-    pub bedrock_region: Option<String>,
-    /// Named AWS shared-config profile used by the standard credential chain.
-    #[serde(rename = "bedrockProfile", skip_serializing_if = "Option::is_none")]
-    pub bedrock_profile: Option<String>,
-    #[serde(skip)]
-    pub bedrock_bearer_token: Option<String>,
-    #[serde(skip)]
-    pub bedrock_access_key_id: Option<String>,
-    #[serde(skip)]
-    pub bedrock_secret_access_key: Option<String>,
-    #[serde(skip)]
-    pub bedrock_session_token: Option<String>,
     #[serde(skip)]
     pub headers: Option<serde_json::Value>,
     /// Cooperative cancellation token checked at every async transport wait.
@@ -126,27 +111,6 @@ impl std::fmt::Debug for StreamOptions {
             .field("azure_resource_name", &self.azure_resource_name)
             .field("azure_base_url", &self.azure_base_url)
             .field("azure_deployment_name", &self.azure_deployment_name)
-            .field("bedrock_region", &self.bedrock_region)
-            .field("bedrock_profile", &self.bedrock_profile)
-            .field(
-                "bedrock_bearer_token",
-                &self.bedrock_bearer_token.as_ref().map(|_| "[REDACTED]"),
-            )
-            .field(
-                "bedrock_access_key_id",
-                &self.bedrock_access_key_id.as_ref().map(|_| "[REDACTED]"),
-            )
-            .field(
-                "bedrock_secret_access_key",
-                &self
-                    .bedrock_secret_access_key
-                    .as_ref()
-                    .map(|_| "[REDACTED]"),
-            )
-            .field(
-                "bedrock_session_token",
-                &self.bedrock_session_token.as_ref().map(|_| "[REDACTED]"),
-            )
             .field("headers", &self.headers.as_ref().map(|_| "[REDACTED]"))
             .field("cancel", &self.cancel.is_some())
             .field("timeout_ms", &self.timeout_ms)
@@ -210,10 +174,6 @@ mod tests {
         let secret = "secret-value-that-must-not-leak";
         let options = StreamOptions {
             api_key: Some(secret.into()),
-            bedrock_bearer_token: Some(secret.into()),
-            bedrock_access_key_id: Some(secret.into()),
-            bedrock_secret_access_key: Some(secret.into()),
-            bedrock_session_token: Some(secret.into()),
             headers: Some(serde_json::json!({"authorization": secret})),
             ..Default::default()
         };

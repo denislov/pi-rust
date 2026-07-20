@@ -1,5 +1,50 @@
 # Changes
 
+## 0.5.2 - Unreleased
+
+### Planned
+
+- Added the `pi-coding-agent` lean product-runtime plan, sequenced after `0.5.0`
+  and `0.5.1`. It removes stateless workflow/runner/adapter duplication,
+  contracts the stable facade, converges interactive client state and test
+  infrastructure, and preserves the runtime owner graph.
+- Retained the TypeScript/Wasm Extension framework as an explicit product
+  decision. `0.5.2` must preserve package integrity, grants/leases, Wasmtime
+  isolation, Host-call authorization, PluginLoad durability, and current public
+  Extension contracts while performing ordinary cleanup.
+- The workspace is at released version `0.5.0`; this queued plan does not
+  claim `0.5.2` implementation or release completion.
+
+## 0.5.1 - Unreleased
+
+### Planned
+
+- Added the `pi-agent-core` lean-runtime plan, sequenced after `0.5.0`. It
+  removes alternative branch/session/test runtimes, completes typed Agent-turn
+  convergence, reduces long-turn cloning, and contracts the facade with
+  downstream and API migration evidence.
+- The workspace version is the released `0.5.0`; this queued plan does not
+  claim `0.5.1` implementation as complete.
+
+## 0.5.0 - 2026-07-20
+
+### Provider Runtime
+
+- Added the `pi-ai` lean-runtime version plan. The plan removes Bedrock/AWS
+  support and its model catalog records, converges repeated retained-provider
+  stream mechanics, tightens implementation visibility, and requires migration,
+  API-snapshot, architecture, and downstream boundary evidence before release.
+- Completed the 0.5.0 task ledger, advanced every workspace package, froze the
+  public API snapshot, and passed the complete offline release gate.
+- Removed the complete Bedrock/AWS runtime and authentication surface, all 90
+  Bedrock catalog records, and the private test-only image-generation mapper.
+  The retained catalog contains 831 records and the scoped built-in provider
+  matrix remains green offline.
+- Removed downstream Bedrock option-patch fields and added migration/source
+  boundary evidence. Workspace version advancement remains deferred until the
+  remaining stream convergence, facade audit, release snapshot, and full gates
+  close.
+
 ## 0.4.2 - 2026-07-20
 
 ### Extension Kernel Replacement

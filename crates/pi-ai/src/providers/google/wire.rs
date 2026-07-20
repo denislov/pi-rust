@@ -101,6 +101,7 @@ pub struct Candidate {
 #[derive(Debug, Clone, Deserialize)]
 pub struct GeminiResponseContent {
     #[serde(default)]
+    #[allow(dead_code)]
     pub role: Option<String>,
     #[serde(default)]
     pub parts: Vec<GeminiResponsePart>,

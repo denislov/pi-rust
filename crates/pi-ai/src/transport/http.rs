@@ -346,20 +346,6 @@ pub(crate) fn validate_options(api: &str, opts: Option<&StreamOptions>) -> Resul
         return Err(format!("Azure options are unsupported by API `{api}`"));
     }
 
-    let bedrock_fields_present = opts.bedrock_region.is_some()
-        || opts.bedrock_profile.is_some()
-        || opts.bedrock_bearer_token.is_some()
-        || opts.bedrock_access_key_id.is_some()
-        || opts.bedrock_secret_access_key.is_some()
-        || opts.bedrock_session_token.is_some();
-    if bedrock_fields_present && api != "bedrock-converse-stream" {
-        return Err(format!("Bedrock options are unsupported by API `{api}`"));
-    }
-
-    if opts.cache_retention.is_some() && api != "bedrock-converse-stream" {
-        return Err(format!("cache_retention is unsupported by API `{api}`"));
-    }
-
     if opts.session_id.is_some()
         && !matches!(
             api,

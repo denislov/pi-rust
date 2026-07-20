@@ -1,8 +1,10 @@
 use async_stream::stream;
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
+use std::collections::HashMap;
 use tokio_util::sync::CancellationToken;
 
+use crate::protocol::json::parse_streaming_json;
 use crate::protocol::{AssistantMessage, AssistantMessageEvent, StopReason};
 
 use crate::model::Model;
@@ -23,6 +25,73 @@ pub enum SseEventResult {
 pub enum SseTransportTerminal {
     DoneMarker,
     Eof,
+}
+
+pub(super) fn start_once(
+    started: &mut bool,
+    partial: &mut AssistantMessage,
+    response_id: String,
+    response_model: String,
+) -> Option<AssistantMessageEvent> {
+    if *started {
+        return None;
+    }
+    partial.response_id = Some(response_id);
+    partial.response_model = Some(response_model);
+    partial.timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    *started = true;
+    Some(AssistantMessageEvent::Start {
+        content_index: None,
+        partial: partial.clone(),
+    })
+}
+
+#[derive(Default)]
+pub(super) struct ToolArgumentAssembler {
+    values: HashMap<u32, String>,
+}
+
+impl ToolArgumentAssembler {
+    pub(super) fn append(&mut self, provider_index: u32, delta: &str) -> serde_json::Value {
+        let value = self.values.entry(provider_index).or_default();
+        value.push_str(delta);
+        parse_streaming_json(value)
+    }
+
+    pub(super) fn finish(&self, provider_index: u32) -> serde_json::Value {
+        parse_streaming_json(
+            self.values
+                .get(&provider_index)
+                .map(String::as_str)
+                .unwrap_or(""),
+        )
+    }
+}
+
+#[derive(Default)]
+pub(super) struct ProviderTerminalLatch {
+    observed: bool,
+}
+
+impl ProviderTerminalLatch {
+    pub(super) fn observe(&mut self) {
+        self.observed = true;
+    }
+
+    pub(super) fn accept(&self, terminal: SseTransportTerminal) -> Result<(), String> {
+        match terminal {
+            SseTransportTerminal::DoneMarker if self.observed => Ok(()),
+            SseTransportTerminal::DoneMarker => {
+                Err("received [DONE] before a usable finish reason".into())
+            }
+            SseTransportTerminal::Eof => {
+                Err("stream ended before the required [DONE] marker".into())
+            }
+        }
+    }
 }
 
 pub trait SseEventHandler: Send + 'static {

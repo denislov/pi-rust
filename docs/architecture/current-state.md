@@ -5,7 +5,7 @@
 Baseline version: `0.3.1`, released as annotated tag `v0.3.1`.
 
 Source baseline: commit `870d4bb`; dated release record: `180f219`; post-baseline
-`0.4.0` through `0.4.2` convergence evidence is recorded below. Last refreshed:
+`0.4.0` through completed `0.5.0` convergence evidence is recorded below. Last refreshed:
 2026-07-20.
 
 This file records implementation facts, not desired behavior. Cargo manifests,
@@ -18,10 +18,27 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   `pi-coding-agent -> {pi-agent-core, pi-ai, pi-tui}`.
 - `pi-ai` and `pi-tui` have no workspace dependencies.
 - `pi-mom`, `pi-pods`, and `pi-web-ui` are placeholder crates.
-- All workspace packages inherit version `0.4.2` from the root manifest.
+- All workspace packages inherit version `0.5.0` from the root manifest.
 - The reduced 0.4.x train ends at `0.4.2`; reserved Extension release plans
   `0.4.3` through `0.4.5` are Skip records and did not produce package versions.
 - `pi-rust` is a placeholder binary; `pi-coding-agent` is user-facing.
+
+## AI Provider Runtime
+
+- `pi-ai` registers eight scoped built-in APIs. The Amazon Bedrock provider,
+  AWS credential/SigV4 implementation, dependencies, authentication/options,
+  and 90 generated catalog records are deleted in 0.5.0.
+- The generated catalog contains 831 retained records. Source guards reject the
+  retired provider/API identities across registration, auth, transport, and
+  catalog implementation files.
+- Retained provider wire parsing remains provider-owned. Private shared SSE
+  mechanics own exactly-once terminal construction; OpenAI Completions and
+  Mistral also share start emission, tool-argument assembly, and required
+  terminal-marker validation.
+- The test-only OpenRouter image-generation DTO/mapper is deleted. Multimodal
+  conversation image input remains part of the provider-neutral content model.
+- `pi_ai::api` remains the stable embedding facade. Its item-level 0.5.0 audit
+  is recorded in `docs/0.5.0-migration-guide.md`.
 
 ## Runtime And Operations
 

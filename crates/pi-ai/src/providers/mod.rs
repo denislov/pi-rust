@@ -1,6 +1,5 @@
 pub mod anthropic;
 pub mod azure_openai_responses;
-pub mod bedrock;
 pub mod common;
 pub mod deepseek;
 pub mod google;
@@ -14,7 +13,6 @@ use std::sync::Arc;
 pub const BUILTIN_PROVIDER_APIS: &[&str] = &[
     "anthropic-messages",
     "azure-openai-responses",
-    "bedrock-converse-stream",
     "deepseek-chat-completions",
     "google-generative-ai",
     "mistral-conversations",
@@ -55,10 +53,6 @@ fn register_each_builtin(mut register: impl FnMut(&'static str, Arc<dyn ApiProvi
         Arc::new(azure_openai_responses::AzureOpenAIResponsesProvider::new(
             None,
         )),
-    );
-    register(
-        "bedrock-converse-stream",
-        Arc::new(bedrock::BedrockProvider::new(None)),
     );
     register(
         "google-generative-ai",

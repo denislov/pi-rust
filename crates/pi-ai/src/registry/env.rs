@@ -41,12 +41,6 @@ pub fn env_api_key_with_source(provider: &str) -> Option<(String, String)> {
             return Some((val, (*var).to_string()));
         }
     }
-    if self_auth_present(provider) {
-        return Some((
-            "<authenticated>".to_string(),
-            "credential_chain".to_string(),
-        ));
-    }
     None
 }
 
@@ -54,18 +48,6 @@ pub(crate) fn non_empty_env(name: &str) -> Option<String> {
     std::env::var(name)
         .ok()
         .filter(|value| !value.trim().is_empty())
-}
-
-/// Providers that authenticate via an external credential chain rather than a
-/// single API-key env var. Returns true when credentials appear to be present;
-/// real signing/ADC is implemented in M8.
-fn self_auth_present(provider: &str) -> bool {
-    match provider {
-        "amazon-bedrock" => ["AWS_PROFILE", "AWS_ACCESS_KEY_ID"]
-            .iter()
-            .any(|v| std::env::var_os(v).is_some_and(|s| !s.is_empty())),
-        _ => false,
-    }
 }
 
 #[cfg(test)]
@@ -156,23 +138,5 @@ mod tests {
             std::env::set_var("COPILOT_GITHUB_TOKEN", "ghp-test");
         }
         assert_eq!(env_api_key("github-copilot"), Some("ghp-test".into()));
-    }
-
-    #[test]
-    fn bedrock_returns_sentinel_when_aws_profile_set() {
-        let _guard = env_guard(&[
-            "AWS_PROFILE",
-            "AWS_ACCESS_KEY_ID",
-            "AWS_BEARER_TOKEN_BEDROCK",
-        ]);
-        unsafe {
-            std::env::set_var("AWS_PROFILE", "default");
-            std::env::remove_var("AWS_ACCESS_KEY_ID");
-            std::env::remove_var("AWS_BEARER_TOKEN_BEDROCK");
-        }
-        assert_eq!(
-            env_api_key("amazon-bedrock"),
-            Some("<authenticated>".into())
-        );
     }
 }

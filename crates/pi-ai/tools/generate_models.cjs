@@ -18,6 +18,8 @@ source = source.replace(/\s+as\s+const\s*;?\s*/g, ";\n");
 source += "\nMODELS;";
 
 const models = vm.runInNewContext(source, {}, { filename: inputPath });
+const RETIRED_PROVIDERS = new Set(["amazon-bedrock"]);
+const RETIRED_APIS = new Set(["bedrock-converse-stream"]);
 
 function normalizeModel(m) {
   const model = {
@@ -52,7 +54,11 @@ function normalizeModel(m) {
 const out = [];
 for (const provider of Object.keys(models).sort()) {
   for (const id of Object.keys(models[provider]).sort()) {
-    out.push(normalizeModel(models[provider][id]));
+    const model = normalizeModel(models[provider][id]);
+    if (RETIRED_PROVIDERS.has(model.provider) || RETIRED_APIS.has(model.api)) {
+      continue;
+    }
+    out.push(model);
   }
 }
 
