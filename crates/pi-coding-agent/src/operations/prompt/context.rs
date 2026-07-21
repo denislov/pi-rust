@@ -1,10 +1,15 @@
 use std::collections::HashMap;
+use std::future::Future;
 use std::path::Path;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 
 use pi_agent_core::api::agent::{
     Agent, AgentEvent, AgentResources, ProviderStreamer, ThinkingLevel,
 };
-use pi_agent_core::api::tool::{AgentTool, AgentToolResult, ToolExecutionMode};
+use pi_agent_core::api::tool::{
+    AgentTool, AgentToolResult, ToolExecutionContext, ToolExecutionMode,
+};
 use pi_ai::api::auth::ProviderAuthDiagnostic;
 use pi_ai::api::conversation::{AssistantMessage, ContentBlock};
 use pi_ai::api::model::Model;
@@ -21,7 +26,7 @@ use crate::config::Settings;
 use crate::events::prompt_stream::PromptStreamEvent;
 use crate::operations::delegation::{
     DelegationAuthorizationDecision, DelegationLineageEntry, DelegationTargetInventory,
-    authorize_delegation_requests_with_lineage,
+    PendingDelegationConfirmationState, authorize_delegation_requests_with_lineage,
 };
 use crate::profiles::{AgentProfile, DelegationPolicy, ProfileId, ProfileKind, ProfileRegistry};
 use crate::runtime::capability::OperationCapabilitySnapshot;
@@ -642,7 +647,18 @@ pub(crate) struct PromptTurnContext {
     diagnostics: Vec<CodingDiagnostic>,
     requested_abort_reason: Option<String>,
     capability_snapshot: Option<OperationCapabilitySnapshot>,
+    delegation_executor: Option<DelegationToolExecutor>,
+    deferred_pending_delegations: Arc<Mutex<Vec<PendingDelegationConfirmationState>>>,
 }
+
+pub(crate) type DelegationToolExecutor = Arc<
+    dyn Fn(
+            ToolExecutionContext,
+            serde_json::Value,
+        ) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send>>
+        + Send
+        + Sync,
+>;
 
 impl PromptTurnContext {
     pub(crate) fn new(ids: PromptTurnIds, options: PromptTurnOptions) -> Self {
@@ -674,6 +690,8 @@ impl PromptTurnContext {
             diagnostics: Vec::new(),
             requested_abort_reason: None,
             capability_snapshot: None,
+            delegation_executor: None,
+            deferred_pending_delegations: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -710,6 +728,34 @@ impl PromptTurnContext {
 
     pub(crate) fn set_capability_snapshot(&mut self, snapshot: OperationCapabilitySnapshot) {
         self.capability_snapshot = Some(snapshot);
+    }
+
+    pub(crate) fn set_delegation_executor(&mut self, executor: DelegationToolExecutor) {
+        self.delegation_executor = Some(executor);
+    }
+
+    pub(crate) fn delegation_executor(&self) -> Option<DelegationToolExecutor> {
+        self.delegation_executor.clone()
+    }
+
+    pub(crate) fn has_delegation_executor(&self) -> bool {
+        self.delegation_executor.is_some()
+    }
+
+    pub(crate) fn deferred_pending_delegations(
+        &self,
+    ) -> Arc<Mutex<Vec<PendingDelegationConfirmationState>>> {
+        self.deferred_pending_delegations.clone()
+    }
+
+    pub(crate) fn take_deferred_pending_delegations(
+        &self,
+    ) -> Vec<PendingDelegationConfirmationState> {
+        self.deferred_pending_delegations
+            .lock()
+            .expect("deferred delegation queue lock poisoned")
+            .drain(..)
+            .collect()
     }
 
     pub(crate) fn capability_snapshot(&self) -> Option<&OperationCapabilitySnapshot> {
@@ -1188,12 +1234,45 @@ impl PromptTurnContext {
     ) -> Result<(), CodingSessionError> {
         let session_tool_call_id =
             self.ensure_tool_session_call_started(agent_tool_call_id, tool_name, None)?;
+        let delegation_update = terminal_delegation_update(tool_name, &result.content);
         if result.is_error {
-            self.transaction_mut_required()?
-                .record_tool_failed(session_tool_call_id, content_blocks_text(&result.content))
+            self.transaction_mut_required()?.record_tool_failed(
+                session_tool_call_id.clone(),
+                content_blocks_text(&result.content),
+            )?;
+            if let Some(update) = delegation_update {
+                self.transaction_mut_required()?
+                    .record_delegation_folded_update(
+                        session_tool_call_id,
+                        update.requesting_profile_id,
+                        update.target_kind,
+                        update.target_id,
+                        update.task,
+                        update.status,
+                        update.child_operation_id,
+                        update.summary,
+                    )?;
+            }
+            Ok(())
         } else {
-            self.transaction_mut_required()?
-                .record_tool_completed(session_tool_call_id, persisted_tool_result(&result.content))
+            self.transaction_mut_required()?.record_tool_completed(
+                session_tool_call_id.clone(),
+                persisted_tool_result(&result.content),
+            )?;
+            if let Some(update) = delegation_update {
+                self.transaction_mut_required()?
+                    .record_delegation_folded_update(
+                        session_tool_call_id,
+                        update.requesting_profile_id,
+                        update.target_kind,
+                        update.target_id,
+                        update.task,
+                        update.status,
+                        update.child_operation_id,
+                        update.summary,
+                    )?;
+            }
+            Ok(())
         }
     }
 
@@ -1318,6 +1397,63 @@ fn persisted_tool_result(content: &[ContentBlock]) -> PersistedToolResult {
     PersistedToolResult::Text {
         text: content_blocks_text(content),
     }
+}
+
+struct TerminalDelegationUpdate {
+    requesting_profile_id: ProfileId,
+    target_kind: ProfileKind,
+    target_id: ProfileId,
+    task: String,
+    status: PersistedDelegationStatus,
+    child_operation_id: Option<String>,
+    summary: Option<String>,
+}
+
+fn terminal_delegation_update(
+    tool_name: &str,
+    content: &[ContentBlock],
+) -> Option<TerminalDelegationUpdate> {
+    if !matches!(tool_name, "delegate_agent" | "delegate_team") {
+        return None;
+    }
+    let text = content.iter().find_map(|block| match block {
+        ContentBlock::Text { text, .. } => Some(text.as_str()),
+        _ => None,
+    })?;
+    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    let status = match value.get("status")?.as_str()? {
+        "completed" => PersistedDelegationStatus::Completed,
+        "failed" => PersistedDelegationStatus::Failed,
+        "rejected" => PersistedDelegationStatus::Rejected,
+        "cancelled" => PersistedDelegationStatus::Cancelled,
+        _ => return None,
+    };
+    let target_kind = match value.get("target_kind")?.as_str()? {
+        "agent" => ProfileKind::Agent,
+        "team" => ProfileKind::Team,
+        _ => return None,
+    };
+    let requesting_profile_id =
+        ProfileId::new(value.get("requesting_profile_id")?.as_str()?.to_owned()).ok()?;
+    let target_id = ProfileId::new(value.get("target_id")?.as_str()?.to_owned()).ok()?;
+    let summary = value
+        .get("final_text")
+        .or_else(|| value.get("error"))
+        .or_else(|| value.get("message"))
+        .and_then(|value| value.as_str())
+        .map(ToOwned::to_owned);
+    Some(TerminalDelegationUpdate {
+        requesting_profile_id,
+        target_kind,
+        target_id,
+        task: value.get("task")?.as_str()?.to_owned(),
+        status,
+        child_operation_id: value
+            .get("child_operation_id")
+            .and_then(|value| value.as_str())
+            .map(ToOwned::to_owned),
+        summary,
+    })
 }
 
 fn persisted_content_blocks_from_invocation(

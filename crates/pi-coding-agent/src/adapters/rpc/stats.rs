@@ -435,7 +435,7 @@ mod tests {
         assert!(value["capabilityGeneration"].as_u64().unwrap() >= 1);
         assert_eq!(value["snapshotVersion"]["family"], "ui_snapshot");
         assert_eq!(value["snapshotVersion"]["major"], 2);
-        assert_eq!(value["snapshotVersion"]["minor"], 1);
+        assert_eq!(value["snapshotVersion"]["minor"], 2);
     }
 
     #[tokio::test]

@@ -28,6 +28,7 @@ use tokio::sync::Notify;
 static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 const RUNNING_CONTROL_OBSERVED_DRIVER_TIMEOUT: Duration = Duration::from_secs(1);
 const DELEGATION_APPROVAL_OBSERVED_DRIVER_TIMEOUT: Duration = Duration::from_secs(5);
+const DELEGATION_DECISION_RETRY_INTERVAL: Duration = Duration::from_millis(25);
 const SETTINGS_COMMAND_INPUT_DELAY: Duration = Duration::from_millis(20);
 const SETTINGS_ESCAPE_INPUT_DELAY: Duration = Duration::from_millis(40);
 const SETTINGS_HELP_COMMAND_INPUT_DELAY: Duration = Duration::from_millis(20);
@@ -115,6 +116,7 @@ struct DelegationConfirmationProvider {
     calls: Arc<Mutex<usize>>,
     parent_ready: Arc<Notify>,
     child_started: Arc<Notify>,
+    approve: bool,
 }
 
 impl ApiProvider for DelegationConfirmationProvider {
@@ -126,12 +128,13 @@ impl ApiProvider for DelegationConfirmationProvider {
         };
         let parent_ready = Arc::clone(&self.parent_ready);
         let child_started = Arc::clone(&self.child_started);
+        let approve = self.approve;
         let model_id = model.id.clone();
         Box::pin(async_stream::stream! {
             let mut message = AssistantMessage::empty("interactive-delegation", &model_id);
             message.provider = Some("interactive-delegation".into());
-            match call_index {
-                1 => {
+            match (approve, call_index) {
+                (_, 1) => {
                     message.content.push(ContentBlock::ToolCall {
                         id: "tool_delegate_agent".to_string(),
                         name: "delegate_agent".to_string(),
@@ -142,15 +145,16 @@ impl ApiProvider for DelegationConfirmationProvider {
                         thought_signature: None,
                     });
                     message.stop_reason = StopReason::ToolUse;
+                    parent_ready.notify_waiters();
                     yield AssistantMessageEvent::Done {
                         reason: StopReason::ToolUse,
                         message,
                     };
                 }
-                2 => {
-                    parent_ready.notify_waiters();
+                (true, 2) => {
+                    child_started.notify_waiters();
                     message.content.push(ContentBlock::Text {
-                        text: "parent ready".to_string(),
+                        text: "child result".to_string(),
                         text_signature: None,
                     });
                     message.stop_reason = StopReason::Stop;
@@ -159,10 +163,10 @@ impl ApiProvider for DelegationConfirmationProvider {
                         message,
                     };
                 }
-                3 => {
+                (true, 3) | (false, 2) => {
                     child_started.notify_waiters();
                     message.content.push(ContentBlock::Text {
-                        text: "child result".to_string(),
+                        text: "parent ready".to_string(),
                         text_signature: None,
                     });
                     message.stop_reason = StopReason::Stop;
@@ -344,7 +348,7 @@ async fn scripted_interactive_self_healing_edit_uses_model_repair_policy() {
 }
 
 #[tokio::test]
-async fn scripted_interactive_agent_invocation_renders_selected_profile_reply() {
+async fn scripted_interactive_agent_invocation_keeps_child_reply_off_main_page() {
     let _guard = ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("agents")).unwrap();
@@ -365,7 +369,7 @@ display_name = "Coder"
 
     let output = output.unwrap();
     assert!(output.contains("/agent:coder do work"), "{output:?}");
-    assert!(output.contains("agent reply"), "{output:?}");
+    assert!(!output.contains("agent reply"), "{output:?}");
     assert!(output.contains("status: idle"), "{output:?}");
     assert!(
         !output.contains("requires AgentInvocationRunner"),
@@ -374,7 +378,7 @@ display_name = "Coder"
 }
 
 #[tokio::test]
-async fn scripted_interactive_agent_team_renders_member_replies() {
+async fn scripted_interactive_agent_team_keeps_member_replies_off_main_page() {
     let _guard = ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("agents")).unwrap();
@@ -423,8 +427,8 @@ members = ["coder", "reviewer"]
         output.contains("/team:implementation do work"),
         "{output:?}"
     );
-    assert!(output.contains("coder reply"), "{output:?}");
-    assert!(output.contains("reviewer reply"), "{output:?}");
+    assert!(!output.contains("coder reply"), "{output:?}");
+    assert!(!output.contains("reviewer reply"), "{output:?}");
     assert!(output.contains("status: idle"), "{output:?}");
     assert!(!output.contains("requires AgentTeamRunner"), "{output:?}");
 }
@@ -470,6 +474,7 @@ system_prompt = "Coder child instructions."
         calls: Arc::clone(&calls),
         parent_ready: Arc::clone(&parent_ready),
         child_started: Arc::clone(&child_started),
+        approve: true,
     });
     let output = run_observed_interactive_with_timeout(
         provider,
@@ -486,12 +491,17 @@ system_prompt = "Coder child instructions."
                     _ = input.wait_for_idle() => {}
                 }
             }
-            input.wait_for_idle().await;
             let child_started = child_started.notified();
             tokio::pin!(child_started);
-            input.send("\r").unwrap();
-            child_started.await;
-            input.wait_for_idle().await;
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = &mut child_started => break,
+                    _ = tokio::task::yield_now() => {
+                        let _ = input.send("\r");
+                    }
+                }
+            }
             drop(input);
         },
         DELEGATION_APPROVAL_OBSERVED_DRIVER_TIMEOUT,
@@ -499,13 +509,12 @@ system_prompt = "Coder child instructions."
     )
     .await;
     assert_eq!(*calls.lock().unwrap(), 3, "{output:?}");
-    assert!(output.contains("delegation"), "{output:?}");
-    assert!(output.contains("confirmation required"), "{output:?}");
-    assert!(output.contains("completed: child result"), "{output:?}");
+    assert!(
+        output.contains("delegate agent coder completed"),
+        "{output:?}"
+    );
     assert!(!output.contains("Delegation completed for"), "{output:?}");
-    assert!(output.contains("Delegation confirmations"), "{output:?}");
-    assert!(output.contains("Approving delegation"), "{output:?}");
-    assert!(output.contains("child result"), "{output:?}");
+    assert!(!output.contains("child result"), "{output:?}");
     assert!(output.contains("status: idle"), "{output:?}");
 }
 
@@ -551,6 +560,7 @@ system_prompt = "Coder child instructions."
         calls: Arc::clone(&calls),
         parent_ready: Arc::clone(&parent_ready),
         child_started: Arc::clone(&continuation_started),
+        approve: false,
     });
     let output = run_observed_interactive_with_timeout(
         provider,
@@ -567,16 +577,20 @@ system_prompt = "Coder child instructions."
                     _ = input.wait_for_idle() => {}
                 }
             }
-            input.wait_for_idle().await;
-            input.send("r").unwrap();
-            input.wait_for_idle().await;
-
             let continuation_started = continuation_started.notified();
             tokio::pin!(continuation_started);
-            input.send("continue after rejection\r").unwrap();
-            input.wait_for_consumed("continue after rejection\r").await;
-            continuation_started.await;
-            input.wait_for_idle().await;
+            let mut retry = tokio::time::interval(DELEGATION_DECISION_RETRY_INTERVAL);
+            retry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = &mut continuation_started => break,
+                    _ = retry.tick() => {
+                        input.send("\x1b").unwrap();
+                        input.wait_for_consumed("\x1b").await;
+                    }
+                }
+            }
             drop(input);
         },
         DELEGATION_APPROVAL_OBSERVED_DRIVER_TIMEOUT,
@@ -584,9 +598,10 @@ system_prompt = "Coder child instructions."
     )
     .await;
 
-    assert_eq!(*calls.lock().unwrap(), 3, "{output:?}");
+    assert_eq!(*calls.lock().unwrap(), 2, "{output:?}");
     assert!(output.contains("rejected:"), "{output:?}");
-    assert!(output.contains("continue after rejection"), "{output:?}");
+    assert!(!output.contains("\"status\":\"rejected\""), "{output:?}");
+    assert!(!output.contains("child result"), "{output:?}");
     assert!(!output.contains("Delegation rejected: op_"), "{output:?}");
     assert!(output.contains("status: idle"), "{output:?}");
 }

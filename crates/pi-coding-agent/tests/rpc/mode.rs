@@ -2100,11 +2100,11 @@ system_prompt = "Coder child instructions."
                 stop_reason: StopReason::ToolUse,
             },
             FauxCall {
-                responses: vec![text_response("parent ready")],
+                responses: vec![text_response("child result")],
                 stop_reason: StopReason::Stop,
             },
             FauxCall {
-                responses: vec![text_response("child result")],
+                responses: vec![text_response("parent ready")],
                 stop_reason: StopReason::Stop,
             },
         ])),
@@ -2147,10 +2147,10 @@ system_prompt = "Coder child instructions."
         .write_all(b"{\"id\":\"p2\",\"type\":\"prompt\",\"message\":\"plan feature\"}\n")
         .await
         .unwrap();
-    let confirmation = {
+    let required = {
         let mut seen = Vec::new();
         loop {
-            let value = read_rpc_json_line(&mut lines, "delegation confirmation event").await;
+            let value = read_rpc_json_line(&mut lines, "delegation authorization event").await;
             let event_type = value["type"].as_str().unwrap_or("<missing-type>");
             let summary = if event_type == "response" {
                 format!(
@@ -2163,60 +2163,21 @@ system_prompt = "Coder child instructions."
                 event_type.to_string()
             };
             seen.push(summary);
-            if value["type"] == "delegation_confirmation_required" {
+            if value["type"] == "tool_authorization_required" {
                 break value;
             }
             if value["type"] == "agent_end" {
-                panic!("prompt ended before delegation confirmation event: {seen:?}");
+                panic!("prompt ended before delegation authorization event: {seen:?}");
             }
         }
     };
-    let operation_id = confirmation["operationId"].as_str().unwrap().to_string();
-    let tool_call_id = confirmation["toolCallId"].as_str().unwrap().to_string();
-    assert_eq!(confirmation["requestingProfileId"], "delegating-planner");
-    assert_eq!(confirmation["targetKind"], "agent");
-    assert_eq!(confirmation["targetId"], "coder");
-    assert_eq!(confirmation["task"], "implement parser");
-    assert_eq!(confirmation["foldedBlock"]["toolCallId"], tool_call_id);
-    assert_eq!(
-        confirmation["foldedBlock"]["status"],
-        "confirmation_required"
-    );
-    assert_eq!(confirmation["foldedBlock"]["targetKind"], "agent");
-    assert_eq!(confirmation["foldedBlock"]["targetId"], "coder");
-    assert_eq!(confirmation["foldedBlock"]["task"], "implement parser");
-    assert_eq!(confirmation["foldedBlock"]["isError"], false);
-
-    read_rpc_json_matching(&mut lines, "prompt completion", |value| {
-        value["type"] == "agent_end"
-    })
-    .await;
-
-    input_writer
-        .write_all(b"{\"id\":\"l1\",\"type\":\"list_delegation_confirmations\"}\n")
-        .await
-        .unwrap();
-    let list_response = read_rpc_json_matching(
-        &mut lines,
-        "list_delegation_confirmations response",
-        |value| value["type"] == "response" && value["command"] == "list_delegation_confirmations",
-    )
-    .await;
-    assert_eq!(list_response["success"], true);
-    assert_eq!(
-        list_response["data"]["confirmations"][0]["operationId"],
-        operation_id
-    );
-    assert_eq!(
-        list_response["data"]["confirmations"][0]["toolCallId"],
-        tool_call_id
-    );
-
+    let authorization_id = required["request"]["authorizationId"].as_str().unwrap();
+    let tool_call_id = required["request"]["toolCallId"].as_str().unwrap();
     let approve_command = serde_json::json!({
         "id": "a1",
-        "type": "approve_delegation",
-        "operationId": operation_id,
-        "toolCallId": tool_call_id,
+        "type": "approve_tool_authorization",
+        "authorizationId": authorization_id,
+        "scope": "once",
     })
     .to_string()
         + "\n";
@@ -2226,12 +2187,11 @@ system_prompt = "Coder child instructions."
         .unwrap();
 
     let approve_response =
-        read_rpc_json_matching(&mut lines, "approve_delegation response", |value| {
-            value["type"] == "response" && value["command"] == "approve_delegation"
+        read_rpc_json_matching(&mut lines, "approve_tool_authorization response", |value| {
+            value["type"] == "response" && value["command"] == "approve_tool_authorization"
         })
         .await;
     assert_eq!(approve_response["success"], true);
-    assert_eq!(approve_response["data"]["delegation"]["targetId"], "coder");
 
     let mut saw_approved = false;
     let mut saw_completed = false;
@@ -2255,8 +2215,6 @@ system_prompt = "Coder child instructions."
                     .to_string()
             });
             if value["type"] == "delegation_approved" {
-                assert_eq!(value["foldedBlock"]["toolCallId"], tool_call_id);
-                assert_eq!(value["foldedBlock"]["status"], "approved");
                 assert_eq!(value["foldedBlock"]["targetId"], "coder");
                 saw_approved = true;
             }
@@ -2282,6 +2240,138 @@ system_prompt = "Coder child instructions."
 
     drop(input_writer);
     task.await.unwrap();
+}
+
+#[tokio::test]
+async fn rpc_child_tool_authorization_is_scoped_to_child_operation() {
+    let temp = tempfile::tempdir().unwrap();
+    let cwd = temp.path().join("project");
+    write_file(
+        cwd.join(".pi-rust/agents/delegating-planner.toml"),
+        r#"
+schema_version = 1
+id = "delegating-planner"
+display_name = "Delegating Planner"
+
+[delegation]
+allow_delegate_agent = true
+max_depth = 1
+max_parallel_children = 1
+require_confirmation = "never"
+allowed_agents = ["coder"]
+"#,
+    );
+    write_file(
+        cwd.join(".pi-rust/agents/coder.toml"),
+        r#"
+schema_version = 1
+id = "coder"
+display_name = "Coder"
+tools = ["rpc_mutate"]
+"#,
+    );
+
+    let api = "pi-coding-rpc-child-tool-authorization";
+    let provider_guard = ProviderGuard::register(
+        api,
+        Arc::new(FauxProvider::with_call_queue(vec![
+            FauxCall {
+                responses: vec![delegate_agent_response(
+                    "tool_delegate_agent",
+                    "coder",
+                    "implement parser",
+                )],
+                stop_reason: StopReason::ToolUse,
+            },
+            FauxCall {
+                responses: vec![FauxResponse {
+                    text_deltas: Vec::new(),
+                    thinking_deltas: Vec::new(),
+                    tool_calls: vec![FauxToolCall {
+                        id: "tool-child-mutate".into(),
+                        name: "rpc_mutate".into(),
+                        deltas: vec!["{}".into()],
+                        final_arguments: serde_json::json!({}),
+                    }],
+                }],
+                stop_reason: StopReason::ToolUse,
+            },
+            FauxProvider::text_call("child result", StopReason::Stop),
+            FauxProvider::text_call("parent ready", StopReason::Stop),
+        ])),
+    );
+    let executions = Arc::new(AtomicUsize::new(0));
+    let (mut input_writer, input_reader) = tokio::io::duplex(4096);
+    let (output_writer, output_reader) = tokio::io::duplex(16 * 1024);
+    let task = tokio::spawn(async move {
+        let mut output_writer = output_writer;
+        run_rpc_mode_for_io(
+            input_reader,
+            &mut output_writer,
+            CliRunOptions {
+                model_override: Some(large_context_faux_model(api)),
+                tools: vec![rpc_mutation_tool(executions.clone())],
+                register_builtins: false,
+                ai_client: Some(provider_guard.ai_client()),
+                session: SessionRunOptions::disabled(cwd),
+            },
+        )
+        .await
+        .unwrap();
+        executions.load(Ordering::SeqCst)
+    });
+    let mut lines = tokio::io::BufReader::new(output_reader).lines();
+
+    input_writer
+        .write_all(
+            b"{\"id\":\"profile\",\"type\":\"set_default_agent_profile\",\"profileId\":\"delegating-planner\"}\n",
+        )
+        .await
+        .unwrap();
+    read_rpc_json_matching(&mut lines, "profile response", |value| {
+        value["type"] == "response" && value["command"] == "set_default_agent_profile"
+    })
+    .await;
+    input_writer
+        .write_all(b"{\"id\":\"prompt\",\"type\":\"prompt\",\"message\":\"plan feature\"}\n")
+        .await
+        .unwrap();
+
+    let mut child_operation_id = None;
+    let required = loop {
+        let value = read_rpc_json_line(&mut lines, "child authorization event").await;
+        if value["type"] == "delegation_started" {
+            child_operation_id = value["childOperationId"].as_str().map(ToOwned::to_owned);
+        }
+        if value["type"] == "tool_authorization_required" {
+            break value;
+        }
+    };
+    let child_operation_id = child_operation_id.expect("delegation start exposes child operation");
+    assert_ne!(required["request"]["operationId"], child_operation_id);
+    assert_eq!(required["request"]["toolCallId"], "tool-child-mutate");
+    assert_eq!(required["request"]["toolName"], "rpc_mutate");
+
+    let approve = serde_json::json!({
+        "id": "approve-child",
+        "type": "approve_tool_authorization",
+        "authorizationId": required["request"]["authorizationId"],
+        "scope": "once",
+    })
+    .to_string()
+        + "\n";
+    input_writer.write_all(approve.as_bytes()).await.unwrap();
+    read_rpc_json_matching(&mut lines, "child authorization approval", |value| {
+        value["type"] == "response" && value["command"] == "approve_tool_authorization"
+    })
+    .await;
+    read_rpc_json_matching(&mut lines, "parent prompt completion", |value| {
+        value["type"] == "agent_end" && value["operationId"].as_str() != Some(&child_operation_id)
+    })
+    .await;
+
+    drop(input_writer);
+    assert_eq!(task.await.unwrap(), 1);
 }
 
 #[tokio::test]
@@ -2368,24 +2458,16 @@ display_name = "Coder"
         .write_all(b"{\"id\":\"p2\",\"type\":\"prompt\",\"message\":\"plan feature\"}\n")
         .await
         .unwrap();
-    let confirmation =
-        read_rpc_json_matching(&mut lines, "delegation confirmation event", |value| {
-            value["type"] == "delegation_confirmation_required"
-        })
-        .await;
-    let operation_id = confirmation["operationId"].as_str().unwrap().to_string();
-    let tool_call_id = confirmation["toolCallId"].as_str().unwrap().to_string();
-
-    read_rpc_json_matching(&mut lines, "prompt completion", |value| {
-        value["type"] == "agent_end"
+    let required = read_rpc_json_matching(&mut lines, "delegation authorization event", |value| {
+        value["type"] == "tool_authorization_required"
     })
     .await;
+    let authorization_id = required["request"]["authorizationId"].as_str().unwrap();
 
     let reject_command = serde_json::json!({
         "id": "r1",
-        "type": "reject_delegation",
-        "operationId": operation_id,
-        "toolCallId": tool_call_id,
+        "type": "deny_tool_authorization",
+        "authorizationId": authorization_id,
         "reason": "not now",
     })
     .to_string()
@@ -2396,12 +2478,11 @@ display_name = "Coder"
         .unwrap();
 
     let reject_response =
-        read_rpc_json_matching(&mut lines, "reject_delegation response", |value| {
-            value["type"] == "response" && value["command"] == "reject_delegation"
+        read_rpc_json_matching(&mut lines, "deny_tool_authorization response", |value| {
+            value["type"] == "response" && value["command"] == "deny_tool_authorization"
         })
         .await;
     assert_eq!(reject_response["success"], true);
-    assert_eq!(reject_response["data"]["reason"], "not now");
 
     let rejected_event = read_rpc_json_matching(&mut lines, "delegation_rejected event", |value| {
         value["type"] == "delegation_rejected"
@@ -2409,6 +2490,11 @@ display_name = "Coder"
     .await;
     assert_eq!(rejected_event["targetId"], "coder");
     assert_eq!(rejected_event["reason"], "not now");
+
+    read_rpc_json_matching(&mut lines, "prompt completion", |value| {
+        value["type"] == "agent_end"
+    })
+    .await;
 
     drop(input_writer);
     task.await.unwrap();

@@ -101,6 +101,7 @@ impl PromptOperation<'_> {
             });
         }
         let mut context = self.prepare_prompt_context(options, snapshot, cancellation)?;
+        self.install_delegation_executor(&mut context)?;
         let operation_id = context.operation_id().to_owned();
         let turn_id = context.turn_id().to_owned();
 
@@ -127,7 +128,7 @@ impl PromptOperation<'_> {
                 None => context.finish_failure(error),
             },
         };
-        if outcome.is_success() {
+        if outcome.is_success() && !context.has_delegation_executor() {
             match context.authorize_delegation_requests(0) {
                 Ok(decisions) => {
                     let decisions = decisions.to_vec();
@@ -141,6 +142,13 @@ impl PromptOperation<'_> {
                             format!("delegation execution failed: {error}"),
                         );
                     }
+                    let deferred = context.take_deferred_pending_delegations();
+                    crate::operations::delegation::confirmation::adopt_pending(
+                        self.persistence,
+                        self.pending_delegation_confirmations,
+                        self.event_service,
+                        deferred,
+                    )?;
                 }
                 Err(error) => {
                     outcome = context.finish_failure(error);
@@ -165,6 +173,21 @@ impl PromptOperation<'_> {
         self.authorization_service
             .cancel_operation(context.operation_id(), "operation completed");
         Ok(outcome)
+    }
+
+    fn install_delegation_executor(
+        &self,
+        context: &mut PromptTurnContext,
+    ) -> Result<(), CodingSessionError> {
+        crate::operations::delegation::execution::install_tool_executor(
+            context,
+            self.profile_registry.clone(),
+            self.event_service.clone(),
+            self.operation_control.clone(),
+            self.authorization_service.clone(),
+            0,
+            Vec::new(),
+        )
     }
 
     async fn execute_authorized_delegations(
@@ -192,6 +215,7 @@ impl PromptOperation<'_> {
                                 *child_delegation_depth,
                                 delegation_lineage_for_request(&[], request),
                                 parent_capability_snapshot.clone(),
+                                Some(self.authorization_service.clone()),
                             )
                             .await
                         }
@@ -205,6 +229,7 @@ impl PromptOperation<'_> {
                                 *child_delegation_depth,
                                 delegation_lineage_for_request(&[], request),
                                 parent_capability_snapshot.clone(),
+                                Some(self.authorization_service.clone()),
                             )
                             .await
                         }

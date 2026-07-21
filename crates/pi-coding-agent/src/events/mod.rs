@@ -936,6 +936,17 @@ impl CodingAgentProductEvent {
         )
     }
 
+    #[cfg(test)]
+    pub(crate) fn with_lineage_for_tests(
+        mut self,
+        parent_operation_id: impl Into<String>,
+        root_operation_id: impl Into<String>,
+    ) -> Self {
+        self.parent_operation_id = Some(parent_operation_id.into());
+        self.root_operation_id = Some(root_operation_id.into());
+        self
+    }
+
     pub fn sequence(&self) -> u64 {
         self.sequence.get()
     }

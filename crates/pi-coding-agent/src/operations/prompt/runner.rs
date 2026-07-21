@@ -164,8 +164,14 @@ fn build_agent_runtime(ctx: &mut PromptTurnContext) -> Result<(), String> {
     })?;
     let service = RuntimeService::new();
     let authorization = ctx.authorization_hook_context();
+    let delegation_executor = ctx.delegation_executor();
     let build = service
-        .build_agent_runtime_with_authorization(&runtime, snapshot, authorization)
+        .build_agent_runtime_with_authorization(
+            &runtime,
+            snapshot,
+            authorization,
+            delegation_executor,
+        )
         .map_err(|error| error.to_string())?;
     for diagnostic in build.diagnostics {
         ctx.record_diagnostic(diagnostic);

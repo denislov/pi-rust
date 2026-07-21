@@ -277,6 +277,7 @@ fn delegation_status_label(status: PersistedDelegationStatus) -> &'static str {
         PersistedDelegationStatus::Completed => "completed",
         PersistedDelegationStatus::Failed => "failed",
         PersistedDelegationStatus::Rejected => "rejected",
+        PersistedDelegationStatus::Cancelled => "cancelled",
         PersistedDelegationStatus::ConfirmationRequired => "confirmation_required",
     }
 }

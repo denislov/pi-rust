@@ -2348,7 +2348,8 @@ fn apply_interactive_projection<T: Terminal>(
     apply(root);
     let ui_events = root.drain_shared_ui_events();
     let force_render = ui_events.iter().any(ui_event_updates_visible_block);
-    root.apply_events(ui_events);
+    root.apply_root_events(ui_events);
+    root.apply_shared_child_ui_events();
     let after = root.render_state();
     let changed = before != after;
     Ok(if changed && force_render {
@@ -2809,6 +2810,52 @@ mod tests {
             task: "review the change".into(),
             reason: "confirmation required".into(),
         }
+    }
+
+    #[test]
+    fn child_messages_and_authorizations_stay_out_of_root_transcript() {
+        let (mut tui, root_id) = test_tui();
+        let root_item_count = root_ref(&tui, root_id).unwrap().transcript.items().len();
+        let child_message = ProductEvent::from_draft_for_tests(
+            ProductEventSequence::new(1),
+            PromptStreamEvent::Message(MessageEvent::Delta {
+                operation_id: "op-child".into(),
+                turn_id: "turn-child".into(),
+                message_id: Some("msg-child".into()),
+                text: "child-only output".into(),
+            })
+            .into_product_draft(),
+            None,
+        )
+        .with_lineage_for_tests("op-parent", "op-parent");
+        let mut request = authorization_request("child-auth");
+        request.operation_id = "op-child".into();
+        let child_authorization = ProductEvent::from_draft_for_tests(
+            ProductEventSequence::new(2),
+            ToolEvent::AuthorizationRequired {
+                request: request.clone(),
+            }
+            .into_product_draft(),
+            None,
+        )
+        .with_lineage_for_tests("op-parent", "op-parent");
+
+        apply_interactive_product_event(&mut tui, root_id, &child_message).unwrap();
+        apply_interactive_product_event(&mut tui, root_id, &child_authorization).unwrap();
+
+        let root = root_ref(&tui, root_id).unwrap();
+        assert_eq!(root.transcript.items().len(), root_item_count);
+        assert!(matches!(
+            root.child_transcript("op-child")
+                .and_then(|transcript| transcript.items().first()),
+            Some(TranscriptItem::Assistant { markdown, .. }) if markdown == "child-only output"
+        ));
+        assert_eq!(
+            root.child_authorizations("op-child")
+                .expect("child authorization queue")
+                .front(),
+            Some(&request)
+        );
     }
 
     #[test]

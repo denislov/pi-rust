@@ -1,5 +1,24 @@
 # Changes
 
+## 0.5.4 - 2026-07-21
+
+### Changed
+
+- Delegation now uses an awaited typed handoff and returns `completed`,
+  `failed`, `rejected`, or `cancelled` exactly once to the original parent tool
+  call. Interactive confirmation reuses the tool-authorization waiter and
+  legacy approval operations are limited to restored pre-0.5.4 pending facts.
+- Child Prompts inherit operation-scoped authorization. Their messages, tools,
+  and permission previews are isolated from the main fullscreen transcript and
+  projected into bounded Enter/Escape child conversation pages.
+- UI snapshot protocol advances additively from `2.1` to `2.2` with retained
+  child ProductEvents for reconnect hydration; RPC remains `2.1` and
+  ProductEvent remains `2.2`.
+- Persist terminal folded delegation state across automatic, interactive, and
+  restored approval paths and add the deterministic delegation soak gate.
+- Drive Wasmtime invocation epochs from the blocking pool so Guest deadline and
+  cancellation yields do not depend on a current-thread Tokio executor.
+
 ## 0.5.3 - 2026-07-21
 
 ### Changed

@@ -1932,6 +1932,7 @@ fn map_delegation_tool_event(
             context,
             reason: value
                 .get("message")
+                .or_else(|| value.get("error"))
                 .and_then(|message| message.as_str())
                 .unwrap_or("delegation rejected")
                 .to_owned(),

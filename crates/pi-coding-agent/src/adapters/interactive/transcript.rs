@@ -514,6 +514,18 @@ impl Transcript {
         &self.items
     }
 
+    pub(crate) fn retain_recent(&mut self, max_items: usize) {
+        if self.items.len() <= max_items {
+            return;
+        }
+        let remove = self.items.len().saturating_sub(max_items);
+        self.items.drain(..remove);
+        self.item_meta.drain(..remove);
+        self.scroll_offset = 0;
+        self.new_output_below = false;
+        self.bump_content_revision();
+    }
+
     pub fn revision(&self) -> u64 {
         self.revision
     }

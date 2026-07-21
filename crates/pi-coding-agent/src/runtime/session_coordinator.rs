@@ -11,6 +11,7 @@ use crate::operations::prompt::context::DelegationRequest;
 use crate::profiles::ProfileId;
 use crate::runtime::operation::OperationClass;
 use crate::services::session::{ReplayDerivedOwnerState, replay_derived_owner_state};
+use crate::session::event::PersistedDelegationStatus;
 #[cfg(test)]
 use crate::session::id::{Clock, SystemClock};
 use crate::session::service::{SessionPersistence, StartupRecoveryMarker};
@@ -207,6 +208,38 @@ impl SessionWriterCommand {
             mutation: SessionMutation::AdoptDelegations { pending },
         }
     }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the writer command retains every typed folded-delegation association fact"
+    )]
+    pub(crate) fn record_delegation_folded_update(
+        operation_id: impl Into<String>,
+        capability_generation: CapabilityGeneration,
+        tool_call_id: impl Into<String>,
+        requesting_profile_id: ProfileId,
+        target_kind: crate::runtime::facade::ProfileKind,
+        target_id: ProfileId,
+        task: impl Into<String>,
+        status: PersistedDelegationStatus,
+        child_operation_id: Option<String>,
+        summary: Option<String>,
+    ) -> Self {
+        Self {
+            operation_id: operation_id.into(),
+            capability_generation,
+            mutation: SessionMutation::RecordDelegationFoldedUpdate {
+                tool_call_id: tool_call_id.into(),
+                requesting_profile_id,
+                target_kind,
+                target_id,
+                task: task.into(),
+                status,
+                child_operation_id,
+                summary,
+            },
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -237,6 +270,16 @@ pub(crate) enum SessionMutation {
     },
     AdoptDelegations {
         pending: Vec<PendingDelegationConfirmationState>,
+    },
+    RecordDelegationFoldedUpdate {
+        tool_call_id: String,
+        requesting_profile_id: ProfileId,
+        target_kind: crate::runtime::facade::ProfileKind,
+        target_id: ProfileId,
+        task: String,
+        status: PersistedDelegationStatus,
+        child_operation_id: Option<String>,
+        summary: Option<String>,
     },
 }
 
@@ -324,6 +367,7 @@ pub(crate) enum SessionWriterReply {
     DelegationsAdopted {
         diagnostics: Vec<SessionWriterDiagnostic>,
     },
+    DelegationFoldedUpdated,
 }
 
 #[derive(Debug)]
@@ -510,6 +554,30 @@ impl SessionCoordinator {
                     self.pending_delegation_confirmations.push(pending);
                 }
                 Ok(SessionWriterReply::DelegationsAdopted { diagnostics })
+            }
+            SessionMutation::RecordDelegationFoldedUpdate {
+                tool_call_id,
+                requesting_profile_id,
+                target_kind,
+                target_id,
+                task,
+                status,
+                child_operation_id,
+                summary,
+            } => {
+                if let SessionPersistence::Persistent(session_service) = &mut self.persistence {
+                    session_service.record_delegation_folded_update(
+                        tool_call_id,
+                        requesting_profile_id,
+                        target_kind,
+                        target_id,
+                        task,
+                        status,
+                        child_operation_id,
+                        summary,
+                    )?;
+                }
+                Ok(SessionWriterReply::DelegationFoldedUpdated)
             }
         }
     }

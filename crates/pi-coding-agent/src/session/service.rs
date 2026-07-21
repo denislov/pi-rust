@@ -554,6 +554,34 @@ impl SessionService {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn record_delegation_folded_update(
+        &mut self,
+        tool_call_id: String,
+        requesting_profile_id: ProfileId,
+        target_kind: ProfileKind,
+        target_id: ProfileId,
+        task: String,
+        status: PersistedDelegationStatus,
+        child_operation_id: Option<String>,
+        summary: Option<String>,
+    ) -> Result<(), CodingSessionError> {
+        self.append_durable_session_event(
+            None,
+            None,
+            SessionEventData::DelegationFoldedUpdated {
+                tool_call_id,
+                requesting_profile_id,
+                target_kind,
+                target_id,
+                task,
+                status,
+                child_operation_id,
+                summary,
+            },
+        )
+    }
+
     pub(crate) fn switch_active_leaf(
         &mut self,
         target_leaf_id: &str,
@@ -2584,6 +2612,7 @@ fn delegation_status_label(status: PersistedDelegationStatus) -> &'static str {
         PersistedDelegationStatus::Completed => "completed",
         PersistedDelegationStatus::Failed => "failed",
         PersistedDelegationStatus::Rejected => "rejected",
+        PersistedDelegationStatus::Cancelled => "cancelled",
         PersistedDelegationStatus::ConfirmationRequired => "confirmation_required",
     }
 }

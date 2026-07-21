@@ -387,6 +387,11 @@ pub(super) struct InteractiveRoot {
     fullscreen_viewport: bool,
     terminal_capabilities: TerminalCapabilities,
     shared_projection: UiProjection,
+    child_conversations: HashMap<String, ChildConversationState>,
+    child_conversation_order: VecDeque<String>,
+    active_child_operation_id: Option<String>,
+    main_transcript: Option<Transcript>,
+    main_tool_authorizations: Option<VecDeque<ToolAuthorizationRequest>>,
     conversation_viewport_width: usize,
     conversation_viewport_height: usize,
     pub(super) cwd: PathBuf,
@@ -419,6 +424,52 @@ pub(super) struct InteractiveRoot {
     pub(super) profile_registry: ProfileRegistry,
     pub(super) default_agent_profile_id: ProfileId,
     pub(super) clipboard: Arc<dyn ClipboardSink>,
+}
+
+struct ChildConversationState {
+    transcript: Transcript,
+    authorizations: VecDeque<ToolAuthorizationRequest>,
+}
+
+const MAX_CHILD_TRANSCRIPT_ITEMS: usize = 1_024;
+
+impl ChildConversationState {
+    fn new() -> Self {
+        Self {
+            transcript: Transcript::new(),
+            authorizations: VecDeque::new(),
+        }
+    }
+
+    fn apply_events(&mut self, events: Vec<UiEvent>) {
+        apply_child_events(&mut self.transcript, &mut self.authorizations, events);
+    }
+}
+
+fn apply_child_events(
+    transcript: &mut Transcript,
+    authorizations: &mut VecDeque<ToolAuthorizationRequest>,
+    events: Vec<UiEvent>,
+) {
+    for event in events {
+        match event {
+            UiEvent::ToolAuthorizationRequired { request } => {
+                if !authorizations
+                    .iter()
+                    .any(|pending| pending.authorization_id == request.authorization_id)
+                {
+                    authorizations.push_back(request);
+                }
+            }
+            UiEvent::ToolAuthorizationResolved { authorization_id } => {
+                authorizations.retain(|pending| pending.authorization_id != authorization_id);
+            }
+            event => {
+                transcript.apply_event_with_mutation(event);
+            }
+        }
+    }
+    transcript.retain_recent(MAX_CHILD_TRANSCRIPT_ITEMS);
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -607,6 +658,11 @@ impl InteractiveRoot {
                 hyperlinks: false,
             },
             shared_projection: UiProjection::new(),
+            child_conversations: HashMap::new(),
+            child_conversation_order: VecDeque::new(),
+            active_child_operation_id: None,
+            main_transcript: None,
+            main_tool_authorizations: None,
             conversation_viewport_width: 1,
             conversation_viewport_height: 1,
             git_branch: GitBranchProvider::new(&cwd),
@@ -800,6 +856,119 @@ impl InteractiveRoot {
 
     pub(super) fn drain_shared_ui_events(&mut self) -> Vec<UiEvent> {
         self.shared_projection.drain()
+    }
+
+    pub(super) fn apply_shared_child_ui_events(&mut self) {
+        for (operation_id, events) in self.shared_projection.drain_children() {
+            if !self.child_conversations.contains_key(&operation_id) {
+                while self.child_conversation_order.len() >= 32 {
+                    if let Some(evicted) = self.child_conversation_order.pop_front() {
+                        self.child_conversations.remove(&evicted);
+                    }
+                }
+                self.child_conversation_order
+                    .push_back(operation_id.clone());
+            }
+            if self.active_child_operation_id.as_deref() == Some(operation_id.as_str()) {
+                apply_child_events(&mut self.transcript, &mut self.tool_authorizations, events);
+            } else {
+                self.child_conversations
+                    .entry(operation_id)
+                    .or_insert_with(ChildConversationState::new)
+                    .apply_events(events);
+            }
+        }
+    }
+
+    pub(super) fn apply_root_events(&mut self, events: Vec<UiEvent>) {
+        let Some(mut main_transcript) = self.main_transcript.take() else {
+            self.apply_events(events);
+            return;
+        };
+        let mut main_authorizations = self.main_tool_authorizations.take().unwrap_or_default();
+        std::mem::swap(&mut self.transcript, &mut main_transcript);
+        std::mem::swap(&mut self.tool_authorizations, &mut main_authorizations);
+        self.apply_events(events);
+        std::mem::swap(&mut self.tool_authorizations, &mut main_authorizations);
+        std::mem::swap(&mut self.transcript, &mut main_transcript);
+        self.main_transcript = Some(main_transcript);
+        self.main_tool_authorizations = Some(main_authorizations);
+    }
+
+    fn open_selected_child_conversation(&mut self) -> bool {
+        if self.active_child_operation_id.is_some() {
+            return false;
+        }
+        let operation_id = self
+            .local
+            .transcript_view
+            .selected()
+            .and_then(|block_id| self.transcript.item_for_block(block_id))
+            .and_then(|item| match item {
+                TranscriptItem::Tool { name, args, .. } if name == "delegation" => args
+                    .get("childOperationId")
+                    .and_then(|value| value.as_str())
+                    .map(ToOwned::to_owned),
+                _ => None,
+            });
+        let Some(operation_id) = operation_id else {
+            return false;
+        };
+        let Some(conversation) = self.child_conversations.get_mut(&operation_id) else {
+            return false;
+        };
+        let child_transcript = std::mem::replace(&mut conversation.transcript, Transcript::new());
+        let main_transcript = std::mem::replace(&mut self.transcript, child_transcript);
+        let child_authorizations = std::mem::take(&mut conversation.authorizations);
+        let main_authorizations =
+            std::mem::replace(&mut self.tool_authorizations, child_authorizations);
+        self.main_transcript = Some(main_transcript);
+        self.main_tool_authorizations = Some(main_authorizations);
+        self.active_child_operation_id = Some(operation_id);
+        self.refresh_shell_focus();
+        self.local.transcript_view = TranscriptViewState::default();
+        self.local.render_cache.clear();
+        true
+    }
+
+    fn close_child_conversation(&mut self) -> bool {
+        let Some(operation_id) = self.active_child_operation_id.take() else {
+            return false;
+        };
+        let Some(main_transcript) = self.main_transcript.take() else {
+            return false;
+        };
+        let main_authorizations = self.main_tool_authorizations.take().unwrap_or_default();
+        let child_transcript = std::mem::replace(&mut self.transcript, main_transcript);
+        let child_authorizations =
+            std::mem::replace(&mut self.tool_authorizations, main_authorizations);
+        let conversation = self
+            .child_conversations
+            .entry(operation_id)
+            .or_insert_with(ChildConversationState::new);
+        conversation.transcript = child_transcript;
+        conversation.authorizations = child_authorizations;
+        self.refresh_shell_focus();
+        self.local.transcript_view = TranscriptViewState::default();
+        self.local.render_cache.clear();
+        true
+    }
+
+    #[cfg(test)]
+    pub(super) fn child_transcript(&self, operation_id: &str) -> Option<&Transcript> {
+        self.child_conversations
+            .get(operation_id)
+            .map(|conversation| &conversation.transcript)
+    }
+
+    #[cfg(test)]
+    pub(super) fn child_authorizations(
+        &self,
+        operation_id: &str,
+    ) -> Option<&VecDeque<ToolAuthorizationRequest>> {
+        self.child_conversations
+            .get(operation_id)
+            .map(|conversation| &conversation.authorizations)
     }
 
     #[cfg(test)]
@@ -2490,6 +2659,10 @@ impl InteractiveRoot {
             return self.handle_shell_mouse(*mouse);
         }
 
+        if matches_key(event, "escape") && self.close_child_conversation() {
+            return true;
+        }
+
         let mode = shell_layout_mode(self.viewport_width);
         if self.local.context_open && mode != ShellLayoutMode::Wide && matches_key(event, "escape")
         {
@@ -2533,10 +2706,13 @@ impl InteractiveRoot {
                     }
                     return true;
                 }
-                if self.local.keybindings.matches(event, "tui.select.confirm")
-                    || matches_key(event, "space")
-                    || matches_key(event, "ctrl+o")
-                {
+                if self.local.keybindings.matches(event, "tui.select.confirm") {
+                    if !self.open_selected_child_conversation() {
+                        self.toggle_selected_transcript_block();
+                    }
+                    return true;
+                }
+                if matches_key(event, "space") || matches_key(event, "ctrl+o") {
                     self.toggle_selected_transcript_block();
                     return true;
                 }
@@ -2727,6 +2903,14 @@ impl InteractiveRoot {
                 .focus_ring
                 .set_items([InteractiveRegion::Composer]);
             self.local.focus_ring.focus(InteractiveRegion::Composer);
+            self.apply_region_focus();
+            return;
+        }
+        if self.active_child_operation_id.is_some() {
+            self.local
+                .focus_ring
+                .set_items([InteractiveRegion::Conversation]);
+            self.local.focus_ring.focus(InteractiveRegion::Conversation);
             self.apply_region_focus();
             return;
         }
@@ -2983,7 +3167,11 @@ impl InteractiveRoot {
                 1.min(layout.conversation.height),
             ),
             &[self.panel_header(
-                "Conversation",
+                &self
+                    .active_child_operation_id
+                    .as_ref()
+                    .map(|operation_id| format!("Child · {} · Esc back", short_id(operation_id)))
+                    .unwrap_or_else(|| "Conversation".to_string()),
                 InteractiveRegion::Conversation,
                 layout.conversation.width,
             )],
@@ -4286,11 +4474,70 @@ mod transcript_viewport_tests {
     };
 
     use super::{
-        ContextTab, InteractiveHitTarget, InteractiveRegion, InteractiveRoot, transcript_viewport,
+        ChildConversationState, ContextTab, InteractiveHitTarget, InteractiveRegion,
+        InteractiveRoot, transcript_viewport,
     };
 
     fn lines() -> Vec<String> {
         (1..=6).map(|line| line.to_string()).collect()
+    }
+
+    #[test]
+    fn delegation_enter_opens_child_page_and_escape_restores_main_transcript() {
+        let mut root = InteractiveRoot::new(PathBuf::from("."), "model".into(), "session".into());
+        root.set_fullscreen_viewport(true);
+        root.transcript.push(TranscriptItem::Tool {
+            call_id: "delegation-1".into(),
+            name: "delegation".into(),
+            args: serde_json::json!({"childOperationId": "child-1"}),
+            result: Some("completed: child result".into()),
+            is_error: false,
+        });
+        let mut child = ChildConversationState::new();
+        child
+            .transcript
+            .push(TranscriptItem::assistant("child", "child output", true));
+        root.child_conversations.insert("child-1".into(), child);
+        root.child_conversation_order.push_back("child-1".into());
+        root.local.transcript_view.sync(&root.transcript);
+
+        assert!(root.open_selected_child_conversation());
+        assert_eq!(root.active_child_operation_id.as_deref(), Some("child-1"));
+        let tab = InputEvent::Key(parse_key("tab").unwrap());
+        assert!(root.handle_shell_input(&tab));
+        assert_eq!(
+            root.local.focus_ring.current(),
+            Some(InteractiveRegion::Conversation)
+        );
+        assert!(matches!(
+            root.transcript.items().first(),
+            Some(TranscriptItem::Assistant { markdown, .. }) if markdown == "child output"
+        ));
+        assert!(root.close_child_conversation());
+        assert!(root.active_child_operation_id.is_none());
+        assert!(
+            root.transcript.items().iter().any(
+                |item| matches!(item, TranscriptItem::Tool { name, .. } if name == "delegation")
+            )
+        );
+    }
+
+    #[test]
+    fn child_conversation_projection_retains_a_bounded_recent_transcript() {
+        let mut child = ChildConversationState::new();
+        child.apply_events(
+            (0..1_100)
+                .map(|index| UiEvent::SystemNotice {
+                    text: format!("child event {index}"),
+                })
+                .collect(),
+        );
+
+        assert_eq!(child.transcript.items().len(), 1_024);
+        assert!(matches!(
+            child.transcript.items().first(),
+            Some(TranscriptItem::System { text }) if text == "child event 76"
+        ));
     }
 
     #[test]

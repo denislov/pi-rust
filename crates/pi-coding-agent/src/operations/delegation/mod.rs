@@ -8,7 +8,9 @@ use time::{Duration as TimeDuration, OffsetDateTime, format_description::well_kn
 
 use crate::app::bootstrap::{PromptInvocation, SessionRunOptions};
 use crate::app::cli::prompt_options::PromptRunOptions;
-use crate::operations::prompt::context::{DelegationRequest, PromptTurnMode, PromptTurnOptions};
+use crate::operations::prompt::context::{
+    DelegationRequest, DelegationToolExecutor, PromptTurnMode, PromptTurnOptions,
+};
 use crate::profiles::{
     AgentProfile, DelegationConfirmationMode, DelegationPolicy, ProfileId, ProfileKind,
     ProfileRegistry,
@@ -74,6 +76,7 @@ pub(crate) fn delegation_tools(
     profile_id: Option<&ProfileId>,
     policy: Option<&DelegationPolicy>,
     inventory: &DelegationTargetInventory,
+    executor: Option<DelegationToolExecutor>,
 ) -> Vec<AgentTool> {
     let Some(policy) = policy else {
         return Vec::new();
@@ -87,6 +90,7 @@ pub(crate) fn delegation_tools(
             profile_id.clone(),
             policy.clone(),
             &inventory.agents,
+            executor.clone(),
         ));
     }
     if policy.allow_delegate_team && !inventory.teams.is_empty() {
@@ -94,6 +98,7 @@ pub(crate) fn delegation_tools(
             profile_id,
             policy.clone(),
             &inventory.teams,
+            executor,
         ));
     }
     tools
@@ -176,6 +181,56 @@ pub(crate) enum DelegationAuthorizationDecision {
         request: DelegationRequest,
         reason: String,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DelegationToolResultStatus {
+    Completed,
+    Failed,
+    Rejected,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct DelegationToolResult {
+    pub(crate) status: DelegationToolResultStatus,
+    pub(crate) target_kind: ProfileKind,
+    pub(crate) target_id: ProfileId,
+    pub(crate) task: String,
+    pub(crate) requesting_profile_id: ProfileId,
+    pub(crate) operation_id: String,
+    pub(crate) tool_call_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) child_operation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) final_text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) error: Option<String>,
+}
+
+impl DelegationToolResult {
+    pub(crate) fn from_request(
+        request: &DelegationRequest,
+        status: DelegationToolResultStatus,
+    ) -> Self {
+        Self {
+            status,
+            target_kind: request.target_kind,
+            target_id: request.target_id.clone(),
+            task: request.task.clone(),
+            requesting_profile_id: request.requesting_profile_id.clone(),
+            operation_id: request.operation_id.clone(),
+            tool_call_id: request.tool_call_id.clone(),
+            child_operation_id: None,
+            final_text: None,
+            error: None,
+        }
+    }
+
+    pub(crate) fn to_json(&self) -> String {
+        serde_json::to_string(self).expect("typed delegation tool result is serializable")
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -605,6 +660,7 @@ fn delegate_agent_tool(
     profile_id: ProfileId,
     policy: DelegationPolicy,
     targets: &[DelegationTarget],
+    executor: Option<DelegationToolExecutor>,
 ) -> AgentTool {
     AgentTool::new_text(
         "delegate_agent",
@@ -613,11 +669,27 @@ fn delegate_agent_tool(
             "agent",
             targets,
         ),
-        delegation_parameters("agent_id", "agent", targets),
-        move |_context, args| {
+        delegation_parameters(
+            "agent_id",
+            "agent",
+            targets,
+            matches!(
+                policy.require_confirmation,
+                DelegationConfirmationMode::Always
+            ),
+        ),
+        move |context, args| {
             let profile_id = profile_id.clone();
             let policy = policy.clone();
-            async move { handle_delegation_request("agent", "agent_id", &profile_id, &policy, args) }
+            let executor = executor.clone();
+            async move {
+                match executor {
+                    Some(executor) => executor(context, args).await,
+                    None => {
+                        handle_delegation_request("agent", "agent_id", &profile_id, &policy, args)
+                    }
+                }
+            }
         },
     )
 }
@@ -626,6 +698,7 @@ fn delegate_team_tool(
     profile_id: ProfileId,
     policy: DelegationPolicy,
     targets: &[DelegationTarget],
+    executor: Option<DelegationToolExecutor>,
 ) -> AgentTool {
     AgentTool::new_text(
         "delegate_team",
@@ -634,11 +707,27 @@ fn delegate_team_tool(
             "team",
             targets,
         ),
-        delegation_parameters("team_id", "team", targets),
-        move |_context, args| {
+        delegation_parameters(
+            "team_id",
+            "team",
+            targets,
+            !matches!(
+                policy.require_confirmation,
+                DelegationConfirmationMode::Never
+            ),
+        ),
+        move |context, args| {
             let profile_id = profile_id.clone();
             let policy = policy.clone();
-            async move { handle_delegation_request("team", "team_id", &profile_id, &policy, args) }
+            let executor = executor.clone();
+            async move {
+                match executor {
+                    Some(executor) => executor(context, args).await,
+                    None => {
+                        handle_delegation_request("team", "team_id", &profile_id, &policy, args)
+                    }
+                }
+            }
         },
     )
 }
@@ -668,6 +757,7 @@ fn delegation_parameters(
     target_field: &str,
     target_kind: &str,
     targets: &[DelegationTarget],
+    requires_confirmation: bool,
 ) -> serde_json::Value {
     let target_ids = targets
         .iter()
@@ -689,12 +779,16 @@ fn delegation_parameters(
             "description": "Focused task for the delegated child operation"
         }),
     );
-    serde_json::json!({
+    let mut schema = serde_json::json!({
         "type": "object",
         "properties": properties,
         "required": [target_field, "task"],
         "additionalProperties": false
-    })
+    });
+    if requires_confirmation {
+        schema["x-pi-authorization-risk"] = serde_json::json!("side_effect");
+    }
+    schema
 }
 
 fn handle_delegation_request(
@@ -741,12 +835,18 @@ fn handle_delegation_request(
     ))
 }
 
-fn required_profile_id(args: &serde_json::Value, key: &str) -> Result<ProfileId, String> {
+pub(super) fn required_profile_id(
+    args: &serde_json::Value,
+    key: &str,
+) -> Result<ProfileId, String> {
     let value = required_non_empty_string(args, key)?;
     ProfileId::new(value).map_err(|error| format!("invalid {key}: {error}"))
 }
 
-fn required_non_empty_string(args: &serde_json::Value, key: &str) -> Result<String, String> {
+pub(super) fn required_non_empty_string(
+    args: &serde_json::Value,
+    key: &str,
+) -> Result<String, String> {
     let value = args
         .get(key)
         .and_then(|value| value.as_str())
@@ -762,7 +862,7 @@ fn target_is_allowed(allowed: &[ProfileId], target: &ProfileId) -> bool {
     allowed.is_empty() || allowed.iter().any(|allowed| allowed == target)
 }
 
-fn delegation_response(
+pub(super) fn delegation_response(
     status: &str,
     target_kind: &str,
     target: &ProfileId,
@@ -805,7 +905,12 @@ mod tests {
         };
         let registry = test_registry();
         let inventory = DelegationTargetInventory::from_registry(&registry, &policy);
-        let tools = delegation_tools(Some(&ProfileId::from("planner")), Some(&policy), &inventory);
+        let tools = delegation_tools(
+            Some(&ProfileId::from("planner")),
+            Some(&policy),
+            &inventory,
+            None,
+        );
 
         assert_eq!(
             tools
@@ -837,7 +942,12 @@ mod tests {
         };
         let registry = test_registry();
         let inventory = DelegationTargetInventory::from_registry(&registry, &policy);
-        let tools = delegation_tools(Some(&ProfileId::from("planner")), Some(&policy), &inventory);
+        let tools = delegation_tools(
+            Some(&ProfileId::from("planner")),
+            Some(&policy),
+            &inventory,
+            None,
+        );
 
         let response = run_tool(
             &tools[0],
@@ -863,7 +973,12 @@ mod tests {
         };
         let registry = test_registry();
         let inventory = DelegationTargetInventory::from_registry(&registry, &policy);
-        let tools = delegation_tools(Some(&ProfileId::from("planner")), Some(&policy), &inventory);
+        let tools = delegation_tools(
+            Some(&ProfileId::from("planner")),
+            Some(&policy),
+            &inventory,
+            None,
+        );
 
         assert_eq!(
             tools
@@ -888,7 +1003,12 @@ mod tests {
         let profile = registry.agent("default").unwrap();
         let inventory = DelegationTargetInventory::from_registry(&registry, &profile.delegation);
 
-        let tools = delegation_tools(Some(&profile.id), Some(&profile.delegation), &inventory);
+        let tools = delegation_tools(
+            Some(&profile.id),
+            Some(&profile.delegation),
+            &inventory,
+            None,
+        );
 
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0].name, "delegate_agent");
@@ -924,6 +1044,7 @@ mod tests {
             Some(&ProfileId::from("planner")),
             Some(&filtered_policy),
             &filtered_inventory,
+            None,
         );
         assert_eq!(
             filtered_tools[0].parameters["properties"]["agent_id"]["enum"],
@@ -941,6 +1062,7 @@ mod tests {
             Some(&ProfileId::from("planner")),
             Some(&all_policy),
             &all_inventory,
+            None,
         );
         assert_eq!(
             all_tools[0].parameters["properties"]["agent_id"]["enum"],
@@ -964,8 +1086,13 @@ mod tests {
         let inventory = DelegationTargetInventory::from_registry(&registry, &policy);
 
         assert!(
-            delegation_tools(Some(&ProfileId::from("planner")), Some(&policy), &inventory)
-                .is_empty()
+            delegation_tools(
+                Some(&ProfileId::from("planner")),
+                Some(&policy),
+                &inventory,
+                None,
+            )
+            .is_empty()
         );
     }
 

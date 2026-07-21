@@ -2,6 +2,9 @@ use crate::authorization::{
     ToolAuthorizationDecision, ToolAuthorizationMode, ToolAuthorizationPreview,
     ToolAuthorizationRequest, ToolAuthorizationRisk, ToolAuthorizationScope,
 };
+use crate::operations::delegation::{DelegationToolResult, DelegationToolResultStatus};
+use crate::operations::prompt::context::DelegationRequest;
+use crate::profiles::{ProfileId, ProfileKind};
 use crate::runtime::capability::OperationCapabilitySnapshot;
 use crate::runtime::facade::CodingSessionError;
 use crate::runtime::snapshot::SnapshotCoordinator;
@@ -130,6 +133,10 @@ impl AuthorizationService {
         pending_requests(&self.state.lock().unwrap())
     }
 
+    pub(crate) fn uses_interactive_waiters(&self) -> bool {
+        self.mode == ToolAuthorizationMode::Interactive
+    }
+
     #[cfg(test)]
     pub(crate) fn set_event_service(&mut self, event_service: EventService) {
         self.event_service = event_service;
@@ -186,7 +193,7 @@ impl AuthorizationService {
         let request = ToolAuthorizationRequest {
             authorization_id: authorization_id.clone(),
             operation_id,
-            turn_id,
+            turn_id: turn_id.clone(),
             tool_call_id: context.tool_call_id.clone(),
             tool_name: context.tool_name.clone(),
             risk,
@@ -236,7 +243,18 @@ impl AuthorizationService {
         tokio::select! {
             resolution = receiver => match resolution {
                 Ok(PendingResolution::Allow) => Ok(None),
-                Ok(PendingResolution::Deny(reason)) => Ok(Some(blocked(reason))),
+                Ok(PendingResolution::Deny(reason)) => {
+                    if let Some(request) = delegation_request(
+                        &context,
+                        &turn_id,
+                        &snapshot,
+                    ) {
+                        self.event_service.emit_delegation_rejected(&request, &reason);
+                        Ok(Some(blocked(delegation_rejected_result(&request, &reason))))
+                    } else {
+                        Ok(Some(blocked(reason)))
+                    }
+                },
                 Err(_) => Ok(Some(blocked("tool authorization was interrupted"))),
             },
             _ = context.execution_context.cancel_token().cancelled() => {
@@ -600,7 +618,21 @@ fn evaluate(
                 },
             })
         }
-        "delegate_agent" | "delegate_team" => Ok(Evaluation::Allow),
+        "delegate_agent" | "delegate_team" => {
+            match inventory
+                .explicit_tools
+                .get(context.tool_name.as_str())
+                .copied()
+                .flatten()
+            {
+                Some(PluginToolAuthorizationRisk::SideEffect) => Ok(argument_request(
+                    context,
+                    ToolAuthorizationRisk::PluginSideEffect,
+                    "Delegate work to a child agent",
+                )),
+                _ => Ok(Evaluation::Allow),
+            }
+        }
         name if inventory.plugin_tools.contains_key(name) => {
             match inventory.plugin_tools.get(name).copied().flatten() {
                 Some(PluginToolAuthorizationRisk::WorkspaceLocalReadOnly) => Ok(Evaluation::Allow),
@@ -678,6 +710,42 @@ fn blocked(reason: impl Into<String>) -> BeforeToolCallResult {
         block: true,
         reason: Some(reason.into()),
     }
+}
+
+fn delegation_request(
+    context: &BeforeToolCallContext,
+    turn_id: &str,
+    snapshot: &OperationCapabilitySnapshot,
+) -> Option<DelegationRequest> {
+    let (target_kind, target_field) = match context.tool_name.as_str() {
+        "delegate_agent" => (ProfileKind::Agent, "agent_id"),
+        "delegate_team" => (ProfileKind::Team, "team_id"),
+        _ => return None,
+    };
+    let operation_id = context.execution_context.scope_id()?.to_owned();
+    let requesting_profile_id = snapshot.model.as_ref()?.profile_id.clone()?;
+    let target_id =
+        ProfileId::new(context.arguments.get(target_field)?.as_str()?.to_owned()).ok()?;
+    let task = context.arguments.get("task")?.as_str()?.trim().to_owned();
+    if task.is_empty() {
+        return None;
+    }
+    Some(DelegationRequest {
+        operation_id,
+        turn_id: turn_id.to_owned(),
+        tool_call_id: context.tool_call_id.clone(),
+        requesting_profile_id,
+        target_kind,
+        target_id,
+        task,
+    })
+}
+
+fn delegation_rejected_result(request: &DelegationRequest, reason: &str) -> String {
+    let mut result =
+        DelegationToolResult::from_request(request, DelegationToolResultStatus::Rejected);
+    result.error = Some(reason.to_owned());
+    result.to_json()
 }
 
 fn path_is_within(path: &Path, cwd: &Path) -> bool {

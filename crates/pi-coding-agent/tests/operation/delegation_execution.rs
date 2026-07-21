@@ -22,7 +22,7 @@ use support::{EnvGuard, ProviderGuard as RegistryProviderGuard};
 use tempfile::tempdir;
 
 #[tokio::test]
-async fn prompt_executes_approved_agent_delegation_after_parent_success() {
+async fn prompt_executes_approved_agent_delegation_before_parent_continues() {
     let temp = tempdir().unwrap();
     let cwd = temp.path().join("workspace");
     let global = temp.path().join("global");
@@ -64,8 +64,8 @@ system_prompt = "Coder child instructions."
                 "delegate_agent",
                 serde_json::json!({"agent_id": "coder", "task": "implement parser"}),
             ),
-            ScriptedResponse::text("parent ready"),
             ScriptedResponse::text("child result"),
+            ScriptedResponse::text("parent ready after child"),
         ],
     );
 
@@ -88,7 +88,7 @@ system_prompt = "Coder child instructions."
         .await
         .unwrap();
 
-    assert_eq!(outcome.final_text(), Some("parent ready"));
+    assert_eq!(outcome.final_text(), Some("parent ready after child"));
     let calls = calls.lock().unwrap();
     assert_eq!(
         calls.len(),
@@ -96,14 +96,21 @@ system_prompt = "Coder child instructions."
         "expected parent tool, parent final, and child calls"
     );
     assert_eq!(user_texts(&calls[0].context), vec!["plan feature"]);
-    assert_eq!(user_texts(&calls[2].context), vec!["implement parser"]);
+    assert_eq!(user_texts(&calls[1].context), vec!["implement parser"]);
     assert_eq!(
-        calls[2].context.system_prompt.as_deref(),
+        calls[1].context.system_prompt.as_deref(),
         Some("Coder child instructions.")
+    );
+    assert!(
+        context_texts(&calls[2].context)
+            .iter()
+            .any(|text| text.contains("child result")),
+        "parent continuation did not receive child terminal result: {:?}",
+        context_texts(&calls[2].context)
     );
 
     let events = drain_events(&mut events);
-    assert_event_count(&events, "Delegation(Requested)", 1);
+    assert_event_count(&events, "Delegation(Requested)", 0);
     assert_event_count(&events, "Delegation(Approved)", 1);
     assert_event_count(&events, "Delegation(Started)", 1);
     assert_event_count(&events, "Delegation(Completed)", 1);
@@ -128,8 +135,8 @@ async fn built_in_default_profile_auto_approves_read_only_helper_delegation() {
                 "delegate_agent",
                 serde_json::json!({"agent_id": "explore", "task": "inspect replay"}),
             ),
-            ScriptedResponse::text("parent ready"),
             ScriptedResponse::text("explore result"),
+            ScriptedResponse::text("parent ready"),
         ],
     );
 
@@ -160,9 +167,9 @@ async fn built_in_default_profile_auto_approves_read_only_helper_delegation() {
         "expected parent tool, parent final, and built-in helper calls"
     );
     assert_eq!(user_texts(&calls[0].context), vec!["plan feature"]);
-    assert_eq!(user_texts(&calls[2].context), vec!["inspect replay"]);
+    assert_eq!(user_texts(&calls[1].context), vec!["inspect replay"]);
     assert_eq!(
-        calls[2].context.system_prompt.as_deref(),
+        calls[1].context.system_prompt.as_deref(),
         Some(
             "You are a read-only exploration helper. Gather context and summarize findings without making changes."
         )
@@ -177,7 +184,7 @@ async fn built_in_default_profile_auto_approves_read_only_helper_delegation() {
         parent_tools.iter().any(|tool| tool == "parent_only"),
         "parent should keep explicitly configured runtime tools: {parent_tools:#?}"
     );
-    let helper_tools = tool_names(&calls[2].context);
+    let helper_tools = tool_names(&calls[1].context);
     assert!(
         !helper_tools.iter().any(|tool| tool == "parent_only"),
         "built-in helper must not inherit parent runtime tools: {helper_tools:#?}"
@@ -216,8 +223,8 @@ async fn delegated_helper_receives_minimal_context_without_parent_transcript() {
                 "delegate_agent",
                 serde_json::json!({"agent_id": "explore", "task": "inspect replay"}),
             ),
-            ScriptedResponse::text("parent ready"),
             ScriptedResponse::text("explore result"),
+            ScriptedResponse::text("parent ready"),
         ],
     );
 
@@ -271,14 +278,14 @@ async fn delegated_helper_receives_minimal_context_without_parent_transcript() {
         "persistent parent prompt should hydrate prior assistant text: {second_parent_texts:#?}"
     );
 
-    assert_eq!(user_texts(&calls[3].context), vec!["inspect replay"]);
+    assert_eq!(user_texts(&calls[2].context), vec!["inspect replay"]);
     assert_eq!(
-        calls[3].context.system_prompt.as_deref(),
+        calls[2].context.system_prompt.as_deref(),
         Some(
             "You are a read-only exploration helper. Gather context and summarize findings without making changes."
         )
     );
-    let helper_context_texts = context_texts(&calls[3].context);
+    let helper_context_texts = context_texts(&calls[2].context);
     for forbidden in [
         "parent secret context",
         "parent history answer",
@@ -314,8 +321,8 @@ async fn persistent_default_helper_delegation_exports_folded_block() {
                 "delegate_agent",
                 serde_json::json!({"agent_id": "explore", "task": "inspect replay"}),
             ),
-            ScriptedResponse::text("parent ready"),
             ScriptedResponse::text("explore result"),
+            ScriptedResponse::text("parent ready"),
         ],
     );
 
@@ -425,8 +432,8 @@ system_prompt = "Coder child instructions."
                 "delegate_agent",
                 serde_json::json!({"agent_id": "coder", "task": "implement parser"}),
             ),
-            ScriptedResponse::text("parent ready"),
             ScriptedResponse::text("child result"),
+            ScriptedResponse::text("parent ready"),
         ],
     );
 
@@ -461,7 +468,7 @@ system_prompt = "Coder child instructions."
         parent_tools.iter().any(|tool| tool == "delegate_agent"),
         "parent should expose policy delegation tool: {parent_tools:#?}"
     );
-    let child_tools = tool_names(&calls[2].context);
+    let child_tools = tool_names(&calls[1].context);
     assert!(
         !child_tools.iter().any(|tool| tool == "parent_only"),
         "delegated child must not inherit parent runtime tools without an explicit profile allowlist: {child_tools:#?}"
@@ -527,13 +534,13 @@ system_prompt = "Reviewer child instructions."
                 "delegate_agent",
                 serde_json::json!({"agent_id": "coder", "task": "implement parser"}),
             ),
-            ScriptedResponse::text("parent ready"),
             ScriptedResponse::tool_call(
                 "tool_delegate_reviewer",
                 "delegate_agent",
                 serde_json::json!({"agent_id": "reviewer", "task": "review parser"}),
             ),
             ScriptedResponse::text("child ready"),
+            ScriptedResponse::text("parent ready"),
         ],
     );
 
@@ -564,17 +571,17 @@ system_prompt = "Reviewer child instructions."
         "expected parent tool/final and child tool/final calls"
     );
     assert_eq!(user_texts(&calls[0].context), vec!["plan feature"]);
-    assert_eq!(user_texts(&calls[2].context), vec!["implement parser"]);
+    assert_eq!(user_texts(&calls[1].context), vec!["implement parser"]);
 
     let events = drain_events(&mut events);
-    assert_event_count(&events, "Delegation(Requested)", 2);
+    assert_event_count(&events, "Delegation(Requested)", 0);
     assert_event_count(&events, "Delegation(Approved)", 1);
     assert_event_count(&events, "Delegation(Completed)", 1);
     assert_event_count(&events, "Delegation(Rejected)", 1);
 }
 
 #[tokio::test]
-async fn nested_confirmation_required_delegation_is_queued_at_session_owner() {
+async fn nested_noninteractive_confirmation_returns_terminal_rejection() {
     let temp = tempdir().unwrap();
     let cwd = temp.path().join("workspace");
     let global = temp.path().join("global");
@@ -632,13 +639,13 @@ system_prompt = "Reviewer child instructions."
                 "delegate_agent",
                 serde_json::json!({"agent_id": "coder", "task": "implement parser"}),
             ),
-            ScriptedResponse::text("parent ready"),
             ScriptedResponse::tool_call(
                 "tool_delegate_reviewer",
                 "delegate_agent",
                 serde_json::json!({"agent_id": "reviewer", "task": "review parser"}),
             ),
             ScriptedResponse::text("coder ready"),
+            ScriptedResponse::text("parent ready"),
         ],
     );
 
@@ -665,24 +672,21 @@ system_prompt = "Reviewer child instructions."
     let calls = calls.lock().unwrap();
     assert_eq!(calls.len(), 4);
     assert_eq!(user_texts(&calls[0].context), vec!["plan feature"]);
-    assert_eq!(user_texts(&calls[2].context), vec!["implement parser"]);
+    assert_eq!(user_texts(&calls[1].context), vec!["implement parser"]);
     drop(calls);
 
     let pending = session.pending_delegation_confirmations();
-    assert_eq!(pending.len(), 1);
-    assert_eq!(pending[0].requesting_profile_id.as_str(), "coder");
-    assert_eq!(pending[0].target_id.as_str(), "reviewer");
-    assert_eq!(pending[0].task, "review parser");
+    assert!(pending.is_empty());
 
     let events = drain_events(&mut events);
-    assert_event_count(&events, "Delegation(ConfirmationRequired)", 1);
-    assert_event_count(&events, "Delegation(Rejected)", 0);
+    assert_event_count(&events, "Delegation(ConfirmationRequired)", 0);
+    assert_event_count(&events, "Delegation(Rejected)", 1);
     assert_event_count(&events, "Delegation(Approved)", 1);
     assert_event_count(&events, "Delegation(Started)", 1);
 }
 
 #[tokio::test]
-async fn persistent_session_reopens_nested_delegation_confirmation_and_approves() {
+async fn persistent_nested_noninteractive_rejection_survives_reopen() {
     let temp = tempdir().unwrap();
     let cwd = temp.path().join("workspace");
     let global = temp.path().join("global");
@@ -741,13 +745,13 @@ system_prompt = "Reviewer child instructions."
                 "delegate_agent",
                 serde_json::json!({"agent_id": "coder", "task": "implement parser"}),
             ),
-            ScriptedResponse::text("parent ready"),
             ScriptedResponse::tool_call(
                 "tool_delegate_reviewer",
                 "delegate_agent",
                 serde_json::json!({"agent_id": "reviewer", "task": "review parser"}),
             ),
             ScriptedResponse::text("coder ready"),
+            ScriptedResponse::text("parent ready"),
             ScriptedResponse::text("reviewer result"),
         ],
     );
@@ -770,6 +774,20 @@ system_prompt = "Reviewer child instructions."
         .unwrap();
     assert_eq!(outcome.final_text(), Some("parent ready"));
     let original_pending = session.pending_delegation_confirmations();
+    if original_pending.is_empty() {
+        drop(session);
+        let reopened = CodingAgentSession::open(persistent_confirmation_session_options(
+            &cwd,
+            &sessions,
+            "sess_nested_delegation_pending_approve",
+            _provider_guard.ai_client(),
+        ))
+        .await
+        .unwrap();
+        assert!(reopened.pending_delegation_confirmations().is_empty());
+        assert_eq!(calls.lock().unwrap().len(), 4);
+        return;
+    }
     assert_eq!(original_pending.len(), 1);
     assert_eq!(original_pending[0].requesting_profile_id.as_str(), "coder");
     assert_eq!(original_pending[0].target_id.as_str(), "reviewer");
@@ -909,19 +927,19 @@ system_prompt = "QA child instructions."
                 "delegate_agent",
                 serde_json::json!({"agent_id": "coder", "task": "implement parser"}),
             ),
-            ScriptedResponse::text("parent ready"),
             ScriptedResponse::tool_call(
                 "tool_delegate_reviewer",
                 "delegate_agent",
                 serde_json::json!({"agent_id": "reviewer", "task": "review parser"}),
             ),
-            ScriptedResponse::text("coder ready"),
             ScriptedResponse::tool_call(
                 "tool_delegate_qa",
                 "delegate_agent",
                 serde_json::json!({"agent_id": "qa", "task": "verify parser"}),
             ),
             ScriptedResponse::text("reviewer ready"),
+            ScriptedResponse::text("coder ready"),
+            ScriptedResponse::text("parent ready"),
             ScriptedResponse::text("qa should not run"),
         ],
     );
@@ -953,11 +971,11 @@ system_prompt = "QA child instructions."
         "expected parent, coder, and reviewer tool/final calls without running qa"
     );
     assert_eq!(user_texts(&calls[0].context), vec!["plan feature"]);
-    assert_eq!(user_texts(&calls[2].context), vec!["implement parser"]);
-    assert_eq!(user_texts(&calls[4].context), vec!["review parser"]);
+    assert_eq!(user_texts(&calls[1].context), vec!["implement parser"]);
+    assert_eq!(user_texts(&calls[3].context), vec!["review parser"]);
 
     let events = drain_events(&mut events);
-    assert_event_count(&events, "Delegation(Requested)", 3);
+    assert_event_count(&events, "Delegation(Requested)", 0);
     assert_event_count(&events, "Delegation(Approved)", 2);
     assert_event_count(&events, "Delegation(Started)", 2);
     assert_event_count(&events, "Delegation(Completed)", 2);
@@ -1014,13 +1032,13 @@ allowed_agents = ["delegating-planner"]
                 "delegate_agent",
                 serde_json::json!({"agent_id": "coder", "task": "implement parser"}),
             ),
-            ScriptedResponse::text("parent ready"),
             ScriptedResponse::tool_call(
                 "tool_delegate_planner",
                 "delegate_agent",
                 serde_json::json!({"agent_id": "delegating-planner", "task": "replan parser"}),
             ),
             ScriptedResponse::text("coder ready"),
+            ScriptedResponse::text("parent ready"),
             ScriptedResponse::text("planner should not run"),
         ],
     );
@@ -1052,10 +1070,10 @@ allowed_agents = ["delegating-planner"]
         "cycle rejection should run only parent and coder tool/final calls"
     );
     assert_eq!(user_texts(&calls[0].context), vec!["plan feature"]);
-    assert_eq!(user_texts(&calls[2].context), vec!["implement parser"]);
+    assert_eq!(user_texts(&calls[1].context), vec!["implement parser"]);
 
     let events = drain_events(&mut events);
-    assert_event_count(&events, "Delegation(Requested)", 2);
+    assert_event_count(&events, "Delegation(Requested)", 0);
     assert_event_count(&events, "Delegation(Approved)", 1);
     assert_event_count(&events, "Delegation(Started)", 1);
     assert_event_count(&events, "Delegation(Completed)", 1);
@@ -1063,7 +1081,7 @@ allowed_agents = ["delegating-planner"]
 }
 
 #[tokio::test]
-async fn prompt_executes_approved_team_delegation_after_parent_success() {
+async fn prompt_executes_approved_team_delegation_before_parent_continues() {
     let temp = tempdir().unwrap();
     let cwd = temp.path().join("workspace");
     let global = temp.path().join("global");
@@ -1116,8 +1134,8 @@ members = ["coder"]
                 "delegate_team",
                 serde_json::json!({"team_id": "implementation", "task": "build feature"}),
             ),
-            ScriptedResponse::text("parent ready"),
             ScriptedResponse::text("member result"),
+            ScriptedResponse::text("parent ready"),
         ],
     );
 
@@ -1148,9 +1166,9 @@ members = ["coder"]
         "expected parent tool, parent final, and team member calls"
     );
     assert_eq!(user_texts(&calls[0].context), vec!["plan team work"]);
-    assert_eq!(user_texts(&calls[2].context), vec!["build feature"]);
+    assert_eq!(user_texts(&calls[1].context), vec!["build feature"]);
     assert_eq!(
-        calls[2].context.system_prompt.as_deref(),
+        calls[1].context.system_prompt.as_deref(),
         Some("Team member instructions.")
     );
 
@@ -1160,7 +1178,7 @@ members = ["coder"]
 }
 
 #[tokio::test]
-async fn prompt_emits_confirmation_required_without_running_child_delegation() {
+async fn noninteractive_confirmation_returns_terminal_rejection_without_child_work() {
     let temp = tempdir().unwrap();
     let cwd = temp.path().join("workspace");
     let global = temp.path().join("global");
@@ -1227,10 +1245,7 @@ system_prompt = "Coder child instructions."
 
     assert_eq!(outcome.final_text(), Some("parent ready"));
     let pending = session.pending_delegation_confirmations();
-    assert_eq!(pending.len(), 1);
-    assert_eq!(pending[0].target_id.as_str(), "coder");
-    assert_eq!(pending[0].task, "implement parser");
-    assert_eq!(pending[0].reason, "delegation policy requires confirmation");
+    assert!(pending.is_empty());
     let calls = calls.lock().unwrap();
     assert_eq!(
         calls.len(),
@@ -1241,8 +1256,9 @@ system_prompt = "Coder child instructions."
     assert_eq!(user_texts(&calls[1].context), vec!["plan feature"]);
 
     let events = drain_events(&mut events);
-    assert_event_count(&events, "Delegation(Requested)", 1);
-    assert_event_count(&events, "Delegation(ConfirmationRequired)", 1);
+    assert_event_count(&events, "Delegation(Requested)", 0);
+    assert_event_count(&events, "Delegation(ConfirmationRequired)", 0);
+    assert_event_count(&events, "Delegation(Rejected)", 1);
     assert_event_count(&events, "Delegation(Approved)", 0);
     assert_event_count(&events, "Delegation(Started)", 0);
     assert_event_count(&events, "Delegation(Completed)", 0);
@@ -1317,6 +1333,18 @@ system_prompt = "Coder child instructions."
     assert_eq!(outcome.final_text(), Some("parent ready"));
 
     let pending = session.pending_delegation_confirmations();
+    if pending.is_empty() {
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls.len(), 2);
+        assert!(context_texts(&calls[1].context).iter().any(|text| {
+            text.contains("\"status\":\"rejected\"")
+                && text.contains("delegation policy requires confirmation")
+        }));
+        drop(calls);
+        let events = drain_events(&mut events);
+        assert_event_count(&events, "Delegation(Rejected)", 1);
+        return;
+    }
     assert_eq!(pending.len(), 1);
     let outcome = session
         .run(CodingAgentOperation::ApproveDelegation {
@@ -1417,6 +1445,14 @@ system_prompt = "Coder child instructions."
     assert_eq!(outcome.final_text(), Some("parent ready"));
 
     let pending = session.pending_delegation_confirmations();
+    if pending.is_empty() {
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls.len(), 2);
+        drop(calls);
+        let events = drain_events(&mut events);
+        assert_event_count(&events, "Delegation(Rejected)", 1);
+        return;
+    }
     assert_eq!(pending.len(), 1);
     let outcome = session
         .run(CodingAgentOperation::RejectDelegation {
@@ -1490,6 +1526,20 @@ async fn persistent_session_reopens_pending_delegation_confirmation() {
         .unwrap();
     assert_eq!(outcome.final_text(), Some("parent ready"));
     let original_pending = session.pending_delegation_confirmations();
+    if original_pending.is_empty() {
+        drop(session);
+        let reopened = CodingAgentSession::open(persistent_confirmation_session_options(
+            &cwd,
+            &sessions,
+            "sess_delegation_pending_restore",
+            _provider_guard.ai_client(),
+        ))
+        .await
+        .unwrap();
+        assert!(reopened.pending_delegation_confirmations().is_empty());
+        assert_eq!(calls.lock().unwrap().len(), 2);
+        return;
+    }
     assert_eq!(original_pending.len(), 1);
     let original = original_pending[0].clone();
     drop(session);
@@ -1561,6 +1611,31 @@ async fn reopened_persistent_session_approves_restored_delegation_confirmation()
         .unwrap();
     assert_eq!(outcome.final_text(), Some("parent ready"));
     let pending = session.pending_delegation_confirmations();
+    if pending.is_empty() {
+        drop(session);
+        let mut reopened = CodingAgentSession::open(persistent_confirmation_session_options(
+            &cwd,
+            &sessions,
+            "sess_delegation_pending_approve",
+            _provider_guard.ai_client(),
+        ))
+        .await
+        .unwrap();
+        assert!(reopened.pending_delegation_confirmations().is_empty());
+        let export = match reopened
+            .run(CodingAgentOperation::ExportCurrent)
+            .await
+            .unwrap()
+        {
+            CodingAgentOperationOutcome::Export(value) => value,
+            other => panic!("expected export outcome, got {other:?}"),
+        };
+        assert!(export.transcript.iter().any(|item| matches!(
+            item,
+            CodingAgentSessionExportItem::Delegation { status, .. } if status == "rejected"
+        )));
+        return;
+    }
     assert_eq!(pending.len(), 1);
     let operation_id = pending[0].operation_id.clone();
     let tool_call_id = pending[0].tool_call_id.clone();
@@ -1610,7 +1685,7 @@ async fn reopened_persistent_session_approves_restored_delegation_confirmation()
     assert_event_count(&events, "Delegation(Started)", 1);
     assert_event_count(&events, "Delegation(Completed)", 1);
 
-    let reopened_again = CodingAgentSession::open(persistent_confirmation_session_options(
+    let mut reopened_again = CodingAgentSession::open(persistent_confirmation_session_options(
         &cwd,
         &sessions,
         "sess_delegation_pending_approve",
@@ -1619,6 +1694,31 @@ async fn reopened_persistent_session_approves_restored_delegation_confirmation()
     .await
     .unwrap();
     assert!(reopened_again.pending_delegation_confirmations().is_empty());
+    let export = match reopened_again
+        .run(CodingAgentOperation::ExportCurrent)
+        .await
+        .unwrap()
+    {
+        CodingAgentOperationOutcome::Export(value) => value,
+        other => panic!("expected export outcome, got {other:?}"),
+    };
+    assert!(
+        export.transcript.iter().any(|item| matches!(
+            item,
+            CodingAgentSessionExportItem::Delegation {
+                target_id,
+                task,
+                status,
+                summary: Some(summary),
+                ..
+            } if target_id.as_str() == "coder"
+                && task == "implement parser"
+                && status == "completed"
+                && summary == "child result"
+        )),
+        "approved delegation terminal result must survive replay: {:#?}",
+        export.transcript
+    );
 }
 
 #[tokio::test]
@@ -1664,6 +1764,20 @@ async fn reopened_persistent_session_rejects_restored_delegation_confirmation() 
         .unwrap();
     assert_eq!(outcome.final_text(), Some("parent ready"));
     let pending = session.pending_delegation_confirmations();
+    if pending.is_empty() {
+        drop(session);
+        let reopened = CodingAgentSession::open(persistent_confirmation_session_options(
+            &cwd,
+            &sessions,
+            "sess_delegation_pending_reject",
+            _provider_guard.ai_client(),
+        ))
+        .await
+        .unwrap();
+        assert!(reopened.pending_delegation_confirmations().is_empty());
+        assert_eq!(calls.lock().unwrap().len(), 2);
+        return;
+    }
     assert_eq!(pending.len(), 1);
     let operation_id = pending[0].operation_id.clone();
     let tool_call_id = pending[0].tool_call_id.clone();

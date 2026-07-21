@@ -373,6 +373,7 @@ pub(crate) enum PersistedDelegationStatus {
     Completed,
     Failed,
     Rejected,
+    Cancelled,
     ConfirmationRequired,
 }
 

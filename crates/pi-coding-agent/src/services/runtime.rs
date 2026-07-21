@@ -26,7 +26,9 @@ use pi_ai::api::stream::{EventStream, StreamOptions};
 use crate::app::bootstrap::{SessionMode, build_agent_config_with_auth_diagnostics};
 
 use crate::operations::delegation::delegation_tools;
-use crate::operations::prompt::context::{CodingDiagnostic, RuntimeSnapshot};
+use crate::operations::prompt::context::{
+    CodingDiagnostic, DelegationToolExecutor, RuntimeSnapshot,
+};
 use crate::runtime::capability::{ModelCapability, OperationCapabilitySnapshot};
 use crate::runtime::facade::CodingSessionError;
 use crate::services::authorization::{AuthorizationHookContext, ToolAuthorizationInventory};
@@ -135,7 +137,7 @@ impl RuntimeService {
         runtime: &RuntimeSnapshot,
         snapshot: &OperationCapabilitySnapshot,
     ) -> Result<AgentRuntimeBuild, CodingSessionError> {
-        self.build_agent_runtime_with_authorization(runtime, snapshot, None)
+        self.build_agent_runtime_with_authorization(runtime, snapshot, None, None)
     }
 
     pub(crate) fn build_agent_runtime_with_authorization(
@@ -143,6 +145,7 @@ impl RuntimeService {
         runtime: &RuntimeSnapshot,
         snapshot: &OperationCapabilitySnapshot,
         authorization: Option<AuthorizationHookContext>,
+        delegation_executor: Option<DelegationToolExecutor>,
     ) -> Result<AgentRuntimeBuild, CodingSessionError> {
         let model_capability =
             ModelCapability::require(snapshot.model.as_ref(), runtime.profile_id())?;
@@ -150,14 +153,31 @@ impl RuntimeService {
 
         let mut diagnostics = runtime.profile_diagnostics().to_vec();
         let resources = apply_skill_policy(runtime, &mut diagnostics);
-        let policy_tools = delegation_tools(
+        let mut policy_tools = delegation_tools(
             runtime.profile_id(),
             runtime.profile_delegation_policy(),
             runtime.delegation_target_inventory(),
+            delegation_executor,
         );
+        let uses_interactive_waiters = authorization
+            .as_ref()
+            .is_some_and(|context| context.service.uses_interactive_waiters());
+        if !uses_interactive_waiters {
+            for tool in &mut policy_tools {
+                if let Some(schema) = tool.parameters.as_object_mut() {
+                    schema.remove("x-pi-authorization-risk");
+                }
+            }
+        }
         let plugin_tools = Vec::<AgentTool>::new();
+        let authorization_tools = runtime
+            .tools()
+            .iter()
+            .chain(policy_tools.iter())
+            .cloned()
+            .collect::<Vec<_>>();
         let authorization_inventory =
-            ToolAuthorizationInventory::new(&plugin_tools, runtime.tools());
+            ToolAuthorizationInventory::new(&plugin_tools, &authorization_tools);
         let tools = apply_tool_policy(runtime, plugin_tools, &policy_tools, &mut diagnostics)
             .into_iter()
             .filter(|tool| snapshot.tools.allows(&tool.name))

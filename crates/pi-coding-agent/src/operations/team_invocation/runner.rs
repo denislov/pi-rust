@@ -19,6 +19,7 @@ use crate::runtime::capability::{ActorId, OperationCapabilitySnapshot};
 use crate::runtime::control::{OperationControl, OperationKind};
 use crate::runtime::facade::{CodingSessionError, PendingDelegationConfirmationState};
 use crate::runtime::scheduler::OperationScheduler;
+use crate::services::authorization::AuthorizationService;
 use crate::services::event::EventService;
 use crate::session::id::{Clock, IdGenerator, SystemClock, SystemIdGenerator};
 
@@ -167,6 +168,7 @@ pub(crate) struct AgentTeamContext {
     pending_delegation_confirmations: Vec<PendingDelegationConfirmationState>,
     failure_terminal_recorded: bool,
     defer_terminal_publication: bool,
+    authorization_service: Option<AuthorizationService>,
 }
 
 impl AgentTeamContext {
@@ -194,6 +196,7 @@ impl AgentTeamContext {
             pending_delegation_confirmations: Vec::new(),
             failure_terminal_recorded: false,
             defer_terminal_publication: false,
+            authorization_service: None,
         }
     }
 
@@ -207,6 +210,11 @@ impl AgentTeamContext {
 
     pub(crate) fn with_deferred_terminal_publication(mut self) -> Self {
         self.defer_terminal_publication = true;
+        self
+    }
+
+    pub(crate) fn with_authorization_service(mut self, service: AuthorizationService) -> Self {
+        self.authorization_service = Some(service);
         self
     }
 
@@ -431,6 +439,9 @@ impl AgentTeamContext {
         child_context
             .set_non_persistent_session(format!("agent_team_{}", child_operation_id), Vec::new());
         child_context.enable_live_events(self.event_service.clone());
+        if let Some(service) = self.authorization_service.clone() {
+            child_context.set_authorization_service(service);
+        }
         let mut capability_snapshot = match self.parent_capability_snapshot.as_ref() {
             Some(parent) => capability_snapshot_for_delegated_profile(
                 parent,
@@ -453,19 +464,37 @@ impl AgentTeamContext {
             child_context.set_operation_cancellation(cancellation);
         }
         child_context.set_capability_snapshot(capability_snapshot);
+        if let Some(service) = self.authorization_service.clone() {
+            crate::operations::delegation::execution::install_tool_executor(
+                &mut child_context,
+                self.registry.clone(),
+                self.event_service.clone(),
+                self.operation_control.clone(),
+                service,
+                self.options.delegation_depth,
+                self.options.delegation_lineage.clone(),
+            )?;
+        }
 
         let mut finished_outcome = None;
         let child_delegations = match PromptTurnRunner::new()?.run_typed(&mut child_context).await {
-            Ok(_) => Some((
-                child_context
-                    .authorize_delegation_requests_with_lineage(
-                        self.options.delegation_depth,
-                        self.options.delegation_lineage(),
-                    )?
-                    .to_vec(),
-                child_context.options().clone(),
-                child_context.non_persistent_runtime_id().map(str::to_owned),
-            )),
+            Ok(_) => {
+                let decisions = if child_context.has_delegation_executor() {
+                    Vec::new()
+                } else {
+                    child_context
+                        .authorize_delegation_requests_with_lineage(
+                            self.options.delegation_depth,
+                            self.options.delegation_lineage(),
+                        )?
+                        .to_vec()
+                };
+                Some((
+                    decisions,
+                    child_context.options().clone(),
+                    child_context.non_persistent_runtime_id().map(str::to_owned),
+                ))
+            }
             Err(error) => {
                 finished_outcome = Some(match child_context.abort_reason() {
                     Some(reason) => child_context.finish_abort(
@@ -612,6 +641,7 @@ impl AgentTeamContext {
             child_delegation_depth,
             delegation_lineage_for_request(self.options.delegation_lineage(), request),
             self.child_capability_snapshot.clone(),
+            self.authorization_service.clone(),
         ))
         .await;
         self.pending_delegation_confirmations
@@ -634,6 +664,7 @@ impl AgentTeamContext {
             child_delegation_depth,
             delegation_lineage_for_request(self.options.delegation_lineage(), request),
             self.child_capability_snapshot.clone(),
+            self.authorization_service.clone(),
         ))
         .await;
         self.pending_delegation_confirmations

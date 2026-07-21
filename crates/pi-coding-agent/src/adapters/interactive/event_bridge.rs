@@ -1,5 +1,7 @@
 #[cfg(test)]
 use crate::runtime::facade::CodingAgentProductEvent;
+use std::collections::{HashMap, VecDeque};
+
 use crate::runtime::facade::{
     CodingAgentAgentProductEvent, CodingAgentDelegationProductEvent, CodingAgentImageContent,
     CodingAgentMessageProductEvent, CodingAgentProductEventKind,
@@ -8,6 +10,9 @@ use crate::runtime::facade::{
     CodingAgentToolProductEvent, CodingAgentWorkflowProductEvent, ProductEvent,
     ProductEventSequence, ProfileId, ProfileKind, UiContextProjection, UiSnapshot,
 };
+
+const MAX_CHILD_CONVERSATIONS: usize = 32;
+const MAX_CHILD_UI_EVENTS: usize = 2_048;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum UiEvent {
@@ -88,6 +93,18 @@ pub(crate) struct UiProjection {
     context: UiContextProjection,
     capabilities: Option<crate::runtime::facade::CodingAgentCapabilities>,
     session: Option<CodingAgentSessionView>,
+    child_pending: HashMap<String, VecDeque<UiEvent>>,
+    child_order: VecDeque<String>,
+    child_summaries: HashMap<String, ChildDelegationSummary>,
+}
+
+#[derive(Debug, Clone)]
+struct ChildDelegationSummary {
+    call_id: String,
+    target_kind: String,
+    target_id: String,
+    task: String,
+    child_operation_id: String,
 }
 
 impl Default for UiProjection {
@@ -105,18 +122,51 @@ impl UiProjection {
             context: UiContextProjection::default(),
             capabilities: None,
             session: None,
+            child_pending: HashMap::new(),
+            child_order: VecDeque::new(),
+            child_summaries: HashMap::new(),
         }
     }
 
     pub(crate) fn from_snapshot(snapshot: UiSnapshot) -> Self {
-        Self {
+        let recent_child_events = snapshot.recent_child_events;
+        let mut projection = Self {
             bridge: CodingEventBridge::new(),
             last_sequence: snapshot.cursor.last_event_sequence,
-            pending: snapshot_hydration_events(&snapshot),
+            pending: Vec::new(),
             context: snapshot.context,
             capabilities: Some(snapshot.capabilities),
             session: Some(snapshot.session),
+            child_pending: HashMap::new(),
+            child_order: VecDeque::new(),
+            child_summaries: HashMap::new(),
+        };
+        for event in recent_child_events {
+            let ui_events = projection.bridge.push_product_event(&event);
+            projection.remember_child_summaries(&ui_events);
+            if let Some(child_operation_id) = projection.child_operation_id(&event) {
+                projection.push_child_events(&child_operation_id, ui_events);
+            }
         }
+        let mut pending_authorizations = snapshot.pending_authorizations;
+        pending_authorizations.sort_by(|left, right| {
+            left.requested_at
+                .cmp(&right.requested_at)
+                .then_with(|| left.authorization_id.cmp(&right.authorization_id))
+        });
+        for request in pending_authorizations {
+            let event = UiEvent::ToolAuthorizationRequired {
+                request: request.clone(),
+            };
+            if let Some(conversation_id) =
+                projection.conversation_operation_id(&request.operation_id)
+            {
+                projection.push_child_events(&conversation_id, vec![event]);
+            } else {
+                projection.pending.push(event);
+            }
+        }
+        projection
     }
 
     pub(crate) fn apply_product_event(&mut self, event: &ProductEvent) {
@@ -132,11 +182,158 @@ impl UiProjection {
             session.default_agent_profile_id = ProfileId::from(profile_id.clone());
         }
         self.context.apply_product_event(event, None);
-        self.pending.extend(self.bridge.push_product_event(event));
+        let ui_events = self.bridge.push_product_event(event);
+        self.remember_child_summaries(&ui_events);
+        if let Some(child_operation_id) = self.child_operation_id(event) {
+            if ui_events
+                .iter()
+                .any(|event| matches!(event, UiEvent::ToolAuthorizationRequired { .. }))
+                && let Some(summary) =
+                    self.child_status_event(&child_operation_id, "waiting_permission")
+            {
+                self.pending.push(summary);
+            }
+            if ui_events
+                .iter()
+                .any(|event| matches!(event, UiEvent::ToolAuthorizationResolved { .. }))
+                && let Some(summary) = self.child_status_event(&child_operation_id, "running")
+            {
+                self.pending.push(summary);
+            }
+            self.push_child_events(&child_operation_id, ui_events);
+        } else {
+            self.pending.extend(ui_events);
+        }
     }
 
     pub(crate) fn drain(&mut self) -> Vec<UiEvent> {
         self.pending.drain(..).collect()
+    }
+
+    pub(crate) fn drain_children(&mut self) -> Vec<(String, Vec<UiEvent>)> {
+        let operation_ids = self.child_order.iter().cloned().collect::<Vec<_>>();
+        operation_ids
+            .into_iter()
+            .filter_map(|operation_id| {
+                let events = self
+                    .child_pending
+                    .get_mut(&operation_id)?
+                    .drain(..)
+                    .collect::<Vec<_>>();
+                (!events.is_empty()).then_some((operation_id, events))
+            })
+            .collect()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn drain_child(&mut self, operation_id: &str) -> Vec<UiEvent> {
+        self.child_pending
+            .get_mut(operation_id)
+            .map(|events| events.drain(..).collect())
+            .unwrap_or_default()
+    }
+
+    fn child_operation_id(&self, event: &ProductEvent) -> Option<String> {
+        let operation_id = event.operation_id()?;
+        if event.parent_operation_id().is_none() && !self.is_child_operation(operation_id) {
+            return None;
+        }
+        self.conversation_operation_id(operation_id)
+            .or_else(|| Some(operation_id.to_owned()))
+    }
+
+    fn conversation_operation_id(&self, operation_id: &str) -> Option<String> {
+        let mut conversation_id = operation_id;
+        while let Some(operation) = self
+            .context
+            .operations
+            .iter()
+            .find(|operation| operation.operation_id == conversation_id)
+        {
+            let Some(parent_id) = operation.parent_operation_id.as_deref() else {
+                return (conversation_id != operation_id).then(|| conversation_id.to_owned());
+            };
+            let parent_is_root = self
+                .context
+                .operations
+                .iter()
+                .find(|operation| operation.operation_id == parent_id)
+                .is_none_or(|parent| parent.parent_operation_id.is_none());
+            if parent_is_root {
+                return Some(conversation_id.to_owned());
+            }
+            conversation_id = parent_id;
+        }
+        self.is_child_operation(operation_id)
+            .then(|| operation_id.to_owned())
+    }
+
+    fn is_child_operation(&self, operation_id: &str) -> bool {
+        self.context.operations.iter().any(|operation| {
+            operation.operation_id == operation_id && operation.parent_operation_id.is_some()
+        })
+    }
+
+    fn push_child_events(&mut self, operation_id: &str, events: Vec<UiEvent>) {
+        if events.is_empty() {
+            return;
+        }
+        if !self.child_pending.contains_key(operation_id) {
+            while self.child_order.len() >= MAX_CHILD_CONVERSATIONS {
+                if let Some(evicted) = self.child_order.pop_front() {
+                    self.child_pending.remove(&evicted);
+                }
+            }
+            self.child_order.push_back(operation_id.to_owned());
+        }
+        let pending = self
+            .child_pending
+            .entry(operation_id.to_owned())
+            .or_default();
+        pending.extend(events);
+        while pending.len() > MAX_CHILD_UI_EVENTS {
+            pending.pop_front();
+        }
+    }
+
+    fn remember_child_summaries(&mut self, events: &[UiEvent]) {
+        for event in events {
+            let UiEvent::DelegationBlock {
+                call_id,
+                target_kind,
+                target_id,
+                task,
+                child_operation_id: Some(child_operation_id),
+                ..
+            } = event
+            else {
+                continue;
+            };
+            self.child_summaries.insert(
+                child_operation_id.clone(),
+                ChildDelegationSummary {
+                    call_id: call_id.clone(),
+                    target_kind: target_kind.clone(),
+                    target_id: target_id.clone(),
+                    task: task.clone(),
+                    child_operation_id: child_operation_id.clone(),
+                },
+            );
+        }
+    }
+
+    fn child_status_event(&self, operation_id: &str, status: &str) -> Option<UiEvent> {
+        let summary = self.child_summaries.get(operation_id)?;
+        Some(UiEvent::DelegationBlock {
+            call_id: summary.call_id.clone(),
+            target_kind: summary.target_kind.clone(),
+            target_id: summary.target_id.clone(),
+            task: summary.task.clone(),
+            status: status.to_owned(),
+            child_operation_id: Some(summary.child_operation_id.clone()),
+            summary: Some(status.replace('_', " ")),
+            is_error: false,
+        })
     }
 
     #[cfg(test)]
@@ -168,19 +365,6 @@ impl UiProjection {
     ) {
         self.capabilities = capabilities;
     }
-}
-
-fn snapshot_hydration_events(snapshot: &UiSnapshot) -> Vec<UiEvent> {
-    let mut pending = snapshot.pending_authorizations.clone();
-    pending.sort_by(|left, right| {
-        left.requested_at
-            .cmp(&right.requested_at)
-            .then_with(|| left.authorization_id.cmp(&right.authorization_id))
-    });
-    pending
-        .into_iter()
-        .map(|request| UiEvent::ToolAuthorizationRequired { request })
-        .collect()
 }
 
 /// Stateless event bridge: converts typed product events to `Vec<UiEvent>`.
@@ -337,18 +521,23 @@ impl CodingEventBridge {
                 ..
             }) => {
                 if is_delegation_tool(name) {
-                    vec![UiEvent::DelegationBlock {
-                        call_id: tool_call_id.clone(),
-                        target_kind: delegation_tool_kind_label(name)
-                            .unwrap_or("agent")
-                            .to_string(),
-                        target_id: String::new(),
-                        task: String::new(),
-                        status: "failed".into(),
-                        child_operation_id: None,
-                        summary: Some(format!("failed: {message}")),
-                        is_error: true,
-                    }]
+                    delegation_block_from_tool_result(tool_call_id, name, message).map_or_else(
+                        || {
+                            vec![UiEvent::DelegationBlock {
+                                call_id: tool_call_id.clone(),
+                                target_kind: delegation_tool_kind_label(name)
+                                    .unwrap_or("agent")
+                                    .to_string(),
+                                target_id: String::new(),
+                                task: String::new(),
+                                status: "failed".into(),
+                                child_operation_id: None,
+                                summary: Some(format!("failed: {message}")),
+                                is_error: true,
+                            }]
+                        },
+                        |event| vec![event],
+                    )
                 } else {
                     vec![UiEvent::ToolFinished {
                         call_id: tool_call_id.clone(),
@@ -647,13 +836,15 @@ fn delegation_block_from_tool_result(
         .unwrap_or("requested");
     let message = value
         .get("message")
+        .or_else(|| value.get("error"))
         .and_then(|value| value.as_str())
         .unwrap_or(status);
-    let is_error = status == "rejected" || status == "failed";
+    let is_error = matches!(status, "rejected" | "failed" | "cancelled");
     let summary = match status {
         "requested" => Some("requested".to_string()),
         "rejected" => Some(format!("rejected: {message}")),
         "failed" => Some(format!("failed: {message}")),
+        "cancelled" => Some(format!("cancelled: {message}")),
         other => Some(other.to_string()),
     };
     Some(UiEvent::DelegationBlock {
@@ -852,6 +1043,156 @@ mod tests {
     }
 
     #[test]
+    fn ui_projection_routes_child_events_away_from_root_pending() {
+        let child_event = assistant_delta_event(1, "child output")
+            .with_lineage_for_tests("op-parent", "op-parent");
+        let mut projection = UiProjection::new();
+
+        projection.apply_product_event(&child_event);
+
+        assert!(projection.drain().is_empty());
+        assert_eq!(
+            projection.drain_child("op_interactive"),
+            vec![UiEvent::AssistantDelta {
+                text: "child output".into()
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn ui_projection_folds_nested_child_events_into_delegation_conversation() {
+        let mut snapshot = snapshot(ProductEventSequence::new(0), "sess_projection").await;
+        snapshot.context.operations = vec![
+            UiOperationProjection {
+                operation_id: "op-root".into(),
+                kind: "prompt".into(),
+                parent_operation_id: None,
+                root_operation_id: Some("op-root".into()),
+                status: UiOperationStatus::Running,
+                started_sequence: 1,
+                updated_sequence: 1,
+                diagnostics: Vec::new(),
+                failure: None,
+            },
+            UiOperationProjection {
+                operation_id: "op-delegation".into(),
+                kind: "agent_invocation".into(),
+                parent_operation_id: Some("op-root".into()),
+                root_operation_id: Some("op-root".into()),
+                status: UiOperationStatus::Running,
+                started_sequence: 2,
+                updated_sequence: 2,
+                diagnostics: Vec::new(),
+                failure: None,
+            },
+            UiOperationProjection {
+                operation_id: "op_interactive".into(),
+                kind: "prompt".into(),
+                parent_operation_id: Some("op-delegation".into()),
+                root_operation_id: Some("op-root".into()),
+                status: UiOperationStatus::Running,
+                started_sequence: 3,
+                updated_sequence: 3,
+                diagnostics: Vec::new(),
+                failure: None,
+            },
+        ];
+        let mut projection = UiProjection::from_snapshot(snapshot);
+        let event = assistant_delta_event(1, "nested child output")
+            .with_lineage_for_tests("op-delegation", "op-root");
+
+        projection.apply_product_event(&event);
+
+        assert!(projection.drain().is_empty());
+        assert!(projection.drain_child("op_interactive").is_empty());
+        assert_eq!(
+            projection.drain_child("op-delegation"),
+            vec![UiEvent::AssistantDelta {
+                text: "nested child output".into()
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn child_authorization_projects_status_only_to_root_conversation() {
+        let mut snapshot = snapshot(ProductEventSequence::new(0), "sess_projection").await;
+        snapshot.context.operations = vec![
+            UiOperationProjection {
+                operation_id: "op-root".into(),
+                kind: "prompt".into(),
+                parent_operation_id: None,
+                root_operation_id: Some("op-root".into()),
+                status: UiOperationStatus::Running,
+                started_sequence: 1,
+                updated_sequence: 1,
+                diagnostics: Vec::new(),
+                failure: None,
+            },
+            UiOperationProjection {
+                operation_id: "op-delegation".into(),
+                kind: "agent_invocation".into(),
+                parent_operation_id: Some("op-root".into()),
+                root_operation_id: Some("op-root".into()),
+                status: UiOperationStatus::Running,
+                started_sequence: 2,
+                updated_sequence: 2,
+                diagnostics: Vec::new(),
+                failure: None,
+            },
+            UiOperationProjection {
+                operation_id: "op-auth".into(),
+                kind: "prompt".into(),
+                parent_operation_id: Some("op-delegation".into()),
+                root_operation_id: Some("op-root".into()),
+                status: UiOperationStatus::Running,
+                started_sequence: 3,
+                updated_sequence: 3,
+                diagnostics: Vec::new(),
+                failure: None,
+            },
+        ];
+        let mut projection = UiProjection::from_snapshot(snapshot);
+        projection.remember_child_summaries(&[UiEvent::DelegationBlock {
+            call_id: "delegate-1".into(),
+            target_kind: "agent".into(),
+            target_id: "coder".into(),
+            task: "implement parser".into(),
+            status: "running".into(),
+            child_operation_id: Some("op-delegation".into()),
+            summary: None,
+            is_error: false,
+        }]);
+        let request = authorization_request("auth-child", "2026-07-17T00:00:01Z");
+        let event = stream_event(
+            1,
+            PromptStreamEvent::Tool(crate::events::tool::ToolEvent::AuthorizationRequired {
+                request: request.clone(),
+            }),
+        )
+        .with_lineage_for_tests("op-delegation", "op-root");
+
+        projection.apply_product_event(&event);
+
+        assert_eq!(
+            projection.drain(),
+            vec![UiEvent::DelegationBlock {
+                call_id: "delegate-1".into(),
+                target_kind: "agent".into(),
+                target_id: "coder".into(),
+                task: "implement parser".into(),
+                status: "waiting_permission".into(),
+                child_operation_id: Some("op-delegation".into()),
+                summary: Some("waiting permission".into()),
+                is_error: false,
+            }]
+        );
+        assert_eq!(
+            projection.drain_child("op-delegation"),
+            vec![UiEvent::ToolAuthorizationRequired { request }]
+        );
+    }
+
+    #[test]
     fn runtime_shutdown_has_no_interactive_projection() {
         let product_event = stream_event(1, PromptStreamEvent::Runtime(RuntimeEvent::ShutDown));
         let mut bridge = CodingEventBridge::new();
@@ -879,6 +1220,49 @@ mod tests {
         assert_eq!(projection.last_sequence, ProductEventSequence::new(7));
         assert!(projection.drain().is_empty());
         assert!(projection.drain().is_empty());
+    }
+
+    #[tokio::test]
+    async fn ui_projection_hydrates_retained_child_conversation_events() {
+        let mut snapshot = snapshot(ProductEventSequence::new(7), "sess_projection").await;
+        snapshot.context.operations = vec![
+            UiOperationProjection {
+                operation_id: "op-root".into(),
+                kind: "prompt".into(),
+                parent_operation_id: None,
+                root_operation_id: Some("op-root".into()),
+                status: UiOperationStatus::Completed,
+                started_sequence: 1,
+                updated_sequence: 7,
+                diagnostics: Vec::new(),
+                failure: None,
+            },
+            UiOperationProjection {
+                operation_id: "op_interactive".into(),
+                kind: "agent_invocation".into(),
+                parent_operation_id: Some("op-root".into()),
+                root_operation_id: Some("op-root".into()),
+                status: UiOperationStatus::Completed,
+                started_sequence: 2,
+                updated_sequence: 6,
+                diagnostics: Vec::new(),
+                failure: None,
+            },
+        ];
+        snapshot.recent_child_events = vec![
+            assistant_delta_event(5, "retained child output")
+                .with_lineage_for_tests("op-root", "op-root"),
+        ];
+
+        let mut projection = UiProjection::from_snapshot(snapshot);
+
+        assert!(projection.drain().is_empty());
+        assert_eq!(
+            projection.drain_child("op_interactive"),
+            vec![UiEvent::AssistantDelta {
+                text: "retained child output".into()
+            }]
+        );
     }
 
     #[tokio::test]

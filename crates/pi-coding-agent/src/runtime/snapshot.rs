@@ -1039,6 +1039,18 @@ impl SnapshotCoordinator {
             .projection
             .clone()
             .expect("snapshot projection must be installed by session construction");
+        let recent_child_events = state
+            .retained_product_events
+            .iter()
+            .filter(|event| {
+                event.parent_operation_id().is_some()
+                    || matches!(
+                        event.event(),
+                        crate::events::CodingAgentProductEventKind::Delegation(_)
+                    )
+            })
+            .cloned()
+            .collect::<Vec<_>>();
         Ok(UiSnapshot::new(
             UiSnapshotCursor {
                 stream_id: state.event_stream_id.clone(),
@@ -1055,7 +1067,8 @@ impl SnapshotCoordinator {
             client_drafts,
             state.pending_authorizations.clone(),
         )
-        .with_context(state.context_projection.clone()))
+        .with_context(state.context_projection.clone())
+        .with_recent_child_events(recent_child_events))
     }
 
     fn record<'a>(

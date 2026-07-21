@@ -5,7 +5,7 @@
 Baseline version: `0.3.1`, released as annotated tag `v0.3.1`.
 
 Source baseline: commit `870d4bb`; dated release record: `180f219`; post-baseline
-`0.4.0` through completed `0.5.3` convergence evidence is recorded below. Last
+`0.4.0` through completed `0.5.4` convergence evidence is recorded below. Last
 refreshed: 2026-07-21.
 
 This file records implementation facts, not desired behavior. Cargo manifests,
@@ -18,7 +18,7 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   `pi-coding-agent -> {pi-agent-core, pi-ai, pi-tui}`.
 - `pi-ai` and `pi-tui` have no workspace dependencies.
 - `pi-mom`, `pi-pods`, and `pi-web-ui` are placeholder crates.
-- All workspace packages inherit version `0.5.3` from the root manifest.
+- All workspace packages inherit version `0.5.4` from the root manifest.
 - The reduced 0.4.x train ends at `0.4.2`; reserved Extension release plans
   `0.4.3` through `0.4.5` are Skip records and did not produce package versions.
 - `pi-rust` is a placeholder binary; `pi-coding-agent` is user-facing.
@@ -119,6 +119,16 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   unreachable legacy PluginCommand operation and protocol/presentation surface
   are absent; other operations still rely on the session facade as execution
   owner.
+- Product-owned delegation tools install one recursive awaited executor. A new
+  request returns exactly one typed terminal `completed`, `failed`, `rejected`,
+  or `cancelled` result to its original parent tool call; no production path
+  treats `requested` as a parent terminal result. Interactive confirmation is a
+  generation-checked AuthorizationService waiter inside that future, while
+  non-interactive confirmation fails terminally. The legacy delegation
+  approval/rejection operations exist only to resolve pending facts restored
+  from pre-0.5.4 sessions. Delegated child Prompts inherit operation-scoped
+  authorization, and recursive execution uses isolated cancellable tasks to
+  bound polling-stack growth.
 - `OperationSupervisor` now freezes immutable typed finalization decisions from
   the admitted execution and typed outcome across all four dispatch paths.
   Submission projection validates that decision instead of independently
@@ -191,6 +201,17 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   that connection once and no longer create a parallel ProductEvent bridge.
   Input and task/control queues are bounded, running/idle modes share one typed
   select loop, and Unix resize delivery is signal-driven with a quiet fallback.
+- ProductEvent envelopes are folded by operation lineage into a root
+  conversation and at most 32 direct-child conversation projections. Nested
+  AgentInvocation Prompt events and AgentTeam member events aggregate under the
+  direct delegation child. Main transcript rows carry status only; child
+  message/tool/authorization output remains in a bounded child page (2,048
+  queued UI events and 1,024 transcript items). Enter switches the entire chat
+  viewport to the selected child, Escape returns, and the child page does not
+  accept main-composer input. Child authorization remains scoped to the real
+  child Prompt operation while the main row shows `waiting permission` only.
+  UI snapshot protocol `2.2` includes bounded retained child ProductEvents for
+  reconnect/fresh-snapshot hydration.
 - Fullscreen transcript rendering uses cached cumulative row metadata to locate
   viewport-intersecting blocks before cloning lines. Unchanged 1,000- and
   10,000-block frames touch five visible blocks and write zero bytes in the

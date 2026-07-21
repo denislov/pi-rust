@@ -6,7 +6,7 @@ This concise index is the normative entry point for `pi-rust` architecture from
 the `0.4.x` train onward. Normative contracts, current implementation evidence,
 decisions, migrations, and test procedures are intentionally separated.
 
-The workspace is at `0.5.3`. Contracts introduced by completed version plans are
+The workspace is at `0.5.4`. Contracts introduced by completed version plans are
 normative where the contract documents below say so; implementation facts remain
 version-stamped in `current-state.md`. A document must label current facts
 separately from target requirements.
@@ -16,6 +16,14 @@ separately from target requirements.
 - [`0.5.3-fullscreen-tui-runtime-hardening-plan.md`](0.5.3-fullscreen-tui-runtime-hardening-plan.md):
   fullscreen TUI runtime pressure/fault hardening and workspace `dead_code`
   convergence, completed with the workspace `0.5.3` release.
+- [`0.5.4-delegation-runtime-and-child-agent-tui-plan.md`](0.5.4-delegation-runtime-and-child-agent-tui-plan.md):
+  awaited terminal delegation results, operation-scoped child authorization,
+  bounded child projections, and fullscreen child conversation pages,
+  completed with the workspace `0.5.4` release.
+
+## Active Version Plan
+
+- None. The next version plan must be opened before further implementation.
 
 ## Normative Contracts
 
@@ -33,6 +41,8 @@ separately from target requirements.
 
 - [`current-state.md`](architecture/current-state.md): version-stamped facts
   derived from source and tests.
+- [`0.5.4-release-evidence.md`](0.5.4-release-evidence.md): delegation,
+  child-page, protocol/API, soak, Extension, and workspace release gates.
 - [`decisions/`](architecture/decisions/README.md): accepted, proposed, and
   scheduled ADRs with task/test traceability.
 - [`migrations/`](architecture/migrations/README.md): historical baselines and

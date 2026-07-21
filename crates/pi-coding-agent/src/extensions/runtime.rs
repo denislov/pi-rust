@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -177,10 +178,16 @@ impl ExtensionComponentRuntime {
             Ok(UpdateDeadline::Yield(1))
         });
 
+        // Guest execution can occupy a current-thread Tokio runtime until Wasmtime
+        // observes a new epoch. Drive the epoch clock on the blocking pool so the
+        // cancellation/deadline yield cannot depend on that same executor making
+        // progress.
         let ticker_engine = self.engine.clone();
-        let ticker = tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(EPOCH_INTERVAL).await;
+        let ticker_stopped = Arc::new(AtomicBool::new(false));
+        let ticker_stop = ticker_stopped.clone();
+        let ticker = tokio::task::spawn_blocking(move || {
+            while !ticker_stop.load(Ordering::Acquire) {
+                std::thread::sleep(EPOCH_INTERVAL);
                 ticker_engine.increment_epoch();
             }
         });
@@ -199,7 +206,8 @@ impl ExtensionComponentRuntime {
                 .await
         })
         .await;
-        ticker.abort();
+        ticker_stopped.store(true, Ordering::Release);
+        let _ = ticker.await;
 
         let guest_result = match result {
             Err(_) => return Err(ExtensionRuntimeError::DeadlineExceeded),

@@ -1,5 +1,29 @@
 # Changes
 
+## 0.5.4 - 2026-07-21
+
+### Delegation Runtime And Child-Agent TUI
+
+- Replaced provisional delegation `requested` results with one typed terminal
+  result returned to the original parent tool call after authorization and
+  child execution. Automatic and interactive confirmation now share the
+  awaited tool waiter; recursive children retain depth/lineage and cancellable
+  task isolation.
+- Scoped child tool authorization to the child Prompt operation and capability
+  generation. Persisted terminal folded delegation state, including completion
+  after restored 0.5.3 approval, and added terminal `cancelled` replay/export.
+- Routed ProductEvents by operation lineage into status-only main rows and
+  bounded child conversations. Fullscreen Enter opens a whole child chat page,
+  Escape returns, and child messages/tools/permissions never mutate the main
+  transcript.
+- Added bounded retained child events to UI snapshot `2.2`, kept RPC `2.1` and
+  ProductEvent `2.2`, and added deterministic delegation runtime soak coverage.
+- Hardened the Wasmtime epoch clock so invocation cancellation/deadlines keep
+  advancing even when a Guest occupies a current-thread Tokio executor.
+- Completed runtime, persistence, reconnect, protocol/API, TUI, and release
+  acceptance in
+  `docs/0.5.4-delegation-runtime-and-child-agent-tui-plan.md`.
+
 ## 0.5.3 - 2026-07-21
 
 ### Fullscreen TUI Runtime Hardening

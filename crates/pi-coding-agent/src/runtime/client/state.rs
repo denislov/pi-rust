@@ -1,5 +1,5 @@
 use crate::authorization::ToolAuthorizationRequest;
-use crate::events::ProductEventSequence;
+use crate::events::{ProductEvent, ProductEventSequence};
 use crate::protocol::version::ProtocolFamilyVersion;
 use crate::runtime::capability::CapabilityGeneration;
 use crate::runtime::client::context::UiContextProjection;
@@ -24,6 +24,7 @@ pub(crate) struct UiSnapshot {
     pub(crate) client_drafts: Vec<ClientDraft>,
     pub(crate) pending_authorizations: Vec<ToolAuthorizationRequest>,
     pub(crate) context: UiContextProjection,
+    pub(crate) recent_child_events: Vec<ProductEvent>,
 }
 
 impl UiSnapshot {
@@ -45,11 +46,17 @@ impl UiSnapshot {
             client_drafts,
             pending_authorizations,
             context: UiContextProjection::default(),
+            recent_child_events: Vec::new(),
         }
     }
 
     pub(crate) fn with_context(mut self, context: UiContextProjection) -> Self {
         self.context = context;
+        self
+    }
+
+    pub(crate) fn with_recent_child_events(mut self, events: Vec<ProductEvent>) -> Self {
+        self.recent_child_events = events;
         self
     }
 }
@@ -180,7 +187,7 @@ mod tests {
 
         assert_eq!(snapshot.version.family, "ui_snapshot");
         assert_eq!(snapshot.version.major, 2);
-        assert_eq!(snapshot.version.minor, 1);
+        assert_eq!(snapshot.version.minor, 2);
         assert_eq!(snapshot.version, UI_SNAPSHOT_PROTOCOL_VERSION);
     }
 }
