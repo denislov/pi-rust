@@ -6,7 +6,7 @@ This concise index is the normative entry point for `pi-rust` architecture from
 the `0.4.x` train onward. Normative contracts, current implementation evidence,
 decisions, migrations, and test procedures are intentionally separated.
 
-The workspace is at `0.5.4`. Contracts introduced by completed version plans are
+The workspace is at `0.5.5`. Contracts introduced by completed version plans are
 normative where the contract documents below say so; implementation facts remain
 version-stamped in `current-state.md`. A document must label current facts
 separately from target requirements.
@@ -20,10 +20,22 @@ separately from target requirements.
   awaited terminal delegation results, operation-scoped child authorization,
   bounded child projections, and fullscreen child conversation pages,
   completed with the workspace `0.5.4` release.
-
+- [`0.5.5-operation-tree-runtime-pressure-and-fault-hardening-plan.md`](0.5.5-operation-tree-runtime-pressure-and-fault-hardening-plan.md):
+  operation-tree cancellation, authorization/provider/persistence fault
+  injection, bounded reconnect pressure, child-page lifecycle hardening, and
+  deterministic soak/performance evidence, completed with workspace `0.5.5`.
 ## Active Version Plan
 
-- None. The next version plan must be opened before further implementation.
+No version plan is active after the 0.5.5 convergence.
+
+## Queued Version Plan
+
+- [`0.5.6-fullscreen-tui-visual-hierarchy-and-interaction-polish-plan.md`](0.5.6-fullscreen-tui-visual-hierarchy-and-interaction-polish-plan.md):
+  composer-aligned assistance overlays, explicit Context/Tips structure,
+  responsive rail/drawer/page behavior, adaptive context gauge, compact status,
+  common transcript gutters, atomic Unicode-safe Markdown tables, semantic theme
+  hierarchy, child-page polish, and visual/accessibility evidence. Queued behind
+  0.5.5; it is not an active implementation or released-version claim.
 
 ## Normative Contracts
 
@@ -43,6 +55,9 @@ separately from target requirements.
   derived from source and tests.
 - [`0.5.4-release-evidence.md`](0.5.4-release-evidence.md): delegation,
   child-page, protocol/API, soak, Extension, and workspace release gates.
+- [`0.5.5-release-evidence.md`](0.5.5-release-evidence.md): operation-tree fault
+  matrix, bounded pressure, protocol/API audit, repeated schedules, performance,
+  and workspace release gates.
 - [`decisions/`](architecture/decisions/README.md): accepted, proposed, and
   scheduled ADRs with task/test traceability.
 - [`migrations/`](architecture/migrations/README.md): historical baselines and

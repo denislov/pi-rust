@@ -3060,6 +3060,53 @@ mod tests {
     }
 
     #[test]
+    fn recovery_1k_operation_scan_runtime_baseline() {
+        const OPERATION_COUNT: usize = 1_000;
+        let temp = tempfile::tempdir().unwrap();
+        let options = CodingAgentSessionOptions::new()
+            .with_session_id("sess_recovery_baseline")
+            .with_session_log_root(temp.path());
+        let created = SessionService::create(&options).unwrap();
+        let events = (0..OPERATION_COUNT)
+            .map(|index| {
+                let operation_id = format!("op_{index:04}");
+                SessionEventEnvelope::new(
+                    "sess_recovery_baseline",
+                    format!("evt_{index:04}"),
+                    "2026-07-22T00:00:00Z",
+                    SessionEventData::OperationStarted {
+                        operation: OperationKind::Prompt,
+                        runtime_generation: Default::default(),
+                    },
+                )
+                .with_operation_id(operation_id)
+            })
+            .collect::<Vec<_>>();
+        created
+            .store
+            .append_events(&created.handle, &events)
+            .unwrap();
+
+        let started = std::time::Instant::now();
+        let recovery = created.recovery_summary().unwrap();
+        let elapsed = started.elapsed();
+
+        assert_eq!(recovery.in_doubt_operations.len(), OPERATION_COUNT);
+        assert_eq!(
+            recovery.in_doubt_operations.first().map(String::as_str),
+            Some("op_0000")
+        );
+        assert_eq!(
+            recovery.in_doubt_operations.last().map(String::as_str),
+            Some("op_0999")
+        );
+        println!(
+            "operation_tree_baseline\tcase=recovery_1k_operation_scan\toperations={OPERATION_COUNT}\telapsed_us={}",
+            elapsed.as_micros()
+        );
+    }
+
+    #[test]
     fn open_retains_in_doubt_operations_as_recovery_pending() {
         let temp = tempfile::tempdir().unwrap();
         let store = SessionLogStore::new(temp.path());
@@ -4004,7 +4051,7 @@ mod tests {
 
         let error = service.fork_current(Some(&target_leaf)).unwrap_err();
 
-        assert_eq!(error.code(), "session");
+        assert_eq!(error.code(), "session_write_rejected");
         assert_eq!(service.store.list_sessions().unwrap(), sessions_before);
     }
 
@@ -4021,7 +4068,7 @@ mod tests {
 
         let error = service.fork_current(Some(&target_leaf)).unwrap_err();
 
-        assert_eq!(error.code(), "session");
+        assert_eq!(error.code(), "session_write_rejected");
         assert_eq!(service.store.list_sessions().unwrap(), sessions_before);
     }
 

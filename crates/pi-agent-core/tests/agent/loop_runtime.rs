@@ -779,6 +779,163 @@ async fn provider_error_event_preserves_error_message() {
 }
 
 #[tokio::test]
+async fn partial_delta_then_provider_error_is_visible_but_never_committed() {
+    let mut config = test_config("partial-then-error", None);
+    config.provider_streamer = Some(Arc::new(|_model, _context, _opts| {
+        Box::pin(async_stream::stream! {
+            let mut partial = AssistantMessage::empty("test", "test-model");
+            partial.content.push(ContentBlock::Text {
+                text: "uncommitted partial".into(),
+                text_signature: None,
+            });
+            yield AssistantMessageEvent::TextDelta {
+                content_index: 0,
+                delta: "uncommitted partial".into(),
+                partial,
+            };
+            let mut failed = AssistantMessage::empty("test", "test-model");
+            failed.stop_reason = StopReason::Error;
+            failed.error_message = Some("provider failed after partial output".into());
+            yield AssistantMessageEvent::Error {
+                reason: StopReason::Error,
+                message: failed,
+            };
+        })
+    }));
+    let agent = Agent::new(config);
+
+    let events = agent.prompt("hi").collect::<Vec<_>>().await;
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::LlmEvent(AssistantMessageEvent::TextDelta { delta, .. })
+            if delta == "uncommitted partial"
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::AgentError { error } if error == "provider failed after partial output"
+    )));
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::AgentDone { .. }))
+    );
+    assert!(
+        agent
+            .messages()
+            .iter()
+            .all(|message| !matches!(message, AgentMessage::Assistant { .. })),
+        "partial provider output must not enter committed model context"
+    );
+}
+
+#[tokio::test]
+async fn truncated_tool_arguments_end_as_error_without_tool_execution() {
+    let mut config = test_config("truncated-tool-arguments", None);
+    config.provider_streamer = Some(Arc::new(|_model, _context, _opts| {
+        Box::pin(async_stream::stream! {
+            let mut partial = AssistantMessage::empty("test", "test-model");
+            partial.content.push(ContentBlock::ToolCall {
+                id: "tool-truncated".into(),
+                name: "read".into(),
+                arguments: serde_json::json!("{\"path\":"),
+                thought_signature: None,
+            });
+            yield AssistantMessageEvent::ToolcallStart {
+                content_index: 0,
+                partial: partial.clone(),
+            };
+            yield AssistantMessageEvent::ToolcallDelta {
+                content_index: 0,
+                delta: "{\"path\":".into(),
+                partial,
+            };
+        })
+    }));
+    let agent = Agent::new(config);
+
+    let events = agent.prompt("hi").collect::<Vec<_>>().await;
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::AgentError { error } if error == "LLM stream ended without Done event"
+    )));
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::ToolCallStart { .. }))
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::AgentDone { .. }))
+    );
+    assert!(
+        agent
+            .messages()
+            .iter()
+            .all(|message| !matches!(message, AgentMessage::Assistant { .. }))
+    );
+}
+
+#[tokio::test]
+async fn first_terminal_drops_provider_stream_before_duplicate_terminal_or_late_delta() {
+    let polls = Arc::new(AtomicUsize::new(0));
+    let stream_polls = polls.clone();
+    let mut config = test_config("duplicate-provider-terminal", None);
+    config.provider_streamer = Some(Arc::new(move |_model, _context, _opts| {
+        let stream_polls = stream_polls.clone();
+        Box::pin(async_stream::stream! {
+            stream_polls.fetch_add(1, Ordering::SeqCst);
+            yield AssistantMessageEvent::Done {
+                reason: StopReason::Stop,
+                message: done_text_message("first-terminal", "committed once"),
+            };
+            stream_polls.fetch_add(1, Ordering::SeqCst);
+            let mut late = AssistantMessage::empty("test", "test-model");
+            late.content.push(ContentBlock::Text {
+                text: "late delta".into(),
+                text_signature: None,
+            });
+            yield AssistantMessageEvent::TextDelta {
+                content_index: 0,
+                delta: "late delta".into(),
+                partial: late,
+            };
+            yield AssistantMessageEvent::Done {
+                reason: StopReason::Stop,
+                message: done_text_message("duplicate-terminal", "must not be observed"),
+            };
+        })
+    }));
+    let agent = Agent::new(config);
+
+    let events = agent.prompt("hi").collect::<Vec<_>>().await;
+    assert_eq!(polls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(
+                event,
+                AgentEvent::LlmEvent(AssistantMessageEvent::Done { .. })
+            ))
+            .count(),
+        1
+    );
+    assert!(!events.iter().any(|event| matches!(
+        event,
+        AgentEvent::LlmEvent(AssistantMessageEvent::TextDelta { delta, .. })
+            if delta == "late delta"
+    )));
+    assert_eq!(
+        agent
+            .messages()
+            .iter()
+            .filter(|message| matches!(message, AgentMessage::Assistant { .. }))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
 async fn provider_timeout_error_is_not_committed_as_a_successful_turn() {
     let api_key = "test-api-provider-timeout";
     let mut message = AssistantMessage::empty("test", "test-model");

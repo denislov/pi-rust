@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-EXPECTED_VERSION="${PI_RUST_EXPECTED_VERSION:-0.5.4}"
+EXPECTED_VERSION="${PI_RUST_EXPECTED_VERSION:-0.5.5}"
 API_BASELINE_MANIFEST="${PI_RUST_API_BASELINE_MANIFEST:-$ROOT/docs/api-snapshots/$EXPECTED_VERSION/SHA256SUMS}"
 
 run() {
@@ -34,6 +34,10 @@ if [[ "$version_output" != "$EXPECTED_VERSION" ]]; then
 fi
 
 run scripts/tui-runtime-soak.sh
+run scripts/delegation-runtime-soak.sh
+run scripts/operation-tree-performance.sh
+PI_RUST_OPERATION_TREE_FAULT_SOAK_ITERATIONS=50 \
+  run scripts/operation-tree-fault-soak.sh
 run scripts/tui-smoke.sh
 run git diff --check
 

@@ -1,5 +1,33 @@
 # Changes
 
+## 0.5.5 - 2026-07-22
+
+### Operation-Tree Runtime Pressure And Fault Hardening
+
+- Added RAII cleanup and deterministic approve/abort/drop/shutdown races for
+  delegation and child-tool authorization waiters. Runtime shutdown now
+  resolves pending authorization waits, cancels every open root/child authority
+  during final shutdown, and preserves the existing Phase-A drain contract for
+  ordinary admitted work.
+- Hardened provider-stream convergence for partial output followed by failure,
+  truncated tool arguments, duplicate terminals, late deltas, timeouts, and
+  stalled delegated children. Child partial output remains bounded and cannot
+  enter the parent model context or root transcript.
+- Added the typed `SessionWriteRejected` pre-persistence error and preserved the
+  original `PartialCommit` at uncertain manifest/outbox boundaries. Reopen uses
+  authoritative terminal facts and durable outbox identity without retaining a
+  contradictory recovery residue.
+- Fixed active-child retention so a fullscreen child page is pinned while the
+  oldest inactive page is evicted. Added deterministic 32-conversation,
+  2,048-event, 1,024-item, Unicode/narrow viewport, large-tool-output, and image
+  pressure coverage.
+- Added a 50-iteration offline operation-tree fault schedule and controlled
+  performance baselines for 100k child events, 10k transcript inputs,
+  128-event reconnect, stalled-child cancellation, and 1k recovery scan. The
+  retained delegation and TUI schedules also pass 20/20.
+- Completed architecture, migration, public API, protocol, and release evidence
+  in `docs/0.5.5-operation-tree-runtime-pressure-and-fault-hardening-plan.md`.
+
 ## 0.5.4 - 2026-07-21
 
 ### Delegation Runtime And Child-Agent TUI

@@ -106,6 +106,29 @@ pub(crate) struct AuthorizationService {
     state: Arc<Mutex<AuthorizationState>>,
 }
 
+struct AuthorizationWaiterGuard {
+    service: AuthorizationService,
+    authorization_id: String,
+}
+
+impl Drop for AuthorizationWaiterGuard {
+    fn drop(&mut self) {
+        let Some(entry) = self.service.remove_pending(&self.authorization_id) else {
+            return;
+        };
+        let reason = "tool authorization waiter was dropped";
+        self.service.persist_resolution_or_diagnose(
+            &entry,
+            PersistedToolAuthorizationResolution::Cancelled {
+                reason: reason.into(),
+            },
+        );
+        self.service
+            .event_service
+            .emit_tool_authorization_cancelled(entry.request, reason);
+    }
+}
+
 impl std::fmt::Debug for AuthorizationService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AuthorizationService")
@@ -131,6 +154,16 @@ impl AuthorizationService {
 
     pub(crate) fn pending(&self) -> Vec<ToolAuthorizationRequest> {
         pending_requests(&self.state.lock().unwrap())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn resource_snapshot(&self) -> AuthorizationResourceSnapshot {
+        let state = self.state.lock().unwrap();
+        AuthorizationResourceSnapshot {
+            pending_authorization_ids: state.pending.keys().cloned().collect(),
+            operation_grant_count: state.grants.len(),
+            revision: state.revision,
+        }
     }
 
     pub(crate) fn uses_interactive_waiters(&self) -> bool {
@@ -239,6 +272,10 @@ impl AuthorizationService {
         };
         self.sync_pending_snapshot(revision, pending);
         self.event_service.emit_tool_authorization_required(request);
+        let _waiter_guard = AuthorizationWaiterGuard {
+            service: self.clone(),
+            authorization_id: authorization_id.clone(),
+        };
 
         tokio::select! {
             resolution = receiver => match resolution {
@@ -495,6 +532,14 @@ impl AuthorizationService {
             pending = pending_requests(&state);
         }
     }
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AuthorizationResourceSnapshot {
+    pub(crate) pending_authorization_ids: Vec<String>,
+    pub(crate) operation_grant_count: usize,
+    pub(crate) revision: u64,
 }
 
 fn persist_authorization_events(
@@ -847,7 +892,7 @@ pub(crate) fn redact_sensitive_text(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::capability::{FilesystemCapability, ShellCapability};
+    use crate::runtime::capability::{FilesystemCapability, ModelCapability, ShellCapability};
     use crate::runtime::facade::CodingAgentSessionOptions;
     use crate::session::repository::StoreFailurePoint;
     use crate::session::service::SessionService;
@@ -900,6 +945,19 @@ mod tests {
         ToolAuthorizationInventory::new(&[], &[])
     }
 
+    fn delegation_inventory() -> ToolAuthorizationInventory {
+        let delegation = AgentTool::new_text(
+            "delegate_agent",
+            "delegate work to a child agent",
+            json!({
+                "type": "object",
+                "x-pi-authorization-risk": "side_effect"
+            }),
+            |_, _| async { Ok("unused".to_owned()) },
+        );
+        ToolAuthorizationInventory::new(&[], &[delegation])
+    }
+
     async fn wait_for_request(service: &AuthorizationService) -> ToolAuthorizationRequest {
         for _ in 0..100 {
             if let Some(request) = service.pending().into_iter().next() {
@@ -931,6 +989,108 @@ mod tests {
             .unwrap();
         assert!(result.is_none());
         assert!(service.pending().is_empty());
+    }
+
+    #[tokio::test]
+    async fn resource_snapshot_audits_waiter_and_grant_baselines() {
+        let temp = TempDir::new().unwrap();
+        let (service, _) = service(ToolAuthorizationMode::Interactive);
+        let baseline = service.resource_snapshot();
+        assert!(baseline.pending_authorization_ids.is_empty());
+        assert_eq!(baseline.operation_grant_count, 0);
+
+        let task_service = service.clone();
+        let capability = snapshot("op-resource-snapshot", temp.path());
+        let task = tokio::spawn(async move {
+            task_service
+                .authorize(
+                    context(
+                        "op-resource-snapshot",
+                        "call-resource-snapshot",
+                        "write",
+                        json!({"path": "result.txt", "content": "done"}),
+                        CancellationToken::new(),
+                    ),
+                    "turn-resource-snapshot".into(),
+                    capability,
+                    inventory(),
+                )
+                .await
+        });
+
+        let request = wait_for_request(&service).await;
+        let pending = service.resource_snapshot();
+        assert_eq!(
+            pending.pending_authorization_ids,
+            vec![request.authorization_id.clone()]
+        );
+        assert_eq!(pending.operation_grant_count, 0);
+        assert!(pending.revision > baseline.revision);
+
+        service
+            .decide(
+                &request.authorization_id,
+                ToolAuthorizationDecision::AllowForOperation,
+            )
+            .unwrap();
+        assert!(task.await.unwrap().unwrap().is_none());
+        let resolved = service.resource_snapshot();
+        assert!(resolved.pending_authorization_ids.is_empty());
+        assert_eq!(resolved.operation_grant_count, 1);
+        assert!(resolved.revision > pending.revision);
+
+        service.cancel_operation("op-resource-snapshot", "test complete");
+        let final_snapshot = service.resource_snapshot();
+        assert!(final_snapshot.pending_authorization_ids.is_empty());
+        assert_eq!(final_snapshot.operation_grant_count, 0);
+    }
+
+    #[tokio::test]
+    async fn dropped_authorization_future_clears_the_waiter_registry() {
+        let temp = TempDir::new().unwrap();
+        let (service, _) = service(ToolAuthorizationMode::Interactive);
+        let baseline = service.resource_snapshot();
+        let task_service = service.clone();
+        let capability = snapshot("op-dropped-waiter", temp.path());
+        let task = tokio::spawn(async move {
+            task_service
+                .authorize(
+                    context(
+                        "op-dropped-waiter",
+                        "call-dropped-waiter",
+                        "write",
+                        json!({"path": "result.txt", "content": "never written"}),
+                        CancellationToken::new(),
+                    ),
+                    "turn-dropped-waiter".into(),
+                    capability,
+                    inventory(),
+                )
+                .await
+        });
+
+        let request = wait_for_request(&service).await;
+        assert_eq!(
+            service.resource_snapshot().pending_authorization_ids.len(),
+            1
+        );
+        task.abort();
+        assert!(matches!(task.await, Err(error) if error.is_cancelled()));
+
+        let final_snapshot = service.resource_snapshot();
+        assert!(final_snapshot.pending_authorization_ids.is_empty());
+        assert_eq!(
+            final_snapshot.operation_grant_count,
+            baseline.operation_grant_count
+        );
+        assert!(final_snapshot.revision > baseline.revision);
+        assert!(matches!(
+            service.decide(
+                &request.authorization_id,
+                ToolAuthorizationDecision::AllowOnce,
+            ),
+            Err(CodingSessionError::Input { .. })
+        ));
     }
 
     #[tokio::test]
@@ -1261,6 +1421,181 @@ mod tests {
         cancel.cancel();
         assert!(task.await.unwrap().unwrap().unwrap().block);
         assert!(service.pending().is_empty());
+    }
+
+    #[tokio::test]
+    async fn runtime_phase_a_shutdown_resolves_pending_authorization() {
+        let temp = TempDir::new().unwrap();
+        let (service, coordinator) = service(ToolAuthorizationMode::Interactive);
+        let task_service = service.clone();
+        let capability = snapshot("op-shutdown-waiter", temp.path());
+        let task = tokio::spawn(async move {
+            task_service
+                .authorize(
+                    context(
+                        "op-shutdown-waiter",
+                        "call-shutdown-waiter",
+                        "write",
+                        json!({"path": "one.txt", "content": "one"}),
+                        CancellationToken::new(),
+                    ),
+                    "turn-shutdown-waiter".into(),
+                    capability,
+                    inventory(),
+                )
+                .await
+        });
+        wait_for_request(&service).await;
+        let shutdown = crate::runtime::client::projection::CodingAgentRuntimeShutdownHandle {
+            coordinator,
+            authorization_service: service.clone(),
+        };
+
+        shutdown.request_shutdown();
+
+        assert!(task.await.unwrap().unwrap().unwrap().block);
+        assert!(
+            service
+                .resource_snapshot()
+                .pending_authorization_ids
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn delegation_wait_abort_resolves_once_without_leaking_the_waiter() {
+        let temp = TempDir::new().unwrap();
+        let (service, _) = service(ToolAuthorizationMode::Interactive);
+        let cancel = CancellationToken::new();
+        let task_cancel = cancel.clone();
+        let task_service = service.clone();
+        let mut capability = snapshot("op-delegation-abort", temp.path());
+        capability.model = Some(ModelCapability {
+            profile_id: Some(ProfileId::new("parent-agent").unwrap()),
+        });
+        let task = tokio::spawn(async move {
+            task_service
+                .authorize(
+                    context(
+                        "op-delegation-abort",
+                        "call-delegation-abort",
+                        "delegate_agent",
+                        json!({"agent_id": "child-agent", "task": "inspect the failure"}),
+                        task_cancel,
+                    ),
+                    "turn-delegation-abort".into(),
+                    capability,
+                    delegation_inventory(),
+                )
+                .await
+        });
+
+        let request = wait_for_request(&service).await;
+        assert_eq!(request.operation_id, "op-delegation-abort");
+        assert_eq!(request.tool_name, "delegate_agent");
+        cancel.cancel();
+
+        let result = task.await.unwrap().unwrap().unwrap();
+        assert!(result.block);
+        let final_snapshot = service.resource_snapshot();
+        assert!(final_snapshot.pending_authorization_ids.is_empty());
+        assert_eq!(final_snapshot.operation_grant_count, 0);
+        let late = service
+            .decide(
+                &request.authorization_id,
+                ToolAuthorizationDecision::AllowOnce,
+            )
+            .unwrap_err();
+        assert!(late.to_string().contains("already resolved"));
+    }
+
+    #[tokio::test]
+    async fn approval_wins_before_abort_and_duplicate_decisions_are_stale() {
+        let temp = TempDir::new().unwrap();
+        let (service, _) = service(ToolAuthorizationMode::Interactive);
+        let task_service = service.clone();
+        let capability = snapshot("op-approval-wins", temp.path());
+        let task = tokio::spawn(async move {
+            task_service
+                .authorize(
+                    context(
+                        "op-approval-wins",
+                        "call-approval-wins",
+                        "write",
+                        json!({"path": "one.txt", "content": "one"}),
+                        CancellationToken::new(),
+                    ),
+                    "turn-approval-wins".into(),
+                    capability,
+                    inventory(),
+                )
+                .await
+        });
+        let request = wait_for_request(&service).await;
+
+        service
+            .decide(
+                &request.authorization_id,
+                ToolAuthorizationDecision::AllowOnce,
+            )
+            .unwrap();
+        service.cancel_operation("op-approval-wins", "late abort");
+        assert!(task.await.unwrap().unwrap().is_none());
+        for duplicate in [
+            ToolAuthorizationDecision::AllowOnce,
+            ToolAuthorizationDecision::Deny {
+                reason: Some("duplicate deny".into()),
+            },
+        ] {
+            let error = service
+                .decide(&request.authorization_id, duplicate)
+                .unwrap_err();
+            assert!(error.to_string().contains("already resolved"));
+        }
+        assert!(
+            service
+                .resource_snapshot()
+                .pending_authorization_ids
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn abort_wins_before_approval_and_late_decision_is_stale() {
+        let temp = TempDir::new().unwrap();
+        let (service, _) = service(ToolAuthorizationMode::Interactive);
+        let task_service = service.clone();
+        let capability = snapshot("op-abort-wins", temp.path());
+        let task = tokio::spawn(async move {
+            task_service
+                .authorize(
+                    context(
+                        "op-abort-wins",
+                        "call-abort-wins",
+                        "write",
+                        json!({"path": "one.txt", "content": "one"}),
+                        CancellationToken::new(),
+                    ),
+                    "turn-abort-wins".into(),
+                    capability,
+                    inventory(),
+                )
+                .await
+        });
+        let request = wait_for_request(&service).await;
+
+        service.cancel_operation("op-abort-wins", "abort wins");
+        assert!(task.await.unwrap().unwrap().unwrap().block);
+        let error = service
+            .decide(
+                &request.authorization_id,
+                ToolAuthorizationDecision::AllowOnce,
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("already resolved"));
+        let final_snapshot = service.resource_snapshot();
+        assert!(final_snapshot.pending_authorization_ids.is_empty());
+        assert_eq!(final_snapshot.operation_grant_count, 0);
     }
 
     #[tokio::test]

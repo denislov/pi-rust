@@ -3233,6 +3233,49 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn reconnect_128_event_rebuild_runtime_baseline() {
+        const EVENT_COUNT: usize = 128;
+        let session = CodingAgentSession::non_persistent_with_event_capacities_for_tests(
+            CodingAgentSessionOptions::new(),
+            256,
+            256,
+        )
+        .await
+        .unwrap();
+        let connection = session
+            .connect(CodingAgentClientId::new("interactive-performance"))
+            .unwrap();
+        let mut expected_sequence = 0;
+        for index in 0..EVENT_COUNT {
+            expected_sequence = session
+                .emit_diagnostic_for_tests(format!("reconnect event {index}"))
+                .sequence();
+        }
+        let (mut tui, root_id) = test_tui();
+        let started = std::time::Instant::now();
+        let (connection, _) = resume_interactive_client(&mut tui, root_id, connection).unwrap();
+        let elapsed = started.elapsed();
+
+        assert_eq!(
+            root_ref(&tui, root_id)
+                .unwrap()
+                .shared_event_sequence_for_tests(),
+            ProductEventSequence::new(expected_sequence)
+        );
+        assert_eq!(
+            connection
+                .connection
+                .acknowledge(expected_sequence)
+                .unwrap(),
+            expected_sequence
+        );
+        println!(
+            "operation_tree_baseline\tcase=reconnect_128_event_rebuild\tevents={EVENT_COUNT}\telapsed_us={}",
+            elapsed.as_micros()
+        );
+    }
+
     async fn await_prompt_task(task: PromptTask) -> PromptTaskCompletion {
         task.done.await.expect("prompt task must send completion")
     }

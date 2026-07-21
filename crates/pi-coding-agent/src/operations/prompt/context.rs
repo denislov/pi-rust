@@ -328,6 +328,16 @@ impl PromptTurnOutcome {
         matches!(self, Self::Success { .. })
     }
 
+    pub(crate) fn partial_commit_error(&self) -> Option<&CodingSessionError> {
+        match self {
+            Self::Failed {
+                error: error @ CodingSessionError::PartialCommit { .. },
+                ..
+            } => Some(error),
+            Self::Success { .. } | Self::Aborted { .. } | Self::Failed { .. } => None,
+        }
+    }
+
     pub(crate) fn apply_success_session_write_metadata(
         &mut self,
         session_id: Option<String>,

@@ -156,9 +156,15 @@ impl SessionLogStore {
             return Ok(());
         }
         *target = None;
-        Err(session_error(format!(
-            "injected session store failure at {point:?}"
-        )))
+        if point == StoreFailurePoint::AppendEvents {
+            Err(CodingSessionError::SessionWriteRejected {
+                message: format!("injected session store failure at {point:?}"),
+            })
+        } else {
+            Err(session_error(format!(
+                "injected session store failure at {point:?}"
+            )))
+        }
     }
 
     #[allow(

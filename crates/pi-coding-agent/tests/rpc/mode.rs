@@ -2375,6 +2375,137 @@ tools = ["rpc_mutate"]
 }
 
 #[tokio::test]
+async fn rpc_parent_abort_cancels_pending_child_tool_authorization() {
+    let temp = tempfile::tempdir().unwrap();
+    let cwd = temp.path().join("project");
+    write_file(
+        cwd.join(".pi-rust/agents/delegating-planner.toml"),
+        r#"
+schema_version = 1
+id = "delegating-planner"
+display_name = "Delegating Planner"
+
+[delegation]
+allow_delegate_agent = true
+max_depth = 1
+max_parallel_children = 1
+require_confirmation = "never"
+allowed_agents = ["coder"]
+"#,
+    );
+    write_file(
+        cwd.join(".pi-rust/agents/coder.toml"),
+        r#"
+schema_version = 1
+id = "coder"
+display_name = "Coder"
+tools = ["rpc_mutate"]
+"#,
+    );
+
+    let api = "pi-coding-rpc-child-tool-authorization-abort";
+    let provider_guard = ProviderGuard::register(
+        api,
+        Arc::new(FauxProvider::with_call_queue(vec![
+            FauxCall {
+                responses: vec![delegate_agent_response(
+                    "tool_delegate_agent",
+                    "coder",
+                    "implement parser",
+                )],
+                stop_reason: StopReason::ToolUse,
+            },
+            FauxCall {
+                responses: vec![FauxResponse {
+                    text_deltas: Vec::new(),
+                    thinking_deltas: Vec::new(),
+                    tool_calls: vec![FauxToolCall {
+                        id: "tool-child-mutate".into(),
+                        name: "rpc_mutate".into(),
+                        deltas: vec!["{}".into()],
+                        final_arguments: serde_json::json!({}),
+                    }],
+                }],
+                stop_reason: StopReason::ToolUse,
+            },
+        ])),
+    );
+    let executions = Arc::new(AtomicUsize::new(0));
+    let (mut input_writer, input_reader) = tokio::io::duplex(4096);
+    let (output_writer, output_reader) = tokio::io::duplex(16 * 1024);
+    let task = tokio::spawn(async move {
+        let mut output_writer = output_writer;
+        run_rpc_mode_for_io(
+            input_reader,
+            &mut output_writer,
+            CliRunOptions {
+                model_override: Some(large_context_faux_model(api)),
+                tools: vec![rpc_mutation_tool(executions.clone())],
+                register_builtins: false,
+                ai_client: Some(provider_guard.ai_client()),
+                session: SessionRunOptions::disabled(cwd),
+            },
+        )
+        .await
+        .unwrap();
+        executions.load(Ordering::SeqCst)
+    });
+    let mut lines = tokio::io::BufReader::new(output_reader).lines();
+
+    input_writer
+        .write_all(
+            b"{\"id\":\"profile\",\"type\":\"set_default_agent_profile\",\"profileId\":\"delegating-planner\"}\n",
+        )
+        .await
+        .unwrap();
+    read_rpc_json_matching(&mut lines, "profile response", |value| {
+        value["type"] == "response" && value["command"] == "set_default_agent_profile"
+    })
+    .await;
+    input_writer
+        .write_all(b"{\"id\":\"prompt\",\"type\":\"prompt\",\"message\":\"plan feature\"}\n")
+        .await
+        .unwrap();
+
+    let required = read_rpc_json_matching(&mut lines, "child authorization request", |value| {
+        value["type"] == "tool_authorization_required"
+            && value["request"]["toolCallId"] == "tool-child-mutate"
+    })
+    .await;
+    let child_authorization_id = required["request"]["authorizationId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    input_writer
+        .write_all(b"{\"id\":\"abort-child-wait\",\"type\":\"abort\"}\n")
+        .await
+        .unwrap();
+    let mut saw_abort_response = false;
+    let mut saw_child_authorization_cancelled = false;
+    while !saw_abort_response || !saw_child_authorization_cancelled {
+        let value = read_rpc_json_line(&mut lines, "child authorization abort convergence").await;
+        if value["type"] == "response" && value["command"] == "abort" {
+            assert_eq!(value["success"], true);
+            assert_eq!(value["data"]["cancelled"], true);
+            saw_abort_response = true;
+        }
+        if value["type"] == "tool_authorization_cancelled"
+            && value["authorizationId"] == child_authorization_id
+        {
+            saw_child_authorization_cancelled = true;
+        }
+    }
+
+    drop(input_writer);
+    let executions = tokio::time::timeout(RPC_TASK_SHUTDOWN_TIMEOUT, task)
+        .await
+        .expect("RPC task should stop after parent abort")
+        .unwrap();
+    assert_eq!(executions, 0);
+}
+
+#[tokio::test]
 async fn rpc_rejects_delegation_confirmation() {
     let temp = tempfile::tempdir().unwrap();
     let cwd = temp.path().join("project");

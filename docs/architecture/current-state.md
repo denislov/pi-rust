@@ -5,8 +5,8 @@
 Baseline version: `0.3.1`, released as annotated tag `v0.3.1`.
 
 Source baseline: commit `870d4bb`; dated release record: `180f219`; post-baseline
-`0.4.0` through completed `0.5.4` convergence evidence is recorded below. Last
-refreshed: 2026-07-21.
+`0.4.0` through completed `0.5.5` convergence evidence is recorded below. Last
+refreshed: 2026-07-22.
 
 This file records implementation facts, not desired behavior. Cargo manifests,
 compiled source, tests, and CodeGraph call paths outrank this summary when they
@@ -18,7 +18,7 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   `pi-coding-agent -> {pi-agent-core, pi-ai, pi-tui}`.
 - `pi-ai` and `pi-tui` have no workspace dependencies.
 - `pi-mom`, `pi-pods`, and `pi-web-ui` are placeholder crates.
-- All workspace packages inherit version `0.5.4` from the root manifest.
+- All workspace packages inherit version `0.5.5` from the root manifest.
 - The reduced 0.4.x train ends at `0.4.2`; reserved Extension release plans
   `0.4.3` through `0.4.5` are Skip records and did not produce package versions.
 - `pi-rust` is a placeholder binary; `pi-coding-agent` is user-facing.
@@ -129,6 +129,16 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   from pre-0.5.4 sessions. Delegated child Prompts inherit operation-scoped
   authorization, and recursive execution uses isolated cancellable tasks to
   bound polling-stack growth.
+- Authorization waiters have drop-owned RAII cleanup and immutable test
+  snapshots. Approve/deny/abort/drop/stale-generation decisions resolve once;
+  parent abort reaches a real child Prompt authorization, and Phase-A shutdown
+  resolves authorization waits without changing its ordinary admitted-work
+  drain policy. Final session shutdown cancels every still-open root/child
+  authority before draining and closing the session writer.
+- Provider streams stop at their first terminal. Partial assistant output before
+  failure remains visible but uncommitted, truncated tool arguments cannot
+  execute, stalled child streams are dropped on parent cancellation, and late
+  child output cannot resume or pollute the parent continuation.
 - `OperationSupervisor` now freezes immutable typed finalization decisions from
   the admitted execution and typed outcome across all four dispatch paths.
   Submission projection validates that decision instead of independently
@@ -163,6 +173,12 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   commands; resolve persists `rpc_token` as the audit authority. New `SessionWriteRoot` admission is
   fail-closed for unresolved recovery in the affected persistent session;
   Query/ReadOnly paths and explicit recovery controls remain available.
+- A definite append rejection before persistence is represented by the stable
+  `SessionWriteRejected` error code. Once a durable boundary may have been
+  crossed, Prompt finalization preserves the original `PartialCommit` instead
+  of attempting a contradictory second terminal. Authoritative replay may
+  resolve manifest uncertainty directly to committed while retaining durable
+  outbox identity and no recovery-pending residue.
 - AgentInvocation and AgentTeam definite failures now publish their root
   terminal drafts after finalization; child PromptFailed events no longer
   replace the root failure lifecycle evidence.
@@ -212,6 +228,12 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   child Prompt operation while the main row shows `waiting permission` only.
   UI snapshot protocol `2.2` includes bounded retained child ProductEvents for
   reconnect/fresh-snapshot hydration.
+- Under overflow the active child page is pinned and the oldest inactive child
+  is evicted, so returning to the main page cannot reinsert an untracked 33rd
+  conversation. Child rendering remains width-bounded at zero/narrow viewports
+  with CJK, emoji, combining text, large tool output, and terminal images; the
+  generic `pi-tui` owner retains synchronized redraw, overlay, resize, image
+  cleanup, and panic-unwind terminal guarantees.
 - Fullscreen transcript rendering uses cached cumulative row metadata to locate
   viewport-intersecting blocks before cloning lines. Unchanged 1,000- and
   10,000-block frames touch five visible blocks and write zero bytes in the

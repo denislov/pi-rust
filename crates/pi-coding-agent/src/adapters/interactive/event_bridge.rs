@@ -11,7 +11,7 @@ use crate::runtime::facade::{
     ProductEventSequence, ProfileId, ProfileKind, UiContextProjection, UiSnapshot,
 };
 
-const MAX_CHILD_CONVERSATIONS: usize = 32;
+pub(super) const MAX_CHILD_CONVERSATIONS: usize = 32;
 const MAX_CHILD_UI_EVENTS: usize = 2_048;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -387,6 +387,82 @@ fn calculate_context_tokens(usage: &CodingAgentProductEventUsage) -> u32 {
             .saturating_add(usage.output)
             .saturating_add(usage.cache_read)
             .saturating_add(usage.cache_write)
+    }
+}
+
+#[cfg(test)]
+mod pressure_tests {
+    use super::*;
+
+    #[test]
+    fn child_event_pressure_evicts_oldest_conversation_and_oldest_events() {
+        let mut projection = UiProjection::default();
+        for index in 0..=MAX_CHILD_CONVERSATIONS {
+            projection.push_child_events(
+                &format!("child-{index}"),
+                vec![UiEvent::SystemNotice {
+                    text: format!("conversation {index}"),
+                }],
+            );
+        }
+
+        assert_eq!(projection.child_order.len(), MAX_CHILD_CONVERSATIONS);
+        assert!(!projection.child_pending.contains_key("child-0"));
+        assert_eq!(
+            projection.child_order.front().map(String::as_str),
+            Some("child-1")
+        );
+        assert_eq!(
+            projection.child_order.back().map(String::as_str),
+            Some("child-32")
+        );
+
+        projection.push_child_events(
+            "child-32",
+            (0..MAX_CHILD_UI_EVENTS + 2)
+                .map(|index| UiEvent::SystemNotice {
+                    text: format!("event {index}"),
+                })
+                .collect(),
+        );
+        let retained = &projection.child_pending["child-32"];
+        assert_eq!(retained.len(), MAX_CHILD_UI_EVENTS);
+        assert!(matches!(
+            retained.front(),
+            Some(UiEvent::SystemNotice { text }) if text == "event 2"
+        ));
+        assert!(matches!(
+            retained.back(),
+            Some(UiEvent::SystemNotice { text }) if text == "event 2049"
+        ));
+    }
+
+    #[test]
+    fn child_event_100k_runtime_baseline() {
+        const EVENT_COUNT: usize = 100_000;
+        let mut projection = UiProjection::default();
+        let started = std::time::Instant::now();
+        projection.push_child_events(
+            "child-throughput",
+            (0..EVENT_COUNT)
+                .map(|index| UiEvent::SystemNotice {
+                    text: format!("event {index}"),
+                })
+                .collect(),
+        );
+        let elapsed = started.elapsed();
+
+        let retained = &projection.child_pending["child-throughput"];
+        assert_eq!(retained.len(), MAX_CHILD_UI_EVENTS);
+        assert!(matches!(
+            retained.front(),
+            Some(UiEvent::SystemNotice { text }) if text == "event 97952"
+        ));
+        println!(
+            "operation_tree_baseline\tcase=child_event_100k\tevents={EVENT_COUNT}\tretained={}\telapsed_us={}",
+            retained.len(),
+            elapsed.as_micros()
+        );
     }
 }
 

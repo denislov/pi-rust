@@ -93,12 +93,15 @@ pub enum CodingAgentShutdownOutcome {
 #[derive(Debug, Clone)]
 pub struct CodingAgentRuntimeShutdownHandle {
     pub(crate) coordinator: Arc<SnapshotCoordinator>,
+    pub(crate) authorization_service: crate::services::authorization::AuthorizationService,
 }
 
 impl CodingAgentRuntimeShutdownHandle {
-    /// Idempotently close admission and control without waiting, aborting, or publishing events.
+    /// Idempotently close admission and resolve pending authorization waits without blocking.
     pub fn request_shutdown(&self) {
         self.coordinator.request_shutdown();
+        self.authorization_service
+            .cancel_all("tool authorization cancelled by runtime shutdown request");
     }
 }
 

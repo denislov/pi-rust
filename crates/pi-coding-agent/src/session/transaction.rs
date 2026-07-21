@@ -1069,6 +1069,9 @@ where
             .writer
             .append_checkpoint_events(self.pending_events.clone())
         {
+            if matches!(error, CodingSessionError::SessionWriteRejected { .. }) {
+                return Err(error);
+            }
             self.state = TransactionState::InDoubt;
             return Err(CodingSessionError::PartialCommit {
                 operation_id: self.operation_id.clone(),
@@ -1417,6 +1420,40 @@ mod tests {
             .unwrap_err();
 
         assert!(error.to_string().contains("writer is closed"));
+    }
+
+    #[test]
+    fn writer_shutdown_drains_an_admitted_command_before_reply_close() {
+        let (_temp, store, handle) = setup();
+        let writer = SessionTransactionWriter::new(store, handle);
+        let (entered_sender, entered_receiver) = sync_channel(1);
+        let (release_sender, release_receiver) = sync_channel(1);
+        let (block_reply, _block_response) = sync_channel(1);
+        writer
+            .sender_for_tests()
+            .try_send(SessionTransactionWriterEnvelope {
+                command: SessionTransactionWriterCommand::Block {
+                    entered: entered_sender,
+                    release: release_receiver,
+                },
+                reply: block_reply,
+            })
+            .unwrap();
+        entered_receiver.recv().unwrap();
+
+        let (reply, response) = sync_channel(1);
+        writer
+            .sender_for_tests()
+            .try_send(SessionTransactionWriterEnvelope {
+                command: SessionTransactionWriterCommand::Checkpoint { events: Vec::new() },
+                reply,
+            })
+            .unwrap();
+        let shutdown = std::thread::spawn(move || writer.shutdown());
+
+        release_sender.send(()).unwrap();
+        assert!(response.recv().unwrap().is_ok());
+        assert!(shutdown.join().unwrap().is_ok());
     }
 
     #[test]

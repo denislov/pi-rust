@@ -1,5 +1,24 @@
 # Changes
 
+## 0.5.5 - 2026-07-22
+
+### Changed
+
+- Resolve dropped, cancelled, and shutdown authorization waiters exactly once;
+  cascade final runtime shutdown through all open root and child operations.
+- Preserve provider partial output as visible but uncommitted, reject truncated
+  tool calls, drop the stream at its first terminal, and prevent late delegated
+  child output or continuation after cancellation.
+- Distinguish definite pre-persistence `SessionWriteRejected` failures from
+  post-boundary `PartialCommit` uncertainty, retaining the first uncertainty
+  and authoritative outbox/replay identity.
+- Bound child conversation/event/transcript pressure deterministically, pin an
+  active fullscreen child during eviction, and harden narrow Unicode, large
+  tool-output, authorization overlay, and image rendering paths.
+- Add the named 50-iteration operation-tree fault soak and controlled runtime/
+  RSS performance baseline without changing RPC `2.1`, ProductEvent `2.2`, or
+  UI snapshot `2.2`.
+
 ## 0.5.4 - 2026-07-21
 
 ### Changed

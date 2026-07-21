@@ -155,11 +155,22 @@ impl PromptOperation<'_> {
                 }
             }
         }
-        let finalized = match self.finalize_prompt_transaction(&mut context, &outcome) {
-            Ok(finalized) => finalized,
-            Err(error) => {
-                outcome = context.finish_failure(error.clone());
-                SessionService::failed_prompt_transaction(context.operation_id().to_owned(), &error)
+        let finalized = if let Some(error) = outcome.partial_commit_error().cloned() {
+            // The transaction owner already froze itself as InDoubt at the
+            // durable boundary. Discard the live handle without attempting a
+            // second failure terminal that could mask the original uncertainty.
+            let _ = context.take_transaction();
+            SessionService::failed_prompt_transaction(context.operation_id().to_owned(), &error)
+        } else {
+            match self.finalize_prompt_transaction(&mut context, &outcome) {
+                Ok(finalized) => finalized,
+                Err(error) => {
+                    outcome = context.finish_failure(error.clone());
+                    SessionService::failed_prompt_transaction(
+                        context.operation_id().to_owned(),
+                        &error,
+                    )
+                }
             }
         };
         apply_finalized_session_write(&mut outcome, &finalized);

@@ -29,6 +29,7 @@ impl CodingAgentSession {
     pub fn runtime_shutdown_handle(&self) -> CodingAgentRuntimeShutdownHandle {
         CodingAgentRuntimeShutdownHandle {
             coordinator: self.runtime_host.client_projection.coordinator.clone(),
+            authorization_service: self.runtime_host.authorization_service.clone(),
         }
     }
 
@@ -54,6 +55,10 @@ impl CodingAgentSession {
         self.runtime_host
             .authorization_service
             .cancel_all("tool authorization cancelled by runtime shutdown");
+        self.runtime_host
+            .operation_supervisor
+            .control
+            .cancel_open_operations_for_shutdown();
         self.runtime_host
             .client_projection
             .coordinator

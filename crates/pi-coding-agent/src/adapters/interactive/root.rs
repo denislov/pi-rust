@@ -25,7 +25,7 @@ use crate::adapters::interactive::delegation_confirmation_menu::{
     DelegationConfirmationMenuOutcome, DelegationConfirmationMenuRenderState,
     DelegationConfirmationMenuState,
 };
-use crate::adapters::interactive::event_bridge::UiProjection;
+use crate::adapters::interactive::event_bridge::{MAX_CHILD_CONVERSATIONS, UiProjection};
 use crate::adapters::interactive::git_branch::GitBranchProvider;
 use crate::adapters::interactive::input;
 use crate::adapters::interactive::keybindings;
@@ -860,15 +860,7 @@ impl InteractiveRoot {
 
     pub(super) fn apply_shared_child_ui_events(&mut self) {
         for (operation_id, events) in self.shared_projection.drain_children() {
-            if !self.child_conversations.contains_key(&operation_id) {
-                while self.child_conversation_order.len() >= 32 {
-                    if let Some(evicted) = self.child_conversation_order.pop_front() {
-                        self.child_conversations.remove(&evicted);
-                    }
-                }
-                self.child_conversation_order
-                    .push_back(operation_id.clone());
-            }
+            self.ensure_child_conversation(&operation_id);
             if self.active_child_operation_id.as_deref() == Some(operation_id.as_str()) {
                 apply_child_events(&mut self.transcript, &mut self.tool_authorizations, events);
             } else {
@@ -878,6 +870,27 @@ impl InteractiveRoot {
                     .apply_events(events);
             }
         }
+    }
+
+    fn ensure_child_conversation(&mut self, operation_id: &str) {
+        if self.child_conversations.contains_key(operation_id) {
+            return;
+        }
+        while self.child_conversation_order.len() >= MAX_CHILD_CONVERSATIONS {
+            let evict = self.child_conversation_order.iter().position(|candidate| {
+                self.active_child_operation_id.as_deref() != Some(candidate.as_str())
+            });
+            let Some(index) = evict else {
+                break;
+            };
+            if let Some(evicted) = self.child_conversation_order.remove(index) {
+                self.child_conversations.remove(&evicted);
+            }
+        }
+        self.child_conversation_order
+            .push_back(operation_id.to_owned());
+        self.child_conversations
+            .insert(operation_id.to_owned(), ChildConversationState::new());
     }
 
     pub(super) fn apply_root_events(&mut self, events: Vec<UiEvent>) {
@@ -4457,6 +4470,7 @@ fn format_http_idle_timeout_ms(timeout_ms: u64) -> String {
 
 #[cfg(test)]
 mod transcript_viewport_tests {
+    use std::collections::VecDeque;
     use std::path::PathBuf;
 
     use base64::Engine;
@@ -4466,8 +4480,8 @@ mod transcript_viewport_tests {
     };
     use pi_tui::api::terminal::{ImageProtocol, TerminalCapabilities};
 
-    use crate::adapters::interactive::UiEvent;
     use crate::adapters::interactive::transcript::TranscriptItem;
+    use crate::adapters::interactive::{Transcript, UiEvent};
     use crate::runtime::client::context::{
         UiContextProjection, UiFileChangeProjection, UiOperationProjection, UiOperationStatus,
         UiTurnUsageProjection,
@@ -4475,7 +4489,7 @@ mod transcript_viewport_tests {
 
     use super::{
         ChildConversationState, ContextTab, InteractiveHitTarget, InteractiveRegion,
-        InteractiveRoot, transcript_viewport,
+        InteractiveRoot, MAX_CHILD_CONVERSATIONS, transcript_viewport,
     };
 
     fn lines() -> Vec<String> {
@@ -4538,6 +4552,137 @@ mod transcript_viewport_tests {
             child.transcript.items().first(),
             Some(TranscriptItem::System { text }) if text == "child event 76"
         ));
+    }
+
+    #[test]
+    fn child_transcript_10k_runtime_baseline() {
+        const EVENT_COUNT: usize = 10_000;
+        let mut child = ChildConversationState::new();
+        let started = std::time::Instant::now();
+        child.apply_events(
+            (0..EVENT_COUNT)
+                .map(|index| UiEvent::SystemNotice {
+                    text: format!("child event {index}"),
+                })
+                .collect(),
+        );
+        let elapsed = started.elapsed();
+
+        assert_eq!(child.transcript.items().len(), 1_024);
+        assert!(matches!(
+            child.transcript.items().first(),
+            Some(TranscriptItem::System { text }) if text == "child event 8976"
+        ));
+        println!(
+            "operation_tree_baseline\tcase=child_transcript_10k\tevents={EVENT_COUNT}\tretained={}\telapsed_us={}",
+            child.transcript.items().len(),
+            elapsed.as_micros()
+        );
+    }
+
+    #[test]
+    fn child_eviction_pins_active_page_and_preserves_capacity_after_return() {
+        let mut root = InteractiveRoot::new(PathBuf::from("."), "model".into(), "session".into());
+        root.main_transcript = Some(Transcript::new());
+        root.main_tool_authorizations = Some(VecDeque::new());
+        root.active_child_operation_id = Some("child-active".into());
+        root.transcript = Transcript::new();
+        root.transcript
+            .push(TranscriptItem::assistant("active", "active output", true));
+        root.child_conversations
+            .insert("child-active".into(), ChildConversationState::new());
+        root.child_conversation_order
+            .push_back("child-active".into());
+        for index in 1..MAX_CHILD_CONVERSATIONS {
+            let operation_id = format!("child-{index}");
+            root.child_conversations
+                .insert(operation_id.clone(), ChildConversationState::new());
+            root.child_conversation_order.push_back(operation_id);
+        }
+
+        root.ensure_child_conversation("child-new");
+
+        assert_eq!(root.child_conversations.len(), MAX_CHILD_CONVERSATIONS);
+        assert_eq!(root.child_conversation_order.len(), MAX_CHILD_CONVERSATIONS);
+        assert!(root.child_conversations.contains_key("child-active"));
+        assert!(
+            root.child_conversation_order
+                .iter()
+                .any(|id| id == "child-active")
+        );
+        assert!(!root.child_conversations.contains_key("child-1"));
+        assert!(root.child_conversations.contains_key("child-new"));
+
+        assert!(root.close_child_conversation());
+        assert!(root.active_child_operation_id.is_none());
+        assert_eq!(root.child_conversations.len(), MAX_CHILD_CONVERSATIONS);
+        assert!(matches!(
+            root.child_conversations["child-active"].transcript.items(),
+            [TranscriptItem::Assistant { markdown, .. }] if markdown == "active output"
+        ));
+    }
+
+    #[test]
+    fn child_page_render_is_bounded_for_zero_narrow_unicode_and_large_tool_output() {
+        let mut root = InteractiveRoot::new(PathBuf::from("."), "模型🦀".into(), "会话".into());
+        root.set_fullscreen_viewport(true);
+        root.main_transcript = Some(Transcript::new());
+        root.main_tool_authorizations = Some(VecDeque::new());
+        root.active_child_operation_id = Some("child-unicode".into());
+        root.transcript = Transcript::new();
+        root.set_terminal_capabilities(TerminalCapabilities {
+            images: Some(ImageProtocol::Kitty),
+            true_color: true,
+            hyperlinks: true,
+        });
+        root.apply_events(vec![
+            UiEvent::AssistantDelta {
+                text: "子代理输出🙂e\u{301}".repeat(32),
+            },
+            UiEvent::AssistantDone,
+            UiEvent::ToolStarted {
+                call_id: "tool-unicode".into(),
+                name: "bash".into(),
+                args: serde_json::json!({"command": "printf '你好🙂'"}),
+            },
+            UiEvent::ToolFinished {
+                call_id: "tool-unicode".into(),
+                result: "工具输出🚀".repeat(4_096),
+                is_error: false,
+            },
+            UiEvent::AssistantImages {
+                images: vec![crate::events::CodingAgentImageContent {
+                    mime_type: "image/png".into(),
+                    data: png_base64(),
+                }],
+            },
+        ]);
+
+        let mut rendered_image = false;
+        for width in [0, 1, 2, 8, 20] {
+            root.set_viewport_size(width, 24);
+            let lines = root.render(width);
+            rendered_image |= lines.iter().any(|line| line.contains("\x1b_G"));
+            if width > 0 {
+                assert!(!lines.is_empty(), "width {width} must retain a valid shell");
+            }
+            assert!(
+                lines
+                    .iter()
+                    .all(|line| pi_tui::api::render::visible_width(line) <= width.max(1)),
+                "child page exceeded width {width}: {lines:#?}"
+            );
+        }
+        assert!(
+            rendered_image,
+            "active child page must exercise image rendering"
+        );
+        assert_eq!(
+            root.active_child_operation_id.as_deref(),
+            Some("child-unicode")
+        );
+        assert!(root.close_child_conversation());
+        assert!(root.active_child_operation_id.is_none());
     }
 
     #[test]

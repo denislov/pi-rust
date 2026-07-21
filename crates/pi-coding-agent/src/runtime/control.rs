@@ -433,6 +433,15 @@ struct ActiveChildOperation {
     owner_released: bool,
 }
 
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct OperationResourceSnapshot {
+    pub(crate) root_operation_ids: Vec<String>,
+    pub(crate) child_operation_ids: Vec<String>,
+    pub(crate) cancelled_operation_ids: Vec<String>,
+    pub(crate) released_owner_ids: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct OperationActivity {
     session_write: Option<OperationKind>,
@@ -493,6 +502,51 @@ impl OperationActivity {
 }
 
 impl OperationStateInner {
+    #[cfg(test)]
+    fn resource_snapshot(&self) -> OperationResourceSnapshot {
+        let mut roots = self
+            .root_identities()
+            .map(|active| active.operation_id.clone())
+            .collect::<Vec<_>>();
+        let mut children = self
+            .children
+            .iter()
+            .map(|active| active.operation_id.clone())
+            .collect::<Vec<_>>();
+        let mut cancelled = self
+            .root_identities()
+            .filter(|active| active.cancellation.is_cancelled())
+            .map(|active| active.operation_id.clone())
+            .chain(
+                self.children
+                    .iter()
+                    .filter(|active| active.cancellation.is_cancelled())
+                    .map(|active| active.operation_id.clone()),
+            )
+            .collect::<Vec<_>>();
+        let mut released = self
+            .root_identities()
+            .filter(|active| active.owner_released)
+            .map(|active| active.operation_id.clone())
+            .chain(
+                self.children
+                    .iter()
+                    .filter(|active| active.owner_released)
+                    .map(|active| active.operation_id.clone()),
+            )
+            .collect::<Vec<_>>();
+        roots.sort();
+        children.sort();
+        cancelled.sort();
+        released.sort();
+        OperationResourceSnapshot {
+            root_operation_ids: roots,
+            child_operation_ids: children,
+            cancelled_operation_ids: cancelled,
+            released_owner_ids: released,
+        }
+    }
+
     fn activity(&self) -> OperationActivity {
         OperationActivity {
             session_write: self.session_write.as_ref().map(|active| active.kind),
@@ -612,6 +666,25 @@ impl OperationStateInner {
                 if !child.cancellation.is_cancelled() {
                     child.cancellation.cancel();
                 }
+                cancelled.push(child.operation_id.clone());
+            }
+        }
+        cancelled.sort();
+        cancelled.dedup();
+        cancelled
+    }
+
+    fn cancel_open_operations(&self) -> Vec<String> {
+        let mut cancelled = Vec::new();
+        for root in self.root_identities() {
+            if root.cancellation_open && !root.cancellation.is_cancelled() {
+                root.cancellation.cancel();
+                cancelled.push(root.operation_id.clone());
+            }
+        }
+        for child in &self.children {
+            if child.cancellation_open && !child.cancellation.is_cancelled() {
+                child.cancellation.cancel();
                 cancelled.push(child.operation_id.clone());
             }
         }
@@ -1133,6 +1206,15 @@ impl OperationControl {
         self.state.activity()
     }
 
+    #[cfg(test)]
+    pub(crate) fn resource_snapshot(&self) -> OperationResourceSnapshot {
+        self.state
+            .shared
+            .lock()
+            .expect("operation state lock poisoned")
+            .resource_snapshot()
+    }
+
     pub(crate) fn cancel_active(
         &self,
         kind: OperationKind,
@@ -1199,6 +1281,14 @@ impl OperationControl {
         generation: CapabilityGeneration,
     ) -> Vec<String> {
         self.state.cancel_capability_generations_before(generation)
+    }
+
+    pub(crate) fn cancel_open_operations_for_shutdown(&self) -> Vec<String> {
+        self.state
+            .shared
+            .lock()
+            .expect("operation state lock poisoned")
+            .cancel_open_operations()
     }
 
     #[cfg(test)]
@@ -1727,6 +1817,15 @@ mod tests {
         let child_cancellation = child.cancellation_token();
         let grandchild_cancellation = grandchild.cancellation_token();
         assert_eq!(control.child_count(), 2);
+        assert_eq!(
+            control.resource_snapshot(),
+            OperationResourceSnapshot {
+                root_operation_ids: vec!["root-agent".into()],
+                child_operation_ids: vec!["delegated-agent".into(), "delegated-prompt".into()],
+                cancelled_operation_ids: Vec::new(),
+                released_owner_ids: Vec::new(),
+            }
+        );
         assert!(matches!(
             control.begin_child(
                 OperationKind::Prompt,
@@ -1740,6 +1839,15 @@ mod tests {
 
         assert!(child_cancellation.is_cancelled());
         assert!(grandchild_cancellation.is_cancelled());
+        assert_eq!(
+            control.resource_snapshot(),
+            OperationResourceSnapshot {
+                root_operation_ids: vec!["root-agent".into()],
+                child_operation_ids: vec!["delegated-agent".into(), "delegated-prompt".into()],
+                cancelled_operation_ids: vec!["delegated-agent".into(), "delegated-prompt".into(),],
+                released_owner_ids: vec!["root-agent".into()],
+            }
+        );
         assert_eq!(control.active(), Some(OperationKind::AgentInvocation));
         assert_eq!(
             coordinator
@@ -1790,6 +1898,15 @@ mod tests {
         drop(grandchild);
         assert_eq!(control.child_count(), 0);
         assert_eq!(control.active(), None);
+        assert_eq!(
+            control.resource_snapshot(),
+            OperationResourceSnapshot {
+                root_operation_ids: Vec::new(),
+                child_operation_ids: Vec::new(),
+                cancelled_operation_ids: Vec::new(),
+                released_owner_ids: Vec::new(),
+            }
+        );
         assert!(
             coordinator
                 .state
@@ -1798,6 +1915,48 @@ mod tests {
                 .operation_event_contexts
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn shutdown_cancellation_reaches_every_open_root_and_child_once() {
+        let control = OperationControl::with_non_session_root_limit(2);
+        let root = control
+            .begin_root(
+                OperationClass::SessionWriteRoot,
+                OperationKind::Prompt,
+                "prompt-root".into(),
+            )
+            .unwrap();
+        let other_root = control
+            .begin_root(
+                OperationClass::NonSessionRoot,
+                OperationKind::AgentInvocation,
+                "agent-root".into(),
+            )
+            .unwrap();
+        let child = control
+            .begin_child(
+                OperationKind::Prompt,
+                "agent-child".into(),
+                "agent-root".into(),
+            )
+            .unwrap();
+
+        assert_eq!(
+            control.cancel_open_operations_for_shutdown(),
+            vec!["agent-child", "agent-root", "prompt-root"]
+        );
+        assert!(root.cancellation_token().unwrap().is_cancelled());
+        assert!(other_root.cancellation_token().unwrap().is_cancelled());
+        assert!(child.cancellation_token().is_cancelled());
+        assert!(control.cancel_open_operations_for_shutdown().is_empty());
+
+        drop(root);
+        drop(other_root);
+        drop(child);
+        let final_snapshot = control.resource_snapshot();
+        assert!(final_snapshot.root_operation_ids.is_empty());
+        assert!(final_snapshot.child_operation_ids.is_empty());
     }
 
     #[test]

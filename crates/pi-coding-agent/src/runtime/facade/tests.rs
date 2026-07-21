@@ -124,7 +124,7 @@ mod cases {
             })
             .await
             .unwrap_err();
-        assert_eq!(append_error.code(), "session");
+        assert_eq!(append_error.code(), "session_write_rejected");
 
         let manifest_options = CodingAgentSessionOptions::new()
             .with_session_id("sess_interactive_manifest_bridge")
@@ -4787,7 +4787,7 @@ mod cases {
             })
             .await
             .unwrap_err();
-        assert_eq!(error.code(), "session");
+        assert_eq!(error.code(), "session_write_rejected");
         assert_eq!(std::fs::read(&event_log_path).unwrap(), events_before);
         assert_eq!(std::fs::read(&manifest_path).unwrap(), manifest_before);
         assert_eq!(
@@ -5060,7 +5060,7 @@ mod cases {
                     .await
                     .unwrap_err()
             };
-            assert_eq!(error.code(), "session");
+            assert_eq!(error.code(), "session_write_rejected");
             assert_eq!(
                 session
                     .runtime_host
@@ -5140,6 +5140,141 @@ mod cases {
                     .is_empty()
             );
         }
+    }
+
+    #[tokio::test]
+    async fn automatic_delegation_terminal_write_distinguishes_definite_failure_and_uncertainty() {
+        fn delegation_provider() -> FauxProvider {
+            FauxProvider::with_call_queue(vec![
+                FauxProvider::single_call(
+                    vec![FauxResponse {
+                        text_deltas: Vec::new(),
+                        thinking_deltas: Vec::new(),
+                        tool_calls: vec![FauxToolCall {
+                            id: "tool_delegate_fault".into(),
+                            name: "delegate_agent".into(),
+                            deltas: Vec::new(),
+                            final_arguments: serde_json::json!({
+                                "agent_id": "explore",
+                                "task": "inspect durable fault"
+                            }),
+                        }],
+                    }],
+                    StopReason::ToolUse,
+                ),
+                FauxProvider::text_call("child durable result", StopReason::Stop),
+                FauxProvider::text_call("parent durable result", StopReason::Stop),
+            ])
+        }
+
+        let definite_temp = tempfile::tempdir().unwrap();
+        let definite_api = "automatic-delegation-definite-write-failure";
+        let definite_guard = crate::test_support::ProviderGuard::register(
+            definite_api,
+            Arc::new(delegation_provider()),
+        );
+        let definite_options = CodingAgentSessionOptions::new()
+            .with_ai_client(definite_guard.ai_client())
+            .with_session_id("sess_automatic_delegation_definite")
+            .with_session_log_root(definite_temp.path());
+        let mut definite = CodingAgentSession::create(definite_options.clone())
+            .await
+            .unwrap();
+        let definite_event_path = definite_temp
+            .path()
+            .join("sess_automatic_delegation_definite/events.jsonl");
+        definite
+            .persistent_session_service()
+            .fail_store_after_for_tests(StoreFailurePoint::AppendEvents, 0);
+        let outcome = definite
+            .run(CodingAgentOperation::Prompt(prompt_options(
+                definite_api,
+                "delegate before definite failure",
+            )))
+            .await
+            .unwrap();
+        let definite_operation_id = match outcome {
+            CodingAgentOperationOutcome::Prompt(PromptTurnOutcome::Failed {
+                operation_id,
+                error,
+                ..
+            }) => {
+                assert!(!matches!(error, CodingSessionError::PartialCommit { .. }));
+                assert!(error.to_string().contains("rejected before persistence"));
+                operation_id
+            }
+            other => panic!("expected definite prompt failure, got {other:?}"),
+        };
+        assert!(std::fs::metadata(&definite_event_path).unwrap().len() > 0);
+        let reopened = CodingAgentSession::open(definite_options).await.unwrap();
+        let replay = reopened.persistent_session_service().replay().unwrap();
+        assert_eq!(
+            replay.operation_status(&definite_operation_id),
+            Some(crate::session::replay::OperationReplayStatus::Failed)
+        );
+        assert!(
+            reopened
+                .persistent_session_service()
+                .recovery_summary()
+                .unwrap()
+                .in_doubt_operations
+                .is_empty()
+        );
+
+        let uncertain_temp = tempfile::tempdir().unwrap();
+        let uncertain_api = "automatic-delegation-manifest-uncertainty";
+        let uncertain_guard = crate::test_support::ProviderGuard::register(
+            uncertain_api,
+            Arc::new(delegation_provider()),
+        );
+        let uncertain_options = CodingAgentSessionOptions::new()
+            .with_ai_client(uncertain_guard.ai_client())
+            .with_session_id("sess_automatic_delegation_uncertain")
+            .with_session_log_root(uncertain_temp.path());
+        let mut uncertain = CodingAgentSession::create(uncertain_options.clone())
+            .await
+            .unwrap();
+        uncertain
+            .persistent_session_service()
+            .fail_store_after_for_tests(StoreFailurePoint::UpdateManifest, 0);
+        let outcome = uncertain
+            .run(CodingAgentOperation::Prompt(prompt_options(
+                uncertain_api,
+                "delegate before uncertain commit",
+            )))
+            .await
+            .unwrap();
+        let operation_id = match outcome {
+            CodingAgentOperationOutcome::Prompt(PromptTurnOutcome::Failed {
+                error: CodingSessionError::PartialCommit { operation_id, .. },
+                ..
+            }) => operation_id,
+            other => panic!("expected partial-commit prompt failure, got {other:?}"),
+        };
+        drop(uncertain);
+        let reopened = CodingAgentSession::open(uncertain_options).await.unwrap();
+        let replay = reopened.persistent_session_service().replay().unwrap();
+        assert_eq!(
+            replay.operation_status(&operation_id),
+            Some(crate::session::replay::OperationReplayStatus::Committed),
+            "authoritative terminal facts resolve manifest uncertainty on reopen"
+        );
+        assert!(
+            reopened
+                .persistent_session_service()
+                .recovery_summary()
+                .unwrap()
+                .in_doubt_operations
+                .is_empty(),
+            "resolved committed work must not retain recovery-pending residue"
+        );
+        let outbox = std::fs::read_to_string(
+            uncertain_temp
+                .path()
+                .join("sess_automatic_delegation_uncertain/outbox.jsonl"),
+        )
+        .unwrap();
+        assert!(outbox.contains(&operation_id));
     }
 
     #[tokio::test]

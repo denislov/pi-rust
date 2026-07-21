@@ -38,6 +38,8 @@ pub enum CodingSessionError {
     Resource { message: String },
     #[error("session error: {message}")]
     Session { message: String },
+    #[error("session write rejected before persistence: {message}")]
+    SessionWriteRejected { message: String },
     #[error(
         "event stream gap after sequence {requested_after}; oldest available product event is {oldest_available}; client must request a fresh UI snapshot"
     )]
@@ -108,6 +110,7 @@ impl CodingSessionError {
             Self::Input { .. } => "input",
             Self::Resource { .. } => "resource",
             Self::Session { .. } => "session",
+            Self::SessionWriteRejected { .. } => "session_write_rejected",
             Self::EventStreamGap { .. } => "event_stream_gap",
             Self::PartialCommit { .. } => "partial_commit",
             Self::RecoveryPending { .. } => "recovery_pending",
@@ -137,6 +140,7 @@ impl From<CodingSessionError> for CliError {
             | CodingSessionError::Input { message }
             | CodingSessionError::Resource { message }
             | CodingSessionError::Session { message }
+            | CodingSessionError::SessionWriteRejected { message }
             | CodingSessionError::SelfHealingEditFailed { message, .. }
             | CodingSessionError::Provider { message }
             | CodingSessionError::Tool { message }

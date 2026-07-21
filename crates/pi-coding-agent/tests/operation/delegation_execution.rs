@@ -4,7 +4,10 @@ use crate::support;
 
 use std::fs;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, AtomicUsize, Ordering},
+};
 
 use async_stream::stream;
 use pi_agent_core::api::tool::AgentTool;
@@ -14,12 +17,200 @@ use pi_ai::api::provider::ApiProvider;
 use pi_ai::api::stream::{AssistantMessageEvent, EventStream, StreamOptions};
 use pi_coding_agent::api::event::{CodingAgentProductEvent, CodingAgentProductEventReceiver};
 use pi_coding_agent::api::operation::{
-    CodingAgentOperation, CodingAgentOperationOutcome, PromptTurnOptions,
+    CodingAgentOperation, CodingAgentOperationOutcome, PromptTurnOptions, PromptTurnOutcome,
 };
 use pi_coding_agent::api::runtime::{CodingAgentSession, CodingAgentSessionOptions};
 use pi_coding_agent::api::view::CodingAgentSessionExportItem;
 use support::{EnvGuard, ProviderGuard as RegistryProviderGuard};
 use tempfile::tempdir;
+
+const OPERATION_TREE_ABORT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+#[tokio::test]
+async fn parent_abort_drops_stalled_child_stream_and_prevents_late_continuation() {
+    let temp = tempdir().unwrap();
+    let cwd = temp.path().join("workspace");
+    let global = temp.path().join("global");
+    fs::create_dir_all(&global).unwrap();
+    write_file(
+        cwd.join(".pi-rust/agents/delegating-planner.toml"),
+        r#"
+schema_version = 1
+id = "delegating-planner"
+display_name = "Delegating Planner"
+
+[delegation]
+allow_delegate_agent = true
+max_depth = 1
+max_parallel_children = 1
+require_confirmation = "never"
+allowed_agents = ["coder"]
+"#,
+    );
+    write_file(
+        cwd.join(".pi-rust/agents/coder.toml"),
+        r#"
+schema_version = 1
+id = "coder"
+display_name = "Coder"
+"#,
+    );
+    let _env_guard = EnvGuard::with_pi_rust_dir(global);
+
+    let api = "delegation-stalled-child-abort-api";
+    let provider = Arc::new(StalledChildProvider::default());
+    let _provider_guard = RegistryProviderGuard::register(api, provider.clone());
+    let mut session = CodingAgentSession::non_persistent(
+        CodingAgentSessionOptions::new()
+            .with_ai_client(_provider_guard.ai_client())
+            .with_cwd(&cwd)
+            .with_default_agent_profile_id("delegating-planner"),
+    )
+    .await
+    .unwrap();
+    let capability_control = session.capability_control();
+    let run_cwd = cwd.clone();
+    let running = tokio::spawn(async move {
+        let outcome = session
+            .run(CodingAgentOperation::Prompt(prompt_options(
+                &run_cwd,
+                api,
+                "delegate stalled work",
+            )))
+            .await;
+        (session, outcome)
+    });
+
+    tokio::time::timeout(
+        OPERATION_TREE_ABORT_TIMEOUT,
+        provider.child_started.notified(),
+    )
+    .await
+    .expect("delegated child provider did not start");
+    let cancellation_started = std::time::Instant::now();
+    let revocation = capability_control.revoke_older_operations();
+    assert!(
+        !revocation.cancellation_requested_operation_ids.is_empty(),
+        "capability revocation must reach the running operation tree"
+    );
+
+    let (session, outcome) = tokio::time::timeout(OPERATION_TREE_ABORT_TIMEOUT, running)
+        .await
+        .expect("parent Prompt did not converge after abort")
+        .unwrap();
+    assert!(matches!(
+        outcome,
+        Ok(CodingAgentOperationOutcome::Prompt(
+            PromptTurnOutcome::Aborted { .. }
+        ))
+    ));
+    assert!(provider.child_stream_dropped.load(Ordering::SeqCst));
+    assert_eq!(
+        provider.calls.load(Ordering::SeqCst),
+        2,
+        "parent must not issue a continuation after cancellation wins"
+    );
+    assert!(session.snapshot().active_operation.is_none());
+    println!(
+        "operation_tree_baseline\tcase=stalled_child_cancellation\telapsed_us={}",
+        cancellation_started.elapsed().as_micros()
+    );
+}
+
+#[tokio::test]
+async fn child_partial_then_error_stays_child_scoped_and_parent_receives_one_failure() {
+    let temp = tempdir().unwrap();
+    let cwd = temp.path().join("workspace");
+    let global = temp.path().join("global");
+    fs::create_dir_all(&global).unwrap();
+    write_file(
+        cwd.join(".pi-rust/agents/delegating-planner.toml"),
+        r#"
+schema_version = 1
+id = "delegating-planner"
+display_name = "Delegating Planner"
+
+[delegation]
+allow_delegate_agent = true
+max_depth = 1
+max_parallel_children = 1
+require_confirmation = "never"
+allowed_agents = ["coder"]
+"#,
+    );
+    write_file(
+        cwd.join(".pi-rust/agents/coder.toml"),
+        r#"
+schema_version = 1
+id = "coder"
+display_name = "Coder"
+"#,
+    );
+    let _env_guard = EnvGuard::with_pi_rust_dir(global);
+
+    let api = "delegation-child-partial-error-api";
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let _provider_guard = ProviderGuard::register(
+        api,
+        calls.clone(),
+        vec![
+            ScriptedResponse::tool_call(
+                "tool_delegate_partial_error",
+                "delegate_agent",
+                serde_json::json!({"agent_id": "coder", "task": "fail after partial"}),
+            ),
+            ScriptedResponse::PartialThenError {
+                partial: "child secret partial".into(),
+                error: "child provider failed".into(),
+            },
+            ScriptedResponse::text("parent recovered from child failure"),
+        ],
+    );
+    let mut session = CodingAgentSession::non_persistent(
+        CodingAgentSessionOptions::new()
+            .with_ai_client(_provider_guard.ai_client())
+            .with_cwd(&cwd)
+            .with_default_agent_profile_id("delegating-planner"),
+    )
+    .await
+    .unwrap();
+    let mut events = session.subscribe_product_events_public();
+
+    let outcome = session
+        .run(CodingAgentOperation::Prompt(prompt_options(
+            &cwd,
+            api,
+            "delegate faulting child",
+        )))
+        .await
+        .unwrap();
+    assert_eq!(
+        outcome.final_text(),
+        Some("parent recovered from child failure")
+    );
+    let calls = calls.lock().unwrap();
+    assert_eq!(calls.len(), 3);
+    let parent_continuation = context_texts(&calls[2].context);
+    assert!(
+        parent_continuation
+            .iter()
+            .any(|text| text.contains("child provider failed")),
+        "parent must receive the typed child failure result: {parent_continuation:#?}"
+    );
+    assert!(
+        parent_continuation
+            .iter()
+            .all(|text| !text.contains("child secret partial")),
+        "uncommitted child partial output leaked into parent context: {parent_continuation:#?}"
+    );
+    drop(calls);
+
+    let events = drain_events(&mut events);
+    assert_event_count(&events, "Delegation(Failed)", 1);
+    assert_event_count(&events, "Delegation(Completed)", 0);
+    assert_event_count(&events, "Delegation(Started)", 1);
+    assert!(session.snapshot().active_operation.is_none());
+}
 
 #[tokio::test]
 async fn prompt_executes_approved_agent_delegation_before_parent_continues() {
@@ -2106,6 +2297,10 @@ struct RecordedCall {
 #[derive(Debug, Clone)]
 enum ScriptedResponse {
     Text(String),
+    PartialThenError {
+        partial: String,
+        error: String,
+    },
     ToolCall {
         id: String,
         name: String,
@@ -2136,6 +2331,56 @@ struct ScriptedProvider {
     responses: Arc<Mutex<Vec<ScriptedResponse>>>,
 }
 
+#[derive(Default)]
+struct StalledChildProvider {
+    calls: AtomicUsize,
+    child_started: tokio::sync::Notify,
+    child_stream_dropped: Arc<AtomicBool>,
+}
+
+struct ChildStreamDropGuard(Arc<AtomicBool>);
+
+impl Drop for ChildStreamDropGuard {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
+impl ApiProvider for StalledChildProvider {
+    fn stream(&self, model: &Model, _ctx: Context, _opts: Option<StreamOptions>) -> EventStream {
+        let call = self.calls.fetch_add(1, Ordering::SeqCst);
+        let model_id = model.id.clone();
+        match call {
+            0 => Box::pin(stream! {
+                let mut message = AssistantMessage::empty("operation-tree-test", &model_id);
+                message.content.push(ContentBlock::ToolCall {
+                    id: "tool_delegate_stalled".into(),
+                    name: "delegate_agent".into(),
+                    arguments: serde_json::json!({
+                        "agent_id": "coder",
+                        "task": "wait until cancelled"
+                    }),
+                    thought_signature: None,
+                });
+                message.stop_reason = StopReason::ToolUse;
+                yield AssistantMessageEvent::Done {
+                    reason: StopReason::ToolUse,
+                    message,
+                };
+            }),
+            1 => {
+                self.child_started.notify_one();
+                let drop_guard = ChildStreamDropGuard(self.child_stream_dropped.clone());
+                Box::pin(futures::stream::poll_fn(move |_| {
+                    let _keep_guard_alive = &drop_guard;
+                    std::task::Poll::Pending
+                }))
+            }
+            _ => panic!("parent continuation must not start after stalled child cancellation"),
+        }
+    }
+}
+
 impl ApiProvider for ScriptedProvider {
     fn stream(&self, model: &Model, ctx: Context, _opts: Option<StreamOptions>) -> EventStream {
         self.calls
@@ -2156,6 +2401,23 @@ impl ApiProvider for ScriptedProvider {
                     message.stop_reason = StopReason::Stop;
                     yield AssistantMessageEvent::Done {
                         reason: StopReason::Stop,
+                        message,
+                    };
+                }
+                ScriptedResponse::PartialThenError { partial: text, error } => {
+                    message.content.push(ContentBlock::Text {
+                        text: text.clone(),
+                        text_signature: None,
+                    });
+                    yield AssistantMessageEvent::TextDelta {
+                        content_index: 0,
+                        delta: text,
+                        partial: message.clone(),
+                    };
+                    message.stop_reason = StopReason::Error;
+                    message.error_message = Some(error);
+                    yield AssistantMessageEvent::Error {
+                        reason: StopReason::Error,
                         message,
                     };
                 }

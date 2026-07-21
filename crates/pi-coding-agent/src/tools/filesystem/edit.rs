@@ -337,6 +337,7 @@ fn coding_session_error_message(error: CodingSessionError) -> String {
         | CodingSessionError::Input { message }
         | CodingSessionError::Resource { message }
         | CodingSessionError::Session { message }
+        | CodingSessionError::SessionWriteRejected { message }
         | CodingSessionError::SelfHealingEditFailed { message, .. }
         | CodingSessionError::Provider { message }
         | CodingSessionError::Tool { message }

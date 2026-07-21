@@ -2798,6 +2798,57 @@ fn delegated_child_flows_require_scheduler_lineage_admission() {
     }
 }
 
+#[test]
+fn operation_tree_fault_evidence_cannot_create_parallel_production_owners() {
+    let scan = SourceScan::new();
+    let scheduler = fs::read_to_string(scan.crate_root.join("src/runtime/scheduler.rs"))
+        .expect("read scheduler owner");
+    assert_eq!(
+        scheduler
+            .matches("pub(crate) struct OperationScheduler")
+            .count(),
+        1,
+        "operation admission must retain one scheduler owner"
+    );
+
+    let authorization = fs::read_to_string(scan.crate_root.join("src/services/authorization.rs"))
+        .expect("read authorization owner");
+    let authorization_production = production_source(&sanitize_rust_source(&authorization));
+    assert_eq!(
+        authorization_production
+            .matches("struct AuthorizationService")
+            .count(),
+        1,
+        "authorization waiters must retain one service owner"
+    );
+    assert_eq!(
+        authorization_production
+            .matches("pending: BTreeMap<String, PendingAuthorization>")
+            .count(),
+        1,
+        "authorization waiters must retain one registry"
+    );
+
+    for relative in [
+        "src/runtime/control.rs",
+        "src/runtime/scheduler.rs",
+        "src/runtime/finalization.rs",
+        "src/services/authorization.rs",
+        "src/services/event.rs",
+        "src/session/transaction.rs",
+    ] {
+        let source = fs::read_to_string(scan.crate_root.join(relative))
+            .unwrap_or_else(|error| panic!("read {relative}: {error}"));
+        let production = production_source(&sanitize_rust_source(&source));
+        for forbidden in ["FaultQueue", "FaultCommand", "fault_fallback", "fault_mode"] {
+            assert!(
+                !production.contains(forbidden),
+                "fault evidence leaked production fallback `{forbidden}` into {relative}"
+            );
+        }
+    }
+}
+
 fn discover_adapter_candidates(scan: &SourceScan) -> HashSet<String> {
     let sources = rust_files_under(&scan.crate_root.join("src"))
         .into_iter()
