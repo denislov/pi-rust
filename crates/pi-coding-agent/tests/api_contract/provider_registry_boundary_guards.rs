@@ -325,6 +325,7 @@ fn production_and_examples_use_only_item_allowlisted_upstream_contracts() {
         (
             "input",
             &[
+                "CombinedAutocompleteProvider",
                 "InputEvent",
                 "Key",
                 "KeyEvent",
@@ -394,6 +395,7 @@ fn production_and_examples_use_only_item_allowlisted_upstream_contracts() {
             "theme",
             &[
                 "MarkdownTheme",
+                "SelectListTheme",
                 "ThemePalette",
                 "TuiTheme",
                 "dark_theme",

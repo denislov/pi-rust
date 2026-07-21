@@ -5,7 +5,7 @@
 Baseline version: `0.3.1`, released as annotated tag `v0.3.1`.
 
 Source baseline: commit `870d4bb`; dated release record: `180f219`; post-baseline
-`0.4.0` through completed `0.5.5` convergence evidence is recorded below. Last
+`0.4.0` through completed `0.5.6` convergence evidence is recorded below. Last
 refreshed: 2026-07-22.
 
 This file records implementation facts, not desired behavior. Cargo manifests,
@@ -18,7 +18,7 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   `pi-coding-agent -> {pi-agent-core, pi-ai, pi-tui}`.
 - `pi-ai` and `pi-tui` have no workspace dependencies.
 - `pi-mom`, `pi-pods`, and `pi-web-ui` are placeholder crates.
-- All workspace packages inherit version `0.5.5` from the root manifest.
+- All workspace packages inherit version `0.5.6` from the root manifest.
 - The reduced 0.4.x train ends at `0.4.2`; reserved Extension release plans
   `0.4.3` through `0.4.5` are Skip records and did not produce package versions.
 - `pi-rust` is a placeholder binary; `pi-coding-agent` is user-facing.
@@ -238,6 +238,23 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   viewport-intersecting blocks before cloning lines. Unchanged 1,000- and
   10,000-block frames touch five visible blocks and write zero bytes in the
   frozen 24-row baseline.
+- The 0.5.6 fullscreen shell has explicit Conversation, Context rail/drawer/page,
+  Context/Tips divider, composer, assistance, and final-row status rectangles.
+  Composer assistance is role-positioned at the composer text origin while
+  modal surfaces retain independent placement. Context is a persistent rail at
+  wide widths, a bordered drawer at medium widths, and a composer-free page at
+  narrow widths; threshold-adjacent and tiny viewports are bounded.
+- Semantic theme roles distinguish focused/inactive structure, tabs, selection,
+  runtime state, metadata, and context pressure in dark, light, basic-color, and
+  color-disabled modes. Panel focus, list/autocomplete selection, composer
+  prompt, and transcript selection have separate markers. Status uses one
+  shared bounded context ratio, omits durable session identity, and prioritizes
+  runtime/context over cwd.
+- Transcript System, Assistant, Tool, Error, delegation, and child-page content
+  reserve one selection gutter and content origin. Markdown tables are emitted
+  atomically after exact width allocation, tab normalization, visible-column
+  alignment, and a deterministic narrow fallback rather than passing through
+  paragraph whitespace rewrapping.
 - A durable ProductEvent outbox now shares the bounded writer commit point with
   its source SessionEvents. Prompt, Compact, PluginLoad, and SelfHealingEdit
   terminal records persist and publish only after the corresponding commit.

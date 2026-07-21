@@ -19,7 +19,7 @@ use crate::adapters::interactive::root::{
     InteractiveAction, InteractiveRoot, InteractiveStatus, PendingAgentInvocationRequest,
     PendingAgentTeamRequest, PendingBranchSummaryRequest, PendingDelegationConfirmationCommand,
     PendingDelegationConfirmationSelection, PendingForkRequest, PendingInteractiveCommand,
-    PendingSelfHealingEditRequest,
+    PendingSelfHealingEditRequest, TransientOverlayRole,
 };
 use crate::adapters::interactive::session_actions::{
     SessionChoiceKind, hydrate_existing_session_target, hydrated_session_from_rust_native,
@@ -522,30 +522,75 @@ fn install_transient_overlays<T: Terminal>(
         root_ref(tui, root_id)?.transient_overlay_components();
     let support = tui.show_overlay(
         Box::new(support_component),
-        transient_overlay_options(0, true),
+        transient_overlay_options(TransientOverlayRole::ComposerAssistance, 0),
     );
     support.hide(tui);
     let modal = tui.show_overlay(
         Box::new(modal_component),
-        transient_overlay_options(0, false),
+        transient_overlay_options(TransientOverlayRole::ModalDialog, 0),
     );
     modal.hide(tui);
     root_mut(tui, root_id)?.install_transient_overlay_handles(support, modal);
     Ok(())
 }
 
-fn transient_overlay_options(bottom_margin: usize, non_capturing: bool) -> OverlayOptions {
-    OverlayOptions {
-        width: non_capturing.then_some(SizeValue::Columns(72)),
-        anchor: OverlayAnchor::BottomCenter,
-        margin: OverlayMargin {
-            right: usize::from(non_capturing) * 2,
-            bottom: bottom_margin,
-            left: usize::from(non_capturing) * 2,
+fn transient_overlay_options(role: TransientOverlayRole, bottom_margin: usize) -> OverlayOptions {
+    match role {
+        TransientOverlayRole::ComposerAssistance | TransientOverlayRole::SupportPrompt => {
+            let assistance = role == TransientOverlayRole::ComposerAssistance;
+            OverlayOptions {
+                width: Some(SizeValue::Columns(72)),
+                anchor: OverlayAnchor::BottomLeft,
+                margin: OverlayMargin {
+                    right: usize::from(!assistance) * 2,
+                    bottom: bottom_margin,
+                    left: usize::from(!assistance) * 2,
+                    ..Default::default()
+                },
+                non_capturing: true,
+                ..Default::default()
+            }
+        }
+        TransientOverlayRole::ModalDialog => OverlayOptions {
+            width: Some(SizeValue::Columns(72)),
+            anchor: OverlayAnchor::Center,
+            margin: OverlayMargin {
+                top: 1,
+                right: 2,
+                bottom: 1,
+                left: 2,
+            },
             ..Default::default()
         },
-        non_capturing,
-        ..Default::default()
+        TransientOverlayRole::ContextRailDetail => OverlayOptions {
+            width: Some(SizeValue::Columns(38)),
+            anchor: OverlayAnchor::RightCenter,
+            margin: OverlayMargin {
+                top: 1,
+                right: 0,
+                bottom: bottom_margin,
+                left: 0,
+            },
+            ..Default::default()
+        },
+        TransientOverlayRole::ContextDrawerDetail => OverlayOptions {
+            width: Some(SizeValue::Percent(40)),
+            anchor: OverlayAnchor::RightCenter,
+            margin: OverlayMargin {
+                bottom: bottom_margin,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        TransientOverlayRole::ContextPageDetail => OverlayOptions {
+            width: Some(SizeValue::Percent(100)),
+            anchor: OverlayAnchor::TopLeft,
+            margin: OverlayMargin {
+                bottom: 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
     }
 }
 
@@ -562,14 +607,14 @@ fn sync_transient_overlays<T: Terminal>(tui: &mut Tui<T>, root_id: usize) -> Res
 
     tui.set_overlay_options(
         support,
-        transient_overlay_options(projection.bottom_margin, true),
+        transient_overlay_options(projection.support_role, projection.bottom_margin),
     );
     support.set_hidden(tui, !projection.support_visible);
 
     let modal_was_visible = tui.has_overlay(modal);
     tui.set_overlay_options(
         modal,
-        transient_overlay_options(projection.bottom_margin, false),
+        transient_overlay_options(projection.modal_role, projection.bottom_margin),
     );
     if projection.modal_visible {
         modal.set_hidden(tui, false);
@@ -2774,6 +2819,133 @@ mod tests {
         install_transient_overlays(&mut tui, root_id).unwrap();
         sync_transient_overlays(&mut tui, root_id).unwrap();
         (tui, root_id)
+    }
+
+    #[test]
+    fn transient_overlay_roles_have_independent_geometry_and_capture_policy() {
+        let assistance = transient_overlay_options(TransientOverlayRole::ComposerAssistance, 4);
+        assert_eq!(assistance.anchor, OverlayAnchor::BottomLeft);
+        assert_eq!(assistance.width, Some(SizeValue::Columns(72)));
+        assert_eq!(assistance.margin.left, 0);
+        assert_eq!(assistance.margin.right, 0);
+        assert_eq!(assistance.margin.bottom, 4);
+        assert!(assistance.non_capturing);
+
+        let support = transient_overlay_options(TransientOverlayRole::SupportPrompt, 5);
+        assert_eq!(support.anchor, OverlayAnchor::BottomLeft);
+        assert_eq!(support.margin.left, 2);
+        assert_eq!(support.margin.right, 2);
+        assert!(support.non_capturing);
+
+        let modal = transient_overlay_options(TransientOverlayRole::ModalDialog, 9);
+        assert_eq!(modal.anchor, OverlayAnchor::Center);
+        assert_eq!(modal.width, Some(SizeValue::Columns(72)));
+        assert!(!modal.non_capturing);
+        assert_eq!(modal.margin.bottom, 1);
+
+        let context = transient_overlay_options(TransientOverlayRole::ContextRailDetail, 6);
+        assert_eq!(context.anchor, OverlayAnchor::RightCenter);
+        assert_eq!(context.width, Some(SizeValue::Columns(38)));
+        assert_eq!(context.margin.bottom, 6);
+        assert!(!context.non_capturing);
+
+        let drawer = transient_overlay_options(TransientOverlayRole::ContextDrawerDetail, 6);
+        assert_eq!(drawer.anchor, OverlayAnchor::RightCenter);
+        assert_eq!(drawer.width, Some(SizeValue::Percent(40)));
+
+        let page = transient_overlay_options(TransientOverlayRole::ContextPageDetail, 6);
+        assert_eq!(page.anchor, OverlayAnchor::TopLeft);
+        assert_eq!(page.width, Some(SizeValue::Percent(100)));
+        assert_eq!(page.margin.bottom, 1);
+    }
+
+    #[test]
+    fn fullscreen_slash_assistance_aligns_with_composer_text_at_supported_widths_and_resize() {
+        fn visible_column(line: &str, needle: &str) -> usize {
+            let byte = line.find(needle).expect("expected text in rendered line");
+            pi_tui::api::render::visible_width(&line[..byte])
+        }
+
+        let mut tui = Tui::new(VirtualTerminal::new(60, 18));
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "faux-model".to_string(),
+            "session".to_string(),
+        );
+        root.set_fullscreen_viewport(true);
+        let root_id = tui.add_child_with_id(Box::new(root));
+        tui.set_focus(Some(root_id));
+        install_transient_overlays(&mut tui, root_id).unwrap();
+        for key in ["/", "h", "e"] {
+            tui.dispatch_input(&InputEvent::Key(parse_key(key).unwrap()));
+        }
+
+        for (width, height) in [(60, 18), (80, 24), (120, 32), (160, 40)] {
+            tui.terminal_mut().resize(width, height);
+            sync_transient_overlays(&mut tui, root_id).unwrap();
+            tui.render_once().unwrap();
+            let lines = tui.rendered_lines();
+            let assistance = lines
+                .iter()
+                .find(|line| line.contains("/help") && line.contains("Show help"))
+                .unwrap_or_else(|| panic!("slash assistance missing at {width}x{height}"));
+            let composer = lines
+                .iter()
+                .find(|line| line.contains("> /he"))
+                .unwrap_or_else(|| panic!("composer missing at {width}x{height}"));
+            assert_eq!(
+                visible_column(assistance, "/help"),
+                visible_column(composer, "/"),
+                "slash assistance must remain attached after resize at {width}x{height}:\n{}",
+                lines.join("\n")
+            );
+        }
+    }
+
+    #[test]
+    fn fullscreen_file_assistance_is_projected_above_and_aligned_with_composer() {
+        fn visible_column(line: &str, needle: &str) -> usize {
+            let byte = line.find(needle).expect("expected text in rendered line");
+            pi_tui::api::render::visible_width(&line[..byte])
+        }
+
+        let cwd = tempfile::tempdir().unwrap();
+        std::fs::write(cwd.path().join("fixture.rs"), "fn main() {}\n").unwrap();
+        let mut tui = Tui::new(VirtualTerminal::new(80, 24));
+        let mut root = InteractiveRoot::new(
+            cwd.path().to_path_buf(),
+            "faux-model".to_string(),
+            "session".to_string(),
+        );
+        root.set_fullscreen_viewport(true);
+        let root_id = tui.add_child_with_id(Box::new(root));
+        tui.set_focus(Some(root_id));
+        install_transient_overlays(&mut tui, root_id).unwrap();
+        for key in ["@", "f"] {
+            tui.dispatch_input(&InputEvent::Key(parse_key(key).unwrap()));
+        }
+        sync_transient_overlays(&mut tui, root_id).unwrap();
+        tui.render_once().unwrap();
+
+        let lines = tui.rendered_lines();
+        let assistance = lines
+            .iter()
+            .find(|line| line.contains("fixture.rs"))
+            .unwrap_or_else(|| panic!("file assistance missing: {lines:#?}"));
+        let composer = lines
+            .iter()
+            .find(|line| line.contains("> @f"))
+            .unwrap_or_else(|| panic!("composer missing: {lines:#?}"));
+        assert_eq!(
+            visible_column(assistance, "fixture.rs"),
+            visible_column(composer, "@f")
+        );
+        let assistance_row = lines
+            .iter()
+            .position(|line| line.contains("fixture.rs"))
+            .unwrap();
+        let composer_row = lines.iter().position(|line| line.contains("> @f")).unwrap();
+        assert!(assistance_row < composer_row, "{lines:#?}");
     }
 
     fn authorization_request(id: &str) -> ToolAuthorizationRequest {

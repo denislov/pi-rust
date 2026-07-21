@@ -314,6 +314,55 @@ fn table_rows_separated_by_dividers() {
 }
 
 #[test]
+fn table_geometry_is_atomic_aligned_unicode_safe_and_has_a_narrow_fallback() {
+    fn boundaries(line: &str) -> Vec<usize> {
+        line.char_indices()
+            .filter(|(_, ch)| "┌┬┐│├┼┤└┴┘".contains(*ch))
+            .map(|(byte, _)| visible_width(&line[..byte]))
+            .collect()
+    }
+
+    let source = "| Left | 中🙂 | Right |\n| :--- | :---: | ---: |\n| alpha beta | e\u{301}\t中 | 7 |\n| longer-value | 🙂 | 123 |";
+    let mut md = Markdown::new(source);
+    let lines = md.render(34);
+    let plain = lines
+        .iter()
+        .map(|line| strip_ansi_line(line))
+        .collect::<Vec<_>>();
+    let table_lines = plain
+        .iter()
+        .filter(|line| line.chars().any(|ch| "┌│├└".contains(ch)))
+        .collect::<Vec<_>>();
+    assert!(!table_lines.is_empty(), "{plain:#?}");
+    let expected_boundaries = boundaries(table_lines[0]);
+    for line in table_lines {
+        assert_eq!(boundaries(line), expected_boundaries, "{plain:#?}");
+        assert!(visible_width(line) <= 34, "table overflow: {line:?}");
+    }
+    assert!(plain.iter().all(|line| !line.contains('\t')), "{plain:#?}");
+    assert!(
+        plain
+            .iter()
+            .any(|line| line.contains(" 7 ") || line.contains("  7 ")),
+        "right alignment should add leading padding: {plain:#?}"
+    );
+
+    let mut narrow = Markdown::new("| A | B | C |\n| --- | --- | --- |\n| one | two | three |");
+    let narrow_lines = narrow.render(8);
+    assert!(
+        narrow_lines.iter().all(|line| visible_width(line) <= 8),
+        "narrow fallback overflow: {narrow_lines:#?}"
+    );
+    let narrow_text = narrow_lines.join("\n");
+    assert!(narrow_text.contains("one"), "{narrow_text}");
+    assert!(narrow_text.contains("three"), "{narrow_text}");
+    assert!(
+        !narrow_text.contains('┬'),
+        "fallback should not clip a box: {narrow_text}"
+    );
+}
+
+#[test]
 fn default_text_style_applies_fg_color_to_paragraph() {
     let style = DefaultTextStyle {
         fg: Some(Color::Ansi256(244)), // gray

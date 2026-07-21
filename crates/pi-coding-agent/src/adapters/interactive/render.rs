@@ -882,8 +882,8 @@ fn block_view(
         .map_or(TranscriptDisplayState::Collapsed, |view| {
             view.tool_argument_state(block_id, item)
         });
-    let selection_gutter = opts.selection_gutter && item.selectable();
-    let selected = selection_gutter && opts.selected_block == Some(block_id);
+    let selection_gutter = opts.selection_gutter;
+    let selected = item.selectable() && opts.selected_block == Some(block_id);
     (
         display_state,
         tool_argument_state,
@@ -982,7 +982,7 @@ pub(super) fn render_transcript_lines(
             .map_or(TranscriptDisplayState::Collapsed, |view| {
                 view.tool_argument_state(block_id, item)
             });
-        let item_selection_gutter = selection_gutter && item.selectable();
+        let item_selection_gutter = selection_gutter;
         let block = render_block(
             item,
             width,
@@ -995,7 +995,7 @@ pub(super) fn render_transcript_lines(
             display_state,
             tool_argument_state,
             transcript_image_id(render_key.transcript_id, render_key.item_id),
-            item_selection_gutter && selected_block == Some(block_id),
+            item.selectable() && selected_block == Some(block_id),
             item_selection_gutter,
             show_images,
             image_width_cells,
@@ -1170,7 +1170,7 @@ fn apply_selection_gutter(lines: Vec<String>, width: usize, selected: bool) -> V
         .into_iter()
         .enumerate()
         .map(|(index, line)| {
-            let marker = if selected && index == 0 { "> " } else { "  " };
+            let marker = if selected && index == 0 { "▌ " } else { "  " };
             fit_line(&format!("{marker}{line}"), width)
         })
         .collect()
@@ -1217,8 +1217,8 @@ fn render_user_message(
 }
 
 /// Render an assistant message (TS `AssistantMessageComponent`): no
-/// background, optional thinking block, then markdown body indented by one
-/// column. Thinking and body are separated by one blank line only when the
+/// background, optional thinking block, then markdown body at the common
+/// transcript content origin. Thinking and body are separated by one blank line only when the
 /// body has visible content.
 #[allow(clippy::too_many_arguments)]
 fn render_assistant_message(
@@ -1290,9 +1290,8 @@ fn render_assistant_message(
 
     if has_body {
         let mut md = Markdown::new(markdown).with_theme(markdown_theme.clone());
-        let body_width = width.saturating_sub(1).max(1);
-        for line in md.render(body_width) {
-            lines.push(fit_line(&format!(" {line}"), width));
+        for line in md.render(width) {
+            lines.push(fit_line(&line, width));
         }
     }
 
@@ -1485,8 +1484,8 @@ impl ToolStatus {
     fn label(self) -> &'static str {
         match self {
             ToolStatus::Running => "running",
-            ToolStatus::Done => "done",
-            ToolStatus::Error => "error",
+            ToolStatus::Done => "completed",
+            ToolStatus::Error => "failed",
         }
     }
     fn style(self, styles: &TranscriptStyles) -> Style {
@@ -1991,6 +1990,51 @@ mod tests {
     }
 
     #[test]
+    fn transcript_roles_share_one_reserved_content_gutter() {
+        fn content_column(lines: &[String], needle: &str) -> usize {
+            let line = lines
+                .iter()
+                .find(|line| line.contains(needle))
+                .unwrap_or_else(|| panic!("missing {needle}: {lines:#?}"));
+            let byte = line.find(needle).unwrap();
+            visible_width(&line[..byte])
+        }
+
+        let mut transcript = Transcript::new();
+        transcript.push(TranscriptItem::system("System notice"));
+        transcript.push(TranscriptItem::assistant(
+            "assistant-gutter",
+            "Assistant content",
+            true,
+        ));
+        transcript.push(TranscriptItem::Tool {
+            call_id: "tool-gutter".into(),
+            name: "read".into(),
+            args: serde_json::json!({"path": "src/main.rs"}),
+            result: Some("done".into()),
+            is_error: false,
+        });
+        transcript.push(TranscriptItem::error("gutter failure"));
+        let mut opts = test_opts(72, false);
+        opts.selection_gutter = true;
+        opts.selected_block = None;
+
+        let lines = render_transcript_lines(&transcript, &opts);
+        for needle in [
+            "System notice",
+            "Assistant content",
+            "read src/main.rs",
+            "Error:",
+        ] {
+            assert_eq!(content_column(&lines, needle), 2, "{needle}: {lines:#?}");
+        }
+        assert!(
+            lines.iter().any(|line| line.starts_with("  System notice")),
+            "non-selectable System rows must reserve the same gutter: {lines:#?}"
+        );
+    }
+
+    #[test]
     fn markdown_theme_uses_resolved_colors() {
         // Regression: `markdown_theme()` must derive its colors from the
         // ResolvedTheme (dark.json), not the pi-tui palette (Ansi16/256 +
@@ -2367,7 +2411,9 @@ mod tests {
         });
         let lines = render_transcript_lines(&transcript, &test_opts(60, false));
         assert!(
-            lines[0].trim().starts_with("read src/lib.rs:10-14 done"),
+            lines[0]
+                .trim()
+                .starts_with("read src/lib.rs:10-14 completed"),
             "{}",
             lines[0]
         );
@@ -2448,7 +2494,7 @@ mod tests {
         let joined = colored.join("\n");
         // Header is `edit <path> done` with no `tool` prefix.
         assert!(joined.contains("src/lib.rs"), "path missing: {joined}");
-        assert!(joined.contains("done"), "status missing: {joined}");
+        assert!(joined.contains("completed"), "status missing: {joined}");
         assert!(
             !joined.contains("tool edit"),
             "should not use generic prefix: {joined}"
@@ -2507,7 +2553,7 @@ mod tests {
         assert!(header.contains("in src"), "path missing: {header}");
         assert!(header.contains("(*.rs)"), "glob missing: {header}");
         assert!(header.contains("limit 50"), "limit missing: {header}");
-        assert!(header.contains("done"), "status missing: {header}");
+        assert!(header.contains("completed"), "status missing: {header}");
     }
 
     #[test]
@@ -2579,7 +2625,11 @@ mod tests {
         });
         let lines = render_transcript_lines(&transcript, &test_opts(60, false));
         let header = lines[0].trim();
-        assert!(header.starts_with("write src/main.rs done"), "{}", header);
+        assert!(
+            header.starts_with("write src/main.rs completed"),
+            "{}",
+            header
+        );
     }
 
     // ---- error message wrapping ----
@@ -2702,7 +2752,7 @@ mod tests {
         opts.selection_gutter = true;
 
         let preview = render_transcript_lines(&transcript, &opts).join("\n");
-        assert!(preview.contains("> $ printf lines done"), "{preview}");
+        assert!(preview.contains("▌ $ printf lines completed"), "{preview}");
         assert!(preview.contains("three"), "{preview}");
         assert!(preview.contains("five"), "{preview}");
         assert!(
@@ -2740,7 +2790,7 @@ mod tests {
         opts.view = Some(view.snapshot());
 
         let preview = render_transcript_lines(&transcript, &opts).join("\n");
-        assert!(preview.contains("> thinking · preview"), "{preview}");
+        assert!(preview.contains("▌ thinking · preview"), "{preview}");
         assert!(!preview.contains("think one"), "{preview}");
         assert!(preview.contains("think five"), "{preview}");
         assert!(preview.contains("final answer"), "{preview}");
@@ -2783,7 +2833,7 @@ mod tests {
 
         let preview = render_transcript_lines(&transcript, &opts).join("\n");
         assert!(
-            preview.contains("> delegate agent review completed"),
+            preview.contains("▌ delegate agent review completed"),
             "{preview}"
         );
         assert!(preview.contains("task: review the parser"), "{preview}");

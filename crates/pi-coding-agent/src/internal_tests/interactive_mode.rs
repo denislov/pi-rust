@@ -963,8 +963,8 @@ async fn scripted_interactive_initial_render_uses_content_height() {
         "welcome line should include the binary version: {frame}"
     );
     assert!(
-        frame.contains("submit"),
-        "welcome line should mention submit: {frame}"
+        !frame.contains("submit"),
+        "welcome should not repeat Tips: {frame}"
     );
     assert!(
         frame.contains("/help"),
@@ -1134,7 +1134,10 @@ async fn scripted_fullscreen_context_uses_side_and_modal_overlays() {
     let narrow_frame = narrow.rendered_lines.join("\n");
     assert!(narrow_frame.contains("Context [ops]"), "{narrow_frame}");
     assert!(!narrow_frame.contains("Conversation"), "{narrow_frame}");
-    assert!(narrow_frame.contains("> "), "{narrow_frame}");
+    assert!(
+        !narrow_frame.contains("> "),
+        "narrow Context page must hide the composer: {narrow_frame}"
+    );
 }
 
 #[tokio::test]
@@ -1212,8 +1215,8 @@ async fn scripted_interactive_shows_welcome_line_on_empty_transcript() {
         "welcome line should mention version: {frame}"
     );
     assert!(
-        frame.contains("submit"),
-        "welcome line should mention submit: {frame}"
+        !frame.contains("submit"),
+        "welcome should not repeat Tips: {frame}"
     );
 }
 

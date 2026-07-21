@@ -13,6 +13,45 @@ const FILE_MUTATION_QUEUE_TEST_SOURCE: &str =
     include_str!("../../src/internal_tests/file_mutation_queue.rs");
 
 #[test]
+fn product_fullscreen_visual_vocabulary_stays_out_of_pi_tui() {
+    fn rust_sources(root: &std::path::Path, output: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(root).expect("read source directory") {
+            let path = entry.expect("read source entry").path();
+            if path.is_dir() {
+                rust_sources(&path, output);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                output.push(path);
+            }
+        }
+    }
+
+    let pi_tui = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../pi-tui/src");
+    let mut sources = Vec::new();
+    rust_sources(&pi_tui, &mut sources);
+    let forbidden = [
+        "Context rail",
+        "Context drawer",
+        "Context page",
+        "Composer assistance",
+        "TransientOverlayRole",
+    ];
+    let mut violations = Vec::new();
+    for path in sources {
+        let source = std::fs::read_to_string(&path).expect("read pi-tui source");
+        for term in forbidden {
+            if source.contains(term) {
+                violations.push(format!("{}: {term}", path.display()));
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "product fullscreen vocabulary belongs to pi-coding-agent:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
 fn theme_reload_worker_does_not_poll_with_thread_sleep() {
     assert!(
         !THEME_RELOAD_SOURCE.contains("std::thread::sleep"),

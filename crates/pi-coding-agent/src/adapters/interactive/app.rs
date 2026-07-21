@@ -16,7 +16,6 @@ use pi_ai::api::model::Model;
 use pi_tui::api::component::Component;
 #[cfg(test)]
 use pi_tui::api::input::InputEvent;
-use pi_tui::api::input::KeybindingsManager;
 #[cfg(test)]
 use pi_tui::api::render::visible_width;
 use pi_tui::api::terminal::ProcessTerminal;
@@ -27,7 +26,6 @@ use pi_tui::api::theme::{TuiTheme, dark_theme, light_theme};
 #[cfg(test)]
 use crate::adapters::interactive::clipboard::ClipboardSink;
 use crate::adapters::interactive::input::InputPump;
-use crate::adapters::interactive::key_hints::{app_key_hint, key_hint};
 use crate::adapters::interactive::r#loop::run_interactive_loop_with_input;
 #[cfg(test)]
 use crate::adapters::interactive::r#loop::{LoopResult, run_interactive_loop};
@@ -254,14 +252,10 @@ pub(super) fn session_label(session: &Option<SessionRunOptions>) -> String {
     }
 }
 
-pub(super) fn welcome_line(keybindings: &KeybindingsManager) -> String {
+pub(super) fn welcome_line() -> String {
     format!(
-        "pi-rust {}\n{} · {} · /help\n{} · {}",
+        "pi-rust {}\nReady · /help for commands",
         env!("CARGO_PKG_VERSION"),
-        key_hint(keybindings, "tui.input.submit", "submit"),
-        key_hint(keybindings, "tui.input.newLine", "newline"),
-        app_key_hint(keybindings, "app.interrupt", "interrupt/exit"),
-        app_key_hint(keybindings, "app.tools.expand", "expand tools"),
     )
 }
 
@@ -673,7 +667,7 @@ mod tests {
         assert!(
             collapsed[0]
                 .trim_start()
-                .starts_with("read src/lib.rs done"),
+                .starts_with("read src/lib.rs completed"),
             "{}",
             collapsed[0]
         );
@@ -731,9 +725,9 @@ mod tests {
         assert_eq!(
             headers,
             [
-                "write src/main.rs done",
-                "edit src/lib.rs done",
-                "$ cargo test -p pi-coding-agent done",
+                "write src/main.rs completed",
+                "edit src/lib.rs completed",
+                "$ cargo test -p pi-coding-agent completed",
             ],
             "{lines:?}"
         );
@@ -777,7 +771,9 @@ mod tests {
 
         let lines = render_transcript_lines(&transcript, &opts(40, 3));
         assert!(
-            lines[0].trim_start().starts_with("read src/lib.rs done"),
+            lines[0]
+                .trim_start()
+                .starts_with("read src/lib.rs completed"),
             "{}",
             lines[0]
         );

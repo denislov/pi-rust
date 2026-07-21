@@ -7,8 +7,8 @@ use pi_ai::api::model::Model;
 use pi_tui::api::component::OverlayHandle;
 use pi_tui::api::component::{Component, Editor, SettingItem, SettingsList, SettingsListOptions};
 use pi_tui::api::input::{
-    InputEvent, Key, KeyEventKind, KeyModifiers, KeybindingsManager, MouseButton, MouseEvent,
-    MouseEventKind, matches_key,
+    CombinedAutocompleteProvider, InputEvent, Key, KeyEventKind, KeyModifiers, KeybindingsManager,
+    MouseButton, MouseEvent, MouseEventKind, matches_key,
 };
 use pi_tui::api::render::{
     Constraint, ERROR, FocusRing, Frame, HitMap, HitRegion, Layout, Point, Rect, STATUS_IDLE,
@@ -152,6 +152,15 @@ impl ContextTab {
         }
     }
 
+    fn compact_label(self) -> &'static str {
+        match self {
+            Self::Ops => "ops",
+            Self::Changes => "chg",
+            Self::Agents => "ag",
+            Self::Usage => "use",
+        }
+    }
+
     fn next(self) -> Self {
         let index = Self::ALL.iter().position(|tab| *tab == self).unwrap_or(0);
         Self::ALL[(index + 1) % Self::ALL.len()]
@@ -204,13 +213,33 @@ pub(super) struct TransientOverlayProjection {
     pub(super) modal_visible: bool,
     pub(super) support_visible: bool,
     pub(super) bottom_margin: usize,
+    pub(super) support_role: TransientOverlayRole,
+    pub(super) modal_role: TransientOverlayRole,
+}
+
+/// Product-owned placement policy for fullscreen transient surfaces.
+///
+/// The generic overlay host in `pi-tui` only understands geometry.  Keeping
+/// these roles here prevents a modal dialog from accidentally inheriting the
+/// composer-assistance placement policy (or vice versa).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum TransientOverlayRole {
+    ComposerAssistance,
+    SupportPrompt,
+    ModalDialog,
+    ContextRailDetail,
+    ContextDrawerDetail,
+    ContextPageDetail,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ShellLayout {
     mode: ShellLayoutMode,
     conversation: Rect,
+    conversation_context_divider: Option<Rect>,
+    context_drawer_divider: Option<Rect>,
     context: Option<Rect>,
+    context_tips_divider: Option<Rect>,
     tips: Option<Rect>,
     composer: Rect,
     status: Rect,
@@ -584,7 +613,7 @@ impl InteractiveRoot {
         editor.set_focused(true);
 
         let mut transcript = Transcript::new();
-        transcript.push(TranscriptItem::system(welcome_line(&keybindings)));
+        transcript.push(TranscriptItem::system(welcome_line()));
         let settings_list = build_settings_list(settings.clone(), &theme, keybindings.clone());
         let profile_registry = profile_registry_for_cwd(&cwd);
         let mut focus_ring = FocusRing::new([
@@ -751,11 +780,27 @@ impl InteractiveRoot {
         let modal_lines = self.render_modal_surface(terminal_width.max(1));
         let support_width = terminal_width.saturating_sub(4).clamp(1, 72);
         let mut support_lines = self.render_transient_prompts(support_width);
-        if modal_lines.is_empty() {
-            support_lines.extend(self.render_completion_surface(support_width));
-        }
+        let support_role = if support_lines.is_empty() {
+            support_lines = if modal_lines.is_empty() {
+                self.render_completion_surface(support_width)
+            } else {
+                Vec::new()
+            };
+            TransientOverlayRole::ComposerAssistance
+        } else {
+            TransientOverlayRole::SupportPrompt
+        };
         let modal_visible = !modal_lines.is_empty();
         let support_visible = !support_lines.is_empty();
+        let modal_role = if self.local.context_detail.is_some() {
+            match shell_layout_mode(terminal_width) {
+                ShellLayoutMode::Wide => TransientOverlayRole::ContextRailDetail,
+                ShellLayoutMode::Medium => TransientOverlayRole::ContextDrawerDetail,
+                ShellLayoutMode::Narrow => TransientOverlayRole::ContextPageDetail,
+            }
+        } else {
+            TransientOverlayRole::ModalDialog
+        };
         self.local.modal_overlay.set_lines(modal_lines);
         self.local.support_overlay.set_lines(support_lines);
 
@@ -767,6 +812,8 @@ impl InteractiveRoot {
             modal_visible,
             support_visible,
             bottom_margin: composer_height.saturating_add(1),
+            support_role,
+            modal_role,
         }
     }
 
@@ -1063,7 +1110,7 @@ impl InteractiveRoot {
         for tab in ContextTab::ALL {
             let index = tab.index();
             let count = if tab == ContextTab::Usage {
-                self.context_usage_lines().len()
+                self.context_usage_lines(self.viewport_width).len()
             } else {
                 self.context_items(tab).len()
             };
@@ -1104,7 +1151,7 @@ impl InteractiveRoot {
     fn scroll_context(&mut self, rows: isize) {
         let index = self.local.context_tab.index();
         let count = if self.local.context_tab == ContextTab::Usage {
-            self.context_usage_lines().len()
+            self.context_usage_lines(self.viewport_width).len()
         } else {
             self.context_items(self.local.context_tab).len()
         };
@@ -2293,7 +2340,15 @@ impl InteractiveRoot {
     }
 
     pub(super) fn editor_border_style(&self) -> Style {
-        if self.local.selecting_model
+        if !self.local.editor.focused() {
+            self.resolved_theme
+                .as_ref()
+                .map_or(self.theme.editor.border, |resolved| {
+                    Style::fg(crate::resources::to_color(
+                        resolved.fg(ThemeColor::BorderMuted),
+                    ))
+                })
+        } else if self.local.selecting_model
             || self.local.selecting_settings
             || self.local.selecting_session
             || self.delegation_confirmation_menu.is_some()
@@ -2331,7 +2386,10 @@ impl InteractiveRoot {
     }
 
     fn render_slash_suggestions(&mut self, width: usize) -> Vec<String> {
-        if self.local.selecting_model
+        if (self.fullscreen_viewport
+            && shell_layout_mode(self.viewport_width) == ShellLayoutMode::Narrow
+            && self.local.context_open)
+            || self.local.selecting_model
             || self.local.selecting_settings
             || self.local.selecting_session
             || self.delegation_confirmation_menu.is_some()
@@ -2349,6 +2407,7 @@ impl InteractiveRoot {
             &mut self.slash_suggestion_selected,
             width,
             &commands,
+            &self.theme.select_list,
         )
     }
 
@@ -2592,12 +2651,18 @@ impl InteractiveRoot {
     }
 
     fn render_editor_box(&mut self, width: usize) -> Vec<String> {
-        let editor_lines = self.local.editor.render(width.saturating_sub(2));
+        let editor_width = width.saturating_sub(2);
+        let editor_lines = if self.fullscreen_viewport {
+            self.local.editor.render_input(editor_width)
+        } else {
+            self.local.editor.render(editor_width)
+        };
         let border = editor_border_line(width, &self.editor_border_style(), color_enabled());
         let mut lines = Vec::with_capacity(editor_lines.len() + 2);
         lines.push(border.clone());
-        for line in editor_lines {
-            lines.push(fit_line(&format!("> {line}"), width));
+        for (index, line) in editor_lines.into_iter().enumerate() {
+            let prompt = if index == 0 { "> " } else { "  " };
+            lines.push(fit_line(&format!("{prompt}{line}"), width));
         }
         lines.push(border);
         lines
@@ -2622,6 +2687,11 @@ impl InteractiveRoot {
 
     pub(super) fn set_fullscreen_viewport(&mut self, enabled: bool) {
         self.fullscreen_viewport = enabled;
+        if enabled {
+            self.local.editor.set_autocomplete_provider(Box::new(
+                CombinedAutocompleteProvider::new(Vec::new(), &self.cwd),
+            ));
+        }
         self.refresh_shell_focus();
     }
 
@@ -2962,8 +3032,13 @@ impl InteractiveRoot {
         let height = self.viewport_height.max(1);
         let mode = shell_layout_mode(width);
         let status_height = usize::from(height >= 2);
+        let context_page = mode == ShellLayoutMode::Narrow && self.local.context_open;
         let maximum_composer = height.saturating_sub(status_height + 1).max(1);
-        let composer_height = composer_height.clamp(1, maximum_composer);
+        let composer_height = if context_page {
+            0
+        } else {
+            composer_height.clamp(1, maximum_composer)
+        };
         let rows = Layout::vertical(
             Rect::new(0, 0, width, height),
             &[
@@ -3002,7 +3077,10 @@ impl InteractiveRoot {
                 ShellLayout {
                     mode,
                     conversation: columns[0],
+                    conversation_context_divider: Some(columns[1]),
+                    context_drawer_divider: None,
                     context: Some(side_rows[0]),
+                    context_tips_divider: (side_rows.len() == 3).then(|| side_rows[1]),
                     tips: (side_rows.len() == 3).then(|| side_rows[2]),
                     composer,
                     status,
@@ -3010,19 +3088,38 @@ impl InteractiveRoot {
                 }
             }
             ShellLayoutMode::Medium => {
-                let context = self.local.context_open.then(|| {
+                let (context_drawer_divider, context) = if self.local.context_open {
                     let overlay_width = (width * 2 / 5).clamp(26, 38).min(width);
-                    Rect::new(
+                    let drawer = Rect::new(
                         width.saturating_sub(overlay_width),
-                        0,
+                        work.y,
                         overlay_width,
                         work.height,
+                    );
+                    (
+                        Some(Rect::new(
+                            drawer.x,
+                            drawer.y,
+                            1.min(drawer.width),
+                            drawer.height,
+                        )),
+                        Some(Rect::new(
+                            drawer.x.saturating_add(1),
+                            drawer.y,
+                            drawer.width.saturating_sub(1),
+                            drawer.height,
+                        )),
                     )
-                });
+                } else {
+                    (None, None)
+                };
                 ShellLayout {
                     mode,
                     conversation: work,
+                    conversation_context_divider: None,
+                    context_drawer_divider,
                     context,
+                    context_tips_divider: None,
                     tips: None,
                     composer,
                     status,
@@ -3032,7 +3129,10 @@ impl InteractiveRoot {
             ShellLayoutMode::Narrow => ShellLayout {
                 mode,
                 conversation: work,
+                conversation_context_divider: None,
+                context_drawer_divider: None,
                 context: self.local.context_open.then_some(work),
+                context_tips_divider: None,
                 tips: None,
                 composer,
                 status,
@@ -3104,10 +3204,8 @@ impl InteractiveRoot {
                 .mouse_hits
                 .push(HitRegion::new(context, InteractiveHitTarget::Context));
             let mut tab_x = context.x.saturating_add(10);
-            for tab in ContextTab::ALL {
-                let tab_width = tab
-                    .label()
-                    .len()
+            for (tab, label) in visible_context_tabs(context.width, self.local.context_tab) {
+                let tab_width = visible_width(label)
                     .saturating_add(usize::from(tab == self.local.context_tab) * 2);
                 if tab_x < context.right() {
                     self.local.mouse_hits.push(HitRegion::new(
@@ -3180,25 +3278,21 @@ impl InteractiveRoot {
                 1.min(layout.conversation.height),
             ),
             &[self.panel_header(
-                &self
-                    .active_child_operation_id
-                    .as_ref()
-                    .map(|operation_id| format!("Child · {} · Esc back", short_id(operation_id)))
-                    .unwrap_or_else(|| "Conversation".to_string()),
+                &self.conversation_header_title(layout.conversation.width),
                 InteractiveRegion::Conversation,
                 layout.conversation.width,
             )],
         );
         frame.draw(conversation_body, &transcript_viewport.lines);
 
-        if layout.mode == ShellLayoutMode::Wide {
-            let separator = Rect::new(
-                layout.conversation.right(),
-                layout.work.y,
-                1,
-                layout.work.height,
-            );
-            frame.fill(separator, "│");
+        let divider_style = self.semantic_style(ThemeColor::BorderMuted, SYSTEM);
+        if let Some(separator) = layout.conversation_context_divider {
+            let line = paint_with("│", &divider_style, color_enabled());
+            frame.draw(separator, &vec![line; separator.height]);
+        }
+        if let Some(separator) = layout.context_drawer_divider {
+            let line = paint_with("│", &divider_style, color_enabled());
+            frame.draw(separator, &vec![line; separator.height]);
         }
         if let Some(context) = layout.context {
             let context_lines = self.render_context_region(context.width, context.height);
@@ -3210,9 +3304,27 @@ impl InteractiveRoot {
         if let Some(tips) = layout.tips {
             frame.draw(tips, &self.render_tips_region(tips.width, tips.height));
         }
+        if let Some(divider) = layout.context_tips_divider {
+            frame.draw(
+                divider,
+                &[paint_with(
+                    &fit_line("─ Tips ", divider.width),
+                    &divider_style,
+                    color_enabled(),
+                )],
+            );
+            if let Some(vertical) = layout.conversation_context_divider {
+                frame.draw(
+                    Rect::new(vertical.x, divider.y, vertical.width, 1),
+                    &[paint_with("├", &divider_style, color_enabled())],
+                );
+            }
+        }
 
-        let composer_lines = tail_lines(&editor_lines, layout.composer.height);
-        frame.draw(layout.composer, &composer_lines);
+        if !layout.composer.is_empty() {
+            let composer_lines = tail_lines(&editor_lines, layout.composer.height);
+            frame.draw(layout.composer, &composer_lines);
+        }
         if !layout.status.is_empty() {
             frame.draw(
                 layout.status,
@@ -3224,25 +3336,71 @@ impl InteractiveRoot {
     }
 
     fn panel_header(&self, title: &str, region: InteractiveRegion, width: usize) -> String {
-        let prefix = if self.local.focus_ring.current() == Some(region) {
-            "> "
+        let focused = self.local.focus_ring.current() == Some(region);
+        let prefix = if focused { "▌ " } else { "  " };
+        let fallback = if focused { USER } else { SYSTEM };
+        let token = if focused {
+            ThemeColor::BorderAccent
         } else {
-            "  "
+            ThemeColor::BorderMuted
         };
-        fit_line(&format!("{prefix}{title}"), width)
+        let style = self.semantic_style(token, fallback);
+        fit_line(
+            &paint_with(&format!("{prefix}{title}"), &style, color_enabled()),
+            width,
+        )
+    }
+
+    fn semantic_style(&self, token: ThemeColor, fallback: Style) -> Style {
+        self.resolved_theme.as_ref().map_or(fallback, |resolved| {
+            Style::fg(crate::resources::to_color(resolved.fg(token)))
+        })
+    }
+
+    fn conversation_header_title(&self, width: usize) -> String {
+        let Some(operation_id) = self.active_child_operation_id.as_deref() else {
+            return "Conversation".into();
+        };
+        let short = short_id(operation_id);
+        let delegation = self
+            .shared_projection
+            .context()
+            .delegations
+            .iter()
+            .find(|delegation| delegation.child_operation_id.as_deref() == Some(operation_id));
+        let wide = delegation.map_or_else(
+            || format!("Child · {short} · Esc back"),
+            |delegation| {
+                format!(
+                    "Child · {} · {} · {short} · Esc back",
+                    delegation.target_id, delegation.status
+                )
+            },
+        );
+        if visible_width(&wide).saturating_add(2) <= width {
+            return wide;
+        }
+        let compact = format!("Child · {short} · Esc back");
+        if visible_width(&compact).saturating_add(2) <= width {
+            compact
+        } else {
+            format!("Child · {short} · Esc")
+        }
     }
 
     fn render_context_region(&mut self, width: usize, height: usize) -> Vec<String> {
         if width == 0 || height == 0 {
             return Vec::new();
         }
-        let tabs = ContextTab::ALL
-            .iter()
-            .map(|tab| {
-                if *tab == self.local.context_tab {
-                    format!("[{}]", tab.label())
+        let active_tab_style = self.semantic_style(ThemeColor::Accent, USER).bold();
+        let inactive_tab_style = self.semantic_style(ThemeColor::Muted, SYSTEM);
+        let tabs = visible_context_tabs(width, self.local.context_tab)
+            .into_iter()
+            .map(|(tab, label)| {
+                if tab == self.local.context_tab {
+                    paint_with(&format!("[{label}]"), &active_tab_style, color_enabled())
                 } else {
-                    tab.label().to_string()
+                    paint_with(label, &inactive_tab_style, color_enabled())
                 }
             })
             .collect::<Vec<_>>()
@@ -3254,10 +3412,13 @@ impl InteractiveRoot {
         )];
         self.local.context_viewport_height = height.saturating_sub(1).max(1);
         let body = if self.local.context_tab == ContextTab::Usage {
-            self.context_usage_lines()
+            self.context_usage_lines(width)
         } else {
             self.context_list_lines()
-        };
+        }
+        .into_iter()
+        .map(|line| self.style_context_body_line(line))
+        .collect::<Vec<_>>();
         let scroll = self.local.context_scroll[self.local.context_tab.index()].min(
             body.len()
                 .saturating_sub(self.local.context_viewport_height),
@@ -3273,6 +3434,27 @@ impl InteractiveRoot {
             .into_iter()
             .map(|line| fit_line(&line, width))
             .collect()
+    }
+
+    fn style_context_body_line(&self, line: String) -> String {
+        if line.is_empty() {
+            return line;
+        }
+        let (token, fallback, bold) = if matches!(
+            line.as_str(),
+            "session totals" | "latest turn" | "context window"
+        ) {
+            (ThemeColor::Accent, USER, true)
+        } else if line.starts_with('›') {
+            (ThemeColor::Accent, USER, false)
+        } else if line.starts_with("no ") || line.contains("unavailable") {
+            (ThemeColor::Muted, SYSTEM, false)
+        } else {
+            (ThemeColor::Text, Style::default(), false)
+        };
+        let mut style = self.semantic_style(token, fallback);
+        style.bold = bold;
+        paint_with(&line, &style, color_enabled())
     }
 
     fn context_list_lines(&mut self) -> Vec<String> {
@@ -3302,7 +3484,7 @@ impl InteractiveRoot {
             .into_iter()
             .enumerate()
             .map(|(item_index, item)| {
-                let marker = if item_index == selected { ">" } else { " " };
+                let marker = if item_index == selected { "›" } else { " " };
                 format!("{marker} {}", item.summary)
             })
             .collect()
@@ -3633,7 +3815,7 @@ impl InteractiveRoot {
         items
     }
 
-    fn context_usage_lines(&self) -> Vec<String> {
+    fn context_usage_lines(&self, width: usize) -> Vec<String> {
         let usage = &self.shared_projection.context().usage;
         let mut lines = vec![
             "session totals".into(),
@@ -3676,12 +3858,23 @@ impl InteractiveRoot {
             .and_then(|turn| turn.context_tokens);
         let context_window = usage.context_window;
         lines.push(match (context_tokens, context_window) {
-            (Some(tokens), Some(window)) => format!(
-                "used          {} / {} ({:.0}%)",
-                format_tokens(tokens),
-                format_tokens(window),
-                f64::from(tokens) * 100.0 / f64::from(window)
-            ),
+            (Some(tokens), Some(window)) if window > 0 => {
+                let exact = format!("{}/{}", format_tokens(tokens), format_tokens(window));
+                let percent = format!("{}%", context_percentage(tokens, window));
+                let fixed_width = visible_width("used          ")
+                    .saturating_add(2)
+                    .saturating_add(1 + visible_width(&percent))
+                    .saturating_add(1 + visible_width(&exact));
+                let gauge_width = width.saturating_sub(fixed_width).min(12);
+                let gauge_width = usize::from(gauge_width >= 3) * gauge_width;
+                format!(
+                    "used          {} {exact}",
+                    context_gauge(tokens, window, gauge_width, !color_enabled()),
+                )
+            }
+            (Some(tokens), Some(0)) => {
+                format!("used          unavailable ({})", format_tokens(tokens))
+            }
             _ => "used          unavailable".into(),
         });
         lines.push(format!(
@@ -3700,19 +3893,45 @@ impl InteractiveRoot {
                 .next()
                 .unwrap_or_else(|| "?".into())
         };
-        let mut tips = vec![format!(
-            "{} / {}  focus",
-            key("app.focus.next"),
-            key("app.focus.previous")
-        )];
-        tips.push(format!("{}  context", key("app.context.toggle")));
-        match self.local.focus_ring.current() {
-            Some(InteractiveRegion::Conversation) => {
-                tips.push(format!(
+        let mut tips: Vec<(u8, usize, String)> = Vec::new();
+        let mut order = 0;
+        let mut push = |priority: u8, text: String| {
+            tips.push((priority, order, text));
+            order += 1;
+        };
+
+        if self.active_child_operation_id.is_some() {
+            push(0, format!("{}  back", key("tui.select.cancel")));
+        } else if !self.tool_authorizations.is_empty() {
+            push(0, format!("{}  choose", key("tui.select.confirm")));
+            push(0, format!("{}  deny", key("tui.select.cancel")));
+        } else if self.local.selecting_settings
+            || self.local.selecting_model
+            || self.local.selecting_session
+            || self.local.selecting_tree
+            || self.delegation_confirmation_menu.is_some()
+            || self.profile_menu.is_some()
+        {
+            push(0, format!("{}  close", key("tui.select.cancel")));
+            push(
+                1,
+                format!(
                     "{} / {}  select",
                     key("tui.select.up"),
                     key("tui.select.down")
-                ));
+                ),
+            );
+        }
+        match self.local.focus_ring.current() {
+            Some(InteractiveRegion::Conversation) => {
+                push(
+                    1,
+                    format!(
+                        "{} / {}  select",
+                        key("tui.select.up"),
+                        key("tui.select.down")
+                    ),
+                );
                 if self
                     .local
                     .transcript_view
@@ -3720,36 +3939,42 @@ impl InteractiveRoot {
                     .and_then(|block_id| self.transcript.item_for_block(block_id))
                     .is_some_and(TranscriptItem::foldable)
                 {
-                    tips.push(format!("{}  disclose", key("tui.select.confirm")));
+                    push(0, format!("{}  disclose", key("tui.select.confirm")));
                 }
                 if self
                     .local
                     .transcript_view
                     .selected_has_tool_arguments(&self.transcript)
                 {
-                    tips.push(format!("{}  arguments", key("app.transcript.arguments")));
+                    push(1, format!("{}  arguments", key("app.transcript.arguments")));
                 }
             }
             Some(InteractiveRegion::Context) => {
-                tips.push(format!(
-                    "{} / {}  tabs",
-                    key("app.context.previousTab"),
-                    key("app.context.nextTab")
-                ));
-                tips.push(format!(
-                    "{} / {}  {}",
-                    key("tui.select.up"),
-                    key("tui.select.down"),
-                    if self.local.context_tab == ContextTab::Usage {
-                        "scroll"
-                    } else {
-                        "select"
-                    }
-                ));
+                push(
+                    1,
+                    format!(
+                        "{} / {}  tabs",
+                        key("app.context.previousTab"),
+                        key("app.context.nextTab")
+                    ),
+                );
+                push(
+                    1,
+                    format!(
+                        "{} / {}  {}",
+                        key("tui.select.up"),
+                        key("tui.select.down"),
+                        if self.local.context_tab == ContextTab::Usage {
+                            "scroll"
+                        } else {
+                            "select"
+                        }
+                    ),
+                );
                 if self.local.context_tab != ContextTab::Usage
                     && !self.context_items(self.local.context_tab).is_empty()
                 {
-                    tips.push(format!("{}  detail", key("tui.select.confirm")));
+                    push(0, format!("{}  detail", key("tui.select.confirm")));
                 }
                 if self
                     .shared_projection
@@ -3758,16 +3983,37 @@ impl InteractiveRoot {
                         matches!(capabilities.abort, CapabilityStatus::Available)
                     })
                 {
-                    tips.push(format!("{}  cancel", key("app.interrupt")));
+                    push(0, format!("{}  cancel", key("app.interrupt")));
                 }
             }
             Some(InteractiveRegion::Composer) => {
-                tips.push(format!("{}  submit", key("tui.input.submit")));
+                push(0, format!("{}  submit", key("tui.input.submit")));
             }
             None => {}
         }
-        let mut lines = vec![fit_line("  Tips", width)];
-        lines.extend(tips.into_iter().map(|tip| fit_line(&tip, width)));
+        push(8, format!("{}  context", key("app.context.toggle")));
+        push(
+            9,
+            format!(
+                "{} / {}  focus",
+                key("app.focus.next"),
+                key("app.focus.previous")
+            ),
+        );
+        tips.sort_by_key(|(priority, insertion, _)| (*priority, *insertion));
+        let mut lines = tips
+            .into_iter()
+            .map(|(priority, _, tip)| {
+                let fallback = if priority <= 1 { USER } else { SYSTEM };
+                let token = if priority <= 1 {
+                    ThemeColor::Accent
+                } else {
+                    ThemeColor::Muted
+                };
+                let style = self.semantic_style(token, fallback);
+                fit_line(&paint_with(&tip, &style, color_enabled()), width)
+            })
+            .collect::<Vec<_>>();
         lines.truncate(height);
         lines
     }
@@ -3780,32 +4026,36 @@ impl InteractiveRoot {
             .iter()
             .find(|operation| operation.status.is_running())
             .map(|operation| operation.kind.as_str());
-        let mut state = match self.status {
-            InteractiveStatus::Idle => "idle".to_string(),
+        let (mut state, state_token, state_fallback) = match self.status {
+            InteractiveStatus::Idle => ("● idle".to_string(), ThemeColor::Success, STATUS_IDLE),
             InteractiveStatus::Running => active_kind.map_or_else(
-                || running_status_text(self.spinner_frame),
-                |kind| format!("{} {kind}", running_status_text(self.spinner_frame)),
+                || {
+                    (
+                        running_status_text(self.spinner_frame),
+                        ThemeColor::Accent,
+                        STATUS_RUNNING,
+                    )
+                },
+                |kind| {
+                    (
+                        format!("{} {kind}", running_status_text(self.spinner_frame)),
+                        ThemeColor::Accent,
+                        STATUS_RUNNING,
+                    )
+                },
             ),
         };
         if self.transcript.has_new_output_below() {
             state.push_str(" +new output below");
         }
 
+        let state = paint_with(
+            &state,
+            &self.semantic_style(state_token, state_fallback),
+            color_enabled(),
+        );
         let mut segments = vec![state];
-        segments.push(format!(
-            "{} / {}",
-            self.session_label,
-            self.display_default_agent_profile_id()
-        ));
-        segments.push(format!(
-            "{} / {}",
-            self.current_model()
-                .map(|model| model.id.as_str())
-                .unwrap_or("no-model"),
-            self.thinking_level
-        ));
-
-        let context = self
+        let context_usage = self
             .shared_projection
             .context()
             .usage
@@ -3814,28 +4064,79 @@ impl InteractiveRoot {
             .and_then(|turn| turn.context_tokens)
             .zip(self.shared_projection.context().usage.context_window)
             .map(|(tokens, window)| {
-                format!("ctx {}/{}", format_tokens(tokens), format_tokens(window))
+                if window == 0 {
+                    return paint_with(
+                        &format!("ctx unavailable ({})", format_tokens(tokens)),
+                        &self.semantic_style(ThemeColor::Muted, SYSTEM),
+                        color_enabled(),
+                    );
+                }
+                let bar_width = if width >= WIDE_LAYOUT_MIN_WIDTH {
+                    7
+                } else if width >= MEDIUM_LAYOUT_MIN_WIDTH {
+                    4
+                } else {
+                    0
+                };
+                let text = if bar_width == 0 {
+                    format!("ctx {}%", context_percentage(tokens, window))
+                } else {
+                    format!(
+                        "ctx {}",
+                        context_gauge(tokens, window, bar_width, !color_enabled())
+                    )
+                };
+                let percent = context_percentage(tokens, window);
+                let token = if percent > 90 {
+                    ThemeColor::Error
+                } else if percent > 70 {
+                    ThemeColor::Warning
+                } else {
+                    ThemeColor::Accent
+                };
+                paint_with(&text, &self.semantic_style(token, SYSTEM), color_enabled())
             });
-        let cost = self
-            .shared_projection
-            .context()
-            .usage
-            .cost
-            .map(|cost| format!("${cost:.4}"));
-        if context.is_some() || cost.is_some() {
+        let cost = self.shared_projection.context().usage.cost.map(|cost| {
+            paint_with(
+                &format!("${cost:.4}"),
+                &self.semantic_style(ThemeColor::Muted, SYSTEM),
+                color_enabled(),
+            )
+        });
+        if context_usage.is_some() || cost.is_some() {
             segments.push(
-                [context, cost]
+                [context_usage, cost]
                     .into_iter()
                     .flatten()
                     .collect::<Vec<_>>()
                     .join(" "),
             );
         }
-        segments.push(abbreviate_cwd(&self.cwd));
+        segments.push(paint_with(
+            self.display_default_agent_profile_id().as_str(),
+            &self.semantic_style(ThemeColor::Text, Style::default()),
+            color_enabled(),
+        ));
+        segments.push(paint_with(
+            &format!(
+                "{} · {}",
+                self.current_model()
+                    .map(|model| model.id.as_str())
+                    .unwrap_or("no-model"),
+                self.thinking_level
+            ),
+            &self.semantic_style(ThemeColor::Text, Style::default()),
+            color_enabled(),
+        ));
+        segments.push(paint_with(
+            &abbreviate_cwd(&self.cwd),
+            &self.semantic_style(ThemeColor::Muted, SYSTEM),
+            color_enabled(),
+        ));
 
         let mut rendered = format!(" {}", segments[0]);
         for segment in segments.into_iter().skip(1) {
-            let candidate = format!("{rendered} | {segment}");
+            let candidate = format!("{rendered}   {segment}");
             if visible_width(&candidate) > width {
                 break;
             }
@@ -3896,7 +4197,12 @@ impl InteractiveRoot {
     }
 
     fn render_completion_surface(&mut self, width: usize) -> Vec<String> {
-        self.render_slash_suggestions(width)
+        let slash = self.render_slash_suggestions(width);
+        if slash.is_empty() {
+            self.local.editor.render_assistance(width)
+        } else {
+            slash
+        }
     }
 
     fn render_transient_surface(&mut self, width: usize) -> Vec<String> {
@@ -4184,8 +4490,22 @@ impl Component for InteractiveRoot {
     }
 
     fn set_viewport_size(&mut self, width: usize, height: usize) {
+        let previous_mode = shell_layout_mode(self.viewport_width);
+        let next_mode = shell_layout_mode(width.max(1));
+        let context_owned_before_resize = self.fullscreen_viewport
+            && (self.local.context_open
+                || self.local.focus_ring.current() == Some(InteractiveRegion::Context)
+                || self.local.context_detail.is_some());
         self.viewport_width = width.max(1);
         self.viewport_height = height.max(1);
+        if next_mode != ShellLayoutMode::Wide && context_owned_before_resize {
+            if previous_mode == ShellLayoutMode::Wide
+                && self.local.focus_ring.current() == Some(InteractiveRegion::Context)
+            {
+                self.local.context_restore_focus = InteractiveRegion::Conversation;
+            }
+            self.local.context_open = true;
+        }
         self.refresh_shell_focus();
     }
 
@@ -4256,6 +4576,36 @@ fn format_token_total(count: u64) -> String {
     )
 }
 
+fn context_percentage(tokens: u32, window: u32) -> u64 {
+    debug_assert!(
+        window > 0,
+        "zero context windows are rendered as unavailable"
+    );
+    (u64::from(tokens) * 100 + u64::from(window) / 2) / u64::from(window)
+}
+
+fn context_gauge(tokens: u32, window: u32, bar_width: usize, ascii: bool) -> String {
+    debug_assert!(
+        window > 0,
+        "zero context windows are rendered as unavailable"
+    );
+    let percent = context_percentage(tokens, window);
+    if bar_width == 0 {
+        return format!("{percent}%");
+    }
+    let filled = ((u64::from(tokens) * bar_width as u64 + u64::from(window) / 2)
+        / u64::from(window))
+    .min(bar_width as u64) as usize;
+    let (filled_glyph, empty_glyph) = if ascii { ('#', '-') } else { ('█', '░') };
+    format!(
+        "[{}{}] {percent}%",
+        filled_glyph.to_string().repeat(filled),
+        empty_glyph
+            .to_string()
+            .repeat(bar_width.saturating_sub(filled))
+    )
+}
+
 #[cfg(test)]
 fn transcript_viewport(lines: &[String], height: usize, scroll_offset: usize) -> Vec<String> {
     if height == 0 || lines.is_empty() {
@@ -4287,6 +4637,29 @@ fn shell_layout_mode(width: usize) -> ShellLayoutMode {
     } else {
         ShellLayoutMode::Narrow
     }
+}
+
+fn visible_context_tabs(width: usize, active: ContextTab) -> Vec<(ContextTab, &'static str)> {
+    if width < 26 {
+        return vec![(active, active.label())];
+    }
+    let full_width = 10
+        + ContextTab::ALL
+            .iter()
+            .map(|tab| tab.label().len() + usize::from(*tab == active) * 2)
+            .sum::<usize>()
+        + ContextTab::ALL.len().saturating_sub(1);
+    ContextTab::ALL
+        .into_iter()
+        .map(|tab| {
+            let label = if full_width <= width {
+                tab.label()
+            } else {
+                tab.compact_label()
+            };
+            (tab, label)
+        })
+        .collect()
 }
 
 fn panel_body(panel: Rect) -> Rect {
@@ -4483,8 +4856,8 @@ mod transcript_viewport_tests {
     use crate::adapters::interactive::transcript::TranscriptItem;
     use crate::adapters::interactive::{Transcript, UiEvent};
     use crate::runtime::client::context::{
-        UiContextProjection, UiFileChangeProjection, UiOperationProjection, UiOperationStatus,
-        UiTurnUsageProjection,
+        UiContextProjection, UiDelegationProjection, UiFileChangeProjection, UiOperationProjection,
+        UiOperationStatus, UiTurnUsageProjection,
     };
 
     use super::{
@@ -4534,6 +4907,36 @@ mod transcript_viewport_tests {
                 |item| matches!(item, TranscriptItem::Tool { name, .. } if name == "delegation")
             )
         );
+    }
+
+    #[test]
+    fn child_header_prioritizes_target_status_short_id_and_back_navigation() {
+        let mut root = InteractiveRoot::new(PathBuf::from("."), "model".into(), "session".into());
+        root.active_child_operation_id = Some("child-operation-123456".into());
+        let mut context = UiContextProjection::default();
+        context.delegations.push(UiDelegationProjection {
+            tool_call_id: "tool-child".into(),
+            child_operation_id: Some("child-operation-123456".into()),
+            target_kind: "agent".into(),
+            target_id: "reviewer".into(),
+            task: "review".into(),
+            status: "running".into(),
+            updated_sequence: 1,
+            summary: None,
+            failure: None,
+        });
+        root.set_context_projection(context);
+
+        let wide = root.conversation_header_title(100);
+        assert!(wide.contains("reviewer"), "{wide}");
+        assert!(wide.contains("running"), "{wide}");
+        assert!(wide.contains("child-oper…"), "{wide}");
+        assert!(wide.contains("Esc back"), "{wide}");
+
+        let narrow = root.conversation_header_title(24);
+        assert!(narrow.contains("child-oper…"), "{narrow}");
+        assert!(narrow.contains("Esc"), "{narrow}");
+        assert!(!narrow.contains("reviewer"), "{narrow}");
     }
 
     #[test]
@@ -4742,11 +5145,6 @@ mod transcript_viewport_tests {
         root.set_viewport_size(80, 24);
         assert_eq!(
             root.local.focus_ring.current(),
-            Some(InteractiveRegion::Conversation)
-        );
-        assert!(root.handle_shell_input(&key("\x07")));
-        assert_eq!(
-            root.local.focus_ring.current(),
             Some(InteractiveRegion::Context)
         );
         assert!(root.local.context_open);
@@ -4756,6 +5154,298 @@ mod transcript_viewport_tests {
             Some(InteractiveRegion::Conversation)
         );
         assert!(!root.local.context_open);
+    }
+
+    #[test]
+    fn wide_shell_owns_and_draws_the_context_tips_divider() {
+        let mut root = InteractiveRoot::new(PathBuf::from("."), "model".into(), "session".into());
+        root.set_fullscreen_viewport(true);
+        root.set_viewport_size(120, 32);
+
+        let layout = root.shell_layout(3);
+        let vertical = layout
+            .conversation_context_divider
+            .expect("wide layout has an explicit vertical divider");
+        let horizontal = layout
+            .context_tips_divider
+            .expect("wide layout has an explicit Context/Tips divider");
+        assert_eq!(vertical.width, 1);
+        assert_eq!(horizontal.height, 1);
+        assert_eq!(horizontal.x, vertical.right());
+
+        let frame = root.render(120);
+        let divider = &frame[horizontal.y];
+        let intersection_byte = divider
+            .find('├')
+            .expect("divider intersection glyph is rendered");
+        assert_eq!(
+            pi_tui::api::render::visible_width(&divider[..intersection_byte]),
+            vertical.x,
+            "divider intersection must remain visible without color: {divider}"
+        );
+        assert!(divider.contains("─ Tips "), "{divider}");
+        assert_eq!(pi_tui::api::render::visible_width(divider), 120);
+    }
+
+    #[test]
+    fn responsive_context_uses_rail_drawer_and_composer_free_page_geometry() {
+        let mut root = InteractiveRoot::new(PathBuf::from("."), "model".into(), "session".into());
+        root.set_fullscreen_viewport(true);
+
+        root.set_viewport_size(100, 24);
+        root.local.focus_ring.focus(InteractiveRegion::Context);
+        root.apply_region_focus();
+        let wide = root.shell_layout(3);
+        assert!(wide.conversation_context_divider.is_some());
+        assert!(wide.context_drawer_divider.is_none());
+        assert!(!wide.composer.is_empty());
+
+        root.set_viewport_size(80, 24);
+        let medium = root.shell_layout(3);
+        let drawer_border = medium
+            .context_drawer_divider
+            .expect("medium Context has an explicit drawer edge");
+        let drawer = medium.context.expect("medium Context drawer is open");
+        assert_eq!(drawer_border.right(), drawer.x);
+        assert!(!medium.composer.is_empty());
+        let medium_frame = root.render(80);
+        let border_byte = medium_frame[drawer_border.y]
+            .find('│')
+            .expect("drawer border is drawn");
+        assert_eq!(
+            pi_tui::api::render::visible_width(&medium_frame[drawer_border.y][..border_byte]),
+            drawer_border.x
+        );
+
+        root.set_viewport_size(63, 18);
+        let narrow = root.shell_layout(3);
+        assert_eq!(narrow.context, Some(narrow.work));
+        assert!(narrow.composer.is_empty());
+        let narrow_frame = root.render(63);
+        assert!(narrow_frame.iter().any(|line| line.contains("Context")));
+        assert!(!root.local.editor.focused());
+        assert_eq!(narrow_frame.len(), 18);
+        assert!(
+            narrow_frame
+                .last()
+                .is_some_and(|line| line.contains("idle"))
+        );
+    }
+
+    #[test]
+    fn tips_prioritize_the_current_regions_primary_action_before_global_help() {
+        let mut root = InteractiveRoot::new(PathBuf::from("."), "model".into(), "session".into());
+        root.set_fullscreen_viewport(true);
+        root.set_viewport_size(120, 32);
+
+        root.local.focus_ring.focus(InteractiveRegion::Composer);
+        root.apply_region_focus();
+        let composer = root.render_tips_region(38, 1);
+        assert_eq!(composer.len(), 1);
+        assert!(composer[0].contains("submit"), "{composer:#?}");
+        assert!(!composer[0].contains("focus"), "{composer:#?}");
+
+        root.set_context_projection(context_projection(1));
+        root.local.focus_ring.focus(InteractiveRegion::Context);
+        root.apply_region_focus();
+        let context = root.render_tips_region(38, 1);
+        assert!(context[0].contains("detail"), "{context:#?}");
+
+        root.active_child_operation_id = Some("child-operation".into());
+        let child = root.render_tips_region(38, 1);
+        assert!(child[0].contains("back"), "{child:#?}");
+    }
+
+    #[test]
+    fn composer_uses_one_prompt_marker_and_muted_border_when_unfocused() {
+        let resolved = crate::theme::builtin_dark()
+            .resolve_colors()
+            .expect("dark theme resolves");
+        let mut root = InteractiveRoot::new(PathBuf::from("."), "model".into(), "session".into())
+            .with_resolved_theme(resolved.clone());
+        root.set_fullscreen_viewport(true);
+        root.set_viewport_size(120, 24);
+        root.local.editor.set_text("first line\nsecond line");
+
+        let focused = root.render_editor_box(40);
+        assert!(
+            focused.iter().any(|line| line.contains("> first line")),
+            "{focused:#?}"
+        );
+        assert!(
+            focused.iter().any(|line| line.contains("  second line")),
+            "{focused:#?}"
+        );
+        assert_eq!(
+            focused.iter().filter(|line| line.contains("> ")).count(),
+            1,
+            "only the first visual input line owns the prompt: {focused:#?}"
+        );
+
+        root.local.focus_ring.focus(InteractiveRegion::Conversation);
+        root.apply_region_focus();
+        assert_eq!(
+            root.editor_border_style().fg,
+            crate::resources::to_color(resolved.fg(crate::theme::ThemeColor::BorderMuted))
+        );
+        let header = root.panel_header("Conversation", InteractiveRegion::Conversation, 40);
+        assert!(header.contains("▌ Conversation"), "{header:?}");
+    }
+
+    #[test]
+    fn semantic_roles_resolve_for_dark_light_and_keep_plain_markers() {
+        let dark = crate::theme::builtin_dark().resolve_colors().unwrap();
+        let light = crate::theme::builtin_light().resolve_colors().unwrap();
+        let mut dark_root =
+            InteractiveRoot::new(PathBuf::from("."), "model".into(), "session".into())
+                .with_resolved_theme(dark);
+        let light_root = InteractiveRoot::new(PathBuf::from("."), "model".into(), "session".into())
+            .with_resolved_theme(light);
+
+        assert_ne!(
+            dark_root
+                .semantic_style(
+                    crate::theme::ThemeColor::BorderMuted,
+                    pi_tui::api::render::Style::default(),
+                )
+                .fg,
+            light_root
+                .semantic_style(
+                    crate::theme::ThemeColor::BorderMuted,
+                    pi_tui::api::render::Style::default(),
+                )
+                .fg
+        );
+        assert_ne!(
+            dark_root
+                .semantic_style(
+                    crate::theme::ThemeColor::Accent,
+                    pi_tui::api::render::Style::default(),
+                )
+                .fg,
+            light_root
+                .semantic_style(
+                    crate::theme::ThemeColor::Accent,
+                    pi_tui::api::render::Style::default(),
+                )
+                .fg
+        );
+
+        dark_root.set_fullscreen_viewport(true);
+        dark_root.set_viewport_size(120, 24);
+        dark_root
+            .local
+            .focus_ring
+            .focus(InteractiveRegion::Conversation);
+        let header = dark_root.panel_header("Conversation", InteractiveRegion::Conversation, 40);
+        assert!(header.contains("▌ Conversation"), "{header:?}");
+        let status = dark_root.render_status_bar(80);
+        assert!(status.contains("● idle"), "{status:?}");
+        assert!(
+            !status.contains(" | "),
+            "status must not read like raw diagnostics: {status:?}"
+        );
+    }
+
+    #[test]
+    fn fullscreen_visual_matrix_is_bounded_across_themes_and_responsive_modes() {
+        for (theme, resolved) in [
+            (
+                pi_tui::api::theme::dark_theme(),
+                crate::theme::builtin_dark().resolve_colors().unwrap(),
+            ),
+            (
+                pi_tui::api::theme::light_theme(),
+                crate::theme::builtin_light().resolve_colors().unwrap(),
+            ),
+        ] {
+            for (width, height) in [(60, 18), (80, 24), (120, 32), (160, 40)] {
+                let mut root = InteractiveRoot::new_with_theme(
+                    PathBuf::from("/workspace/项目"),
+                    "模型🙂".into(),
+                    "sess_must_not_render".into(),
+                    theme.clone(),
+                )
+                .with_resolved_theme(resolved.clone());
+                root.set_fullscreen_viewport(true);
+                root.set_viewport_size(width, height);
+                root.transcript
+                    .push(TranscriptItem::assistant("matrix", "结果🙂e\u{301}", true));
+                root.transcript.push(TranscriptItem::Tool {
+                    call_id: "matrix-tool".into(),
+                    name: "read".into(),
+                    args: serde_json::json!({"path": "src/你好.rs"}),
+                    result: Some("完成".into()),
+                    is_error: false,
+                });
+                let mut projection = context_projection(2);
+                projection.usage.context_window = Some(100);
+                projection.usage.latest_turn = Some(UiTurnUsageProjection {
+                    turn_id: "turn-matrix".into(),
+                    input: 76,
+                    output: 4,
+                    cache_read: 0,
+                    cache_write: 0,
+                    context_tokens: Some(76),
+                    cost: None,
+                });
+                root.set_context_projection(projection);
+                if width < super::WIDE_LAYOUT_MIN_WIDTH {
+                    root.toggle_context(super::shell_layout_mode(width));
+                }
+
+                let frame = root.render(width);
+                assert_eq!(frame.len(), height, "{width}x{height}: {frame:#?}");
+                assert!(
+                    frame
+                        .iter()
+                        .all(|line| pi_tui::api::render::visible_width(line) <= width),
+                    "{width}x{height}: {frame:#?}"
+                );
+                let joined = frame.join("\n");
+                assert!(joined.contains("Context"), "{width}x{height}: {joined}");
+                assert!(joined.contains("● idle"), "{width}x{height}: {joined}");
+                assert!(!joined.contains("sess_must_not_render"), "{joined}");
+                assert!(frame.last().is_some_and(|line| line.contains("idle")));
+                if width >= super::WIDE_LAYOUT_MIN_WIDTH {
+                    assert!(joined.contains("├"), "{width}x{height}: {joined}");
+                    assert!(joined.contains("Tips"), "{width}x{height}: {joined}");
+                } else if width < super::MEDIUM_LAYOUT_MIN_WIDTH {
+                    assert!(
+                        !joined.contains("Conversation"),
+                        "{width}x{height}: {joined}"
+                    );
+                    assert!(root.shell_layout(3).composer.is_empty());
+                } else {
+                    assert!(root.shell_layout(3).context_drawer_divider.is_some());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn fullscreen_shell_is_bounded_at_tiny_and_threshold_adjacent_viewports() {
+        assert_eq!(super::shell_layout_mode(63), super::ShellLayoutMode::Narrow);
+        assert_eq!(super::shell_layout_mode(64), super::ShellLayoutMode::Medium);
+        assert_eq!(super::shell_layout_mode(65), super::ShellLayoutMode::Medium);
+        assert_eq!(super::shell_layout_mode(99), super::ShellLayoutMode::Medium);
+        assert_eq!(super::shell_layout_mode(100), super::ShellLayoutMode::Wide);
+        assert_eq!(super::shell_layout_mode(101), super::ShellLayoutMode::Wide);
+
+        let mut root = InteractiveRoot::new(PathBuf::from("."), "模型🙂".into(), "session".into());
+        root.set_fullscreen_viewport(true);
+        assert!(root.render(0).is_empty());
+        for (width, height) in [(1, 1), (1, 2), (2, 1), (8, 3), (20, 4)] {
+            root.set_viewport_size(width, height);
+            let frame = root.render(width);
+            assert_eq!(frame.len(), height, "{width}x{height}: {frame:#?}");
+            assert!(
+                frame
+                    .iter()
+                    .all(|line| pi_tui::api::render::visible_width(line) <= width),
+                "{width}x{height}: {frame:#?}"
+            );
+        }
     }
 
     #[test]
@@ -4771,6 +5461,36 @@ mod transcript_viewport_tests {
         assert!(root.local.editor.text().is_empty());
         assert!(root.handle_shell_input(&key("\x1b[D")));
         assert_eq!(root.local.context_tab, ContextTab::Ops);
+    }
+
+    #[test]
+    fn context_tabs_use_full_compact_and_active_only_width_contracts() {
+        let full = super::visible_context_tabs(38, ContextTab::Changes);
+        assert_eq!(
+            full.iter().map(|(_, label)| *label).collect::<Vec<_>>(),
+            ["ops", "changes", "agents", "usage"]
+        );
+        let compact = super::visible_context_tabs(26, ContextTab::Changes);
+        assert_eq!(
+            compact.iter().map(|(_, label)| *label).collect::<Vec<_>>(),
+            ["ops", "chg", "ag", "use"]
+        );
+        let active_only = super::visible_context_tabs(20, ContextTab::Agents);
+        assert_eq!(active_only, [(ContextTab::Agents, "agents")]);
+
+        let mut root = InteractiveRoot::new(PathBuf::from("."), "model".into(), "session".into());
+        root.local.context_tab = ContextTab::Changes;
+        for width in [20, 26, 38] {
+            let header = root.render_context_region(width, 4).remove(0);
+            assert!(
+                pi_tui::api::render::visible_width(&header) <= width,
+                "{header:?}"
+            );
+            assert!(
+                header.contains("[changes]") || header.contains("[chg]"),
+                "{header:?}"
+            );
+        }
     }
 
     fn context_projection(operation_count: usize) -> UiContextProjection {
@@ -4891,7 +5611,7 @@ mod transcript_viewport_tests {
         root.set_context_projection(updated);
         let known_usage = root.render_context_region(38, 30).join("\n");
         assert!(known_usage.contains("model-1"), "{known_usage}");
-        assert!(known_usage.contains("127 / 128k"), "{known_usage}");
+        assert!(known_usage.contains("127/128k"), "{known_usage}");
         assert!(known_usage.contains("$0.0030"), "{known_usage}");
     }
 
@@ -4900,18 +5620,43 @@ mod transcript_viewport_tests {
         let mut root = InteractiveRoot::new(
             PathBuf::from("/a/very/long/workspace/path"),
             "model".into(),
-            "session".into(),
+            "sess_durable_secret".into(),
         );
-        root.set_context_projection(context_projection(1));
+        let mut projection = context_projection(1);
+        projection.usage.context_window = Some(100);
+        projection.usage.latest_turn = Some(UiTurnUsageProjection {
+            turn_id: "turn-status".into(),
+            input: 28,
+            output: 0,
+            cache_read: 0,
+            cache_write: 0,
+            context_tokens: Some(28),
+            cost: None,
+        });
+        root.set_context_projection(projection);
 
         let narrow = root.render_status_bar(20);
         assert!(narrow.contains("idle"), "{narrow}");
+        assert!(narrow.contains("ctx 28%"), "{narrow}");
         assert!(!narrow.contains("workspace"), "{narrow}");
+        assert!(!narrow.contains("sess_durable_secret"), "{narrow}");
 
         let wide = root.render_status_bar(120);
-        assert!(wide.contains("session / default"), "{wide}");
+        assert!(wide.contains("ctx ["), "{wide}");
+        assert!(wide.contains("28%"), "{wide}");
+        assert!(wide.contains("default"), "{wide}");
         assert!(wide.contains("no-model"), "{wide}");
         assert!(wide.contains("workspace/path"), "{wide}");
+        assert!(!wide.contains("sess_durable_secret"), "{wide}");
+    }
+
+    #[test]
+    fn context_gauge_clamps_geometry_but_preserves_over_capacity_percentage() {
+        assert_eq!(super::context_gauge(28, 100, 7, false), "[██░░░░░] 28%");
+        assert_eq!(super::context_gauge(28, 100, 7, true), "[##-----] 28%");
+        assert_eq!(super::context_gauge(150, 100, 4, true), "[####] 150%");
+        assert_eq!(pi_tui::api::render::visible_width("█"), 1);
+        assert_eq!(pi_tui::api::render::visible_width("░"), 1);
     }
 
     #[test]

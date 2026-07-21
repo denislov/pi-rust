@@ -612,9 +612,7 @@ fn handle_copy_command(root: &mut InteractiveRoot) {
 
 fn handle_new_command(root: &mut InteractiveRoot) {
     root.transcript = Transcript::new();
-    root.transcript.push(TranscriptItem::system(welcome_line(
-        &root.local.keybindings,
-    )));
+    root.transcript.push(TranscriptItem::system(welcome_line()));
     root.transcript
         .push(TranscriptItem::system("New session started"));
     root.local.editor.set_text("");

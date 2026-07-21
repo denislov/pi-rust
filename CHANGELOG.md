@@ -1,5 +1,29 @@
 # Changes
 
+## 0.5.6 - 2026-07-22
+
+### Fullscreen TUI Visual Hierarchy And Interaction Polish
+
+- Attached slash and file-completion assistance to the composer text origin
+  while keeping modal placement independent, and established one composer,
+  assistance, divider, and status hierarchy.
+- Rebuilt the fullscreen shell around explicit Conversation/Context/Tips
+  rectangles. Context now acts as a wide rail, medium bordered drawer, or narrow
+  page; contextual Tips are priority-selected and own a visible rail divider.
+- Applied existing semantic theme tokens to focus, tabs, selection, transcript,
+  status, metadata, and context pressure across dark, light, basic-color, and
+  color-disabled paths. Status no longer exposes a durable session identity.
+- Unified transcript gutters and child-page headers, simplified startup text,
+  and made Markdown tables atomic, exactly width-allocated, aligned by visible
+  columns, tab-safe, Unicode-aware, and deterministic at narrow widths.
+- Added threshold/tiny viewport tests, exact completion coordinates, responsive
+  theme/no-color tmux matrices, and retained zero-write viewport-first 1k/10k
+  performance evidence. RPC remains `2.1`; ProductEvent and UI snapshot remain
+  `2.2`.
+- Completed `FVP-001` through `FVP-011`, with migration, API, architecture, and
+  release evidence in
+  `docs/0.5.6-fullscreen-tui-visual-hierarchy-and-interaction-polish-plan.md`.
+
 ## 0.5.5 - 2026-07-22
 
 ### Operation-Tree Runtime Pressure And Fault Hardening

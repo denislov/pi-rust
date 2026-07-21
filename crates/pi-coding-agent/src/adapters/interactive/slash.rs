@@ -1,6 +1,7 @@
 use pi_tui::api::component::Editor;
 use pi_tui::api::input::{InputEvent, KeybindingsManager, fuzzy_filter_indices};
 use pi_tui::api::render::{SYSTEM, USER, color_enabled, paint_with};
+use pi_tui::api::theme::SelectListTheme;
 
 use crate::adapters::interactive::render::fit_line;
 
@@ -201,6 +202,7 @@ pub(super) fn render_suggestions(
     selected: &mut usize,
     width: usize,
     commands: &[BuiltinSlashCommand],
+    theme: &SelectListTheme,
 ) -> Vec<String> {
     let Some(indices) = suggestion_indices(text, cursor, dismissed_for, commands) else {
         return Vec::new();
@@ -222,20 +224,31 @@ pub(super) fn render_suggestions(
         let absolute_index = window_start + visible_offset;
         let command = &commands[command_index];
         let label = format!("/{}", command.name);
+        // The two-column marker gutter is owned by autocomplete selection.
+        // Keeping the command label at column two aligns it with the composer
+        // text origin without reusing the composer prompt marker.
         let marker = if absolute_index == *selected {
-            "->"
+            "› "
         } else {
             "  "
         };
-        let line = format!(
-            "{marker} {label:<17} {}",
-            paint_with(&command.description, &SYSTEM, color)
-        );
-        if absolute_index == *selected {
-            lines.push(fit_line(&paint_with(&line, &USER, color), width));
+        let marker_style = if absolute_index == *selected {
+            theme.selected_prefix
         } else {
-            lines.push(fit_line(&line, width));
-        }
+            SYSTEM
+        };
+        let label_style = if absolute_index == *selected {
+            theme.selected_text
+        } else {
+            USER
+        };
+        let line = format!(
+            "{}{} {}",
+            paint_with(marker, &marker_style, color),
+            paint_with(&format!("{label:<17}"), &label_style, color),
+            paint_with(&command.description, &theme.description, color)
+        );
+        lines.push(fit_line(&line, width));
     }
     lines.push(fit_line(
         &paint_with(

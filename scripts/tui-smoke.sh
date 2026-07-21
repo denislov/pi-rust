@@ -7,11 +7,36 @@ if ! command -v tmux >/dev/null 2>&1; then
 fi
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SESSION="pi-rust-tui-smoke-$(date +%Y%m%d%H%M%S)"
+SMOKE_THEME="${PI_RUST_TUI_SMOKE_THEME:-dark}"
+SMOKE_COLOR_MODE="${PI_RUST_TUI_SMOKE_COLOR_MODE:-terminal}"
+SESSION="pi-rust-tui-smoke-${SMOKE_THEME}-${SMOKE_COLOR_MODE}-$(date +%Y%m%d%H%M%S)"
 OUT_DIR="${OUT_DIR:-$ROOT/target/tui-smoke/$SESSION}"
 BIN="$ROOT/target/debug/pi-coding-agent"
+CONFIG_DIR="$OUT_DIR/config"
 
-mkdir -p "$OUT_DIR"
+mkdir -p "$OUT_DIR" "$CONFIG_DIR"
+cat > "$CONFIG_DIR/settings.toml" <<EOF
+theme = "$SMOKE_THEME"
+quiet_startup = true
+EOF
+export PI_RUST_DIR="$CONFIG_DIR"
+case "$SMOKE_COLOR_MODE" in
+  no-color)
+    export NO_COLOR=1
+    ;;
+  basic)
+    unset NO_COLOR
+    export TERM=xterm
+    unset COLORTERM
+    ;;
+  terminal)
+    unset NO_COLOR
+    ;;
+  *)
+    echo "unknown PI_RUST_TUI_SMOKE_COLOR_MODE: $SMOKE_COLOR_MODE" >&2
+    exit 2
+    ;;
+esac
 
 cd "$ROOT"
 cargo build -p pi-coding-agent >/dev/null
@@ -22,12 +47,14 @@ cargo test -q -p pi-coding-agent --lib \
 
 capture() {
   local name="$1"
-  tmux capture-pane -t "$SESSION" -peJS -32768 > "$OUT_DIR/$name.txt"
+  tmux capture-pane -t "$SESSION" -pJS -32768 > "$OUT_DIR/$name.txt"
+  tmux capture-pane -t "$SESSION" -peJS -32768 > "$OUT_DIR/$name.ansi.txt"
 }
 
 capture_viewport() {
   local name="$1"
-  tmux capture-pane -t "$SESSION" -pe > "$OUT_DIR/$name.txt"
+  tmux capture-pane -t "$SESSION" -p > "$OUT_DIR/$name.txt"
+  tmux capture-pane -t "$SESSION" -pe > "$OUT_DIR/$name.ansi.txt"
 }
 
 tmux new-session -d -s "$SESSION" -x 100 -y 30
@@ -73,6 +100,33 @@ capture "08-inline-after-exit"
 tmux send-keys -t "$SESSION" "$BIN --no-session --no-tools --tui-mode fullscreen" Enter
 sleep 0.5
 capture_viewport "10-fullscreen-start"
+
+tmux resize-window -t "$SESSION" -x 160 -y 40
+sleep 0.3
+capture_viewport "10-fullscreen-resize-160"
+tmux resize-window -t "$SESSION" -x 120 -y 32
+sleep 0.3
+
+tmux send-keys -t "$SESSION" "/"
+sleep 0.2
+capture_viewport "10-fullscreen-slash-wide"
+tmux resize-window -t "$SESSION" -x 60 -y 18
+sleep 0.3
+capture_viewport "10-fullscreen-slash-resize-narrow"
+tmux send-keys -t "$SESSION" Escape BSpace
+sleep 0.2
+tmux resize-window -t "$SESSION" -x 120 -y 32
+sleep 0.3
+
+tmux resize-window -t "$SESSION" -x 80 -y 24
+sleep 0.3
+tmux send-keys -t "$SESSION" C-g
+sleep 0.2
+capture_viewport "10-context-drawer-medium"
+tmux send-keys -t "$SESSION" Escape
+sleep 0.2
+tmux resize-window -t "$SESSION" -x 120 -y 32
+sleep 0.3
 
 tmux send-keys -t "$SESSION" "好"
 sleep 0.2
@@ -133,6 +187,13 @@ grep -Fq "pi-rust" "$OUT_DIR/10-fullscreen-start.txt"
 grep -Fq "Conversation" "$OUT_DIR/10-fullscreen-start.txt"
 grep -Fq "Context [ops]" "$OUT_DIR/10-fullscreen-start.txt"
 grep -Fq "Tips" "$OUT_DIR/10-fullscreen-start.txt"
+grep -Fq "├" "$OUT_DIR/10-fullscreen-start.txt"
+grep -Fq "Context [ops]" "$OUT_DIR/10-fullscreen-resize-160.txt"
+grep -Fq "Tips" "$OUT_DIR/10-fullscreen-resize-160.txt"
+grep -Fq "/help" "$OUT_DIR/10-fullscreen-slash-wide.txt"
+grep -Fq "/help" "$OUT_DIR/10-fullscreen-slash-resize-narrow.txt"
+grep -Fq "Context [ops]" "$OUT_DIR/10-context-drawer-medium.txt"
+grep -Fq "│" "$OUT_DIR/10-context-drawer-medium.txt"
 grep -Fq "idle" "$OUT_DIR/12-fullscreen-resize-narrow.txt"
 grep -Fq "Context [ops]" "$OUT_DIR/12-context-modal-narrow.txt"
 if grep -Fq "Conversation" "$OUT_DIR/12-context-modal-narrow.txt"; then
@@ -152,6 +213,10 @@ cat > "$OUT_DIR/README.txt" <<EOF
 pi-rust TUI smoke capture
 
 Session: $SESSION
+Theme: $SMOKE_THEME
+Color mode: $SMOKE_COLOR_MODE
+Each plain .txt capture has a matching .ansi.txt capture retaining terminal
+style sequences for color-level review.
 Inline command: $BIN --no-session --no-tools
 Fullscreen command: $BIN --no-session --no-tools --tui-mode fullscreen
 
@@ -164,6 +229,11 @@ Review checklist:
 - 08-real-provider-stream exists only when PI_RUST_TUI_SMOKE_REAL_PROMPT is set.
 - 08-inline-after-exit preserves the original shell scrollback.
 - 10-fullscreen-start owns the viewport and hides the primary-screen sentinel.
+- 10-fullscreen-resize-160 covers the largest release viewport.
+- 10-fullscreen-slash-wide and 10-fullscreen-slash-resize-narrow prove composer
+  assistance remains visible and bounded across a live resize.
+- 10-context-drawer-medium proves medium Context has an explicit drawer edge
+  and Escape restores the conversation/composer shell.
 - 11-fullscreen-wide-unicode keeps the prompt cursor after the wide character.
 - 12-fullscreen-resize-narrow and 13-fullscreen-resize-wide remain bounded.
 - 12-context-modal-narrow replaces the narrow work area and Escape restores it.

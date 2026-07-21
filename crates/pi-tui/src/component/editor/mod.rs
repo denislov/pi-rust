@@ -12,7 +12,7 @@ use crate::editing::UndoStack;
 use crate::editing::{find_word_backward, find_word_forward};
 use crate::input::{InputEvent, Key, KeyEventKind, KeyModifiers, KeybindingsManager};
 use crate::render::ansi_sequence_len;
-use crate::render::{color_enabled, paint_with};
+use crate::render::{Style, color_enabled, paint_with};
 use crate::render::{truncate_to_width, visible_width};
 use crate::theme::EditorTheme;
 
@@ -754,10 +754,11 @@ impl Editor {
         self.autocomplete_selected = 0;
     }
 
-    fn render_autocomplete(&self, width: usize) -> Vec<String> {
+    pub fn render_assistance(&self, width: usize) -> Vec<String> {
         if self.autocomplete_state.is_none() || self.autocomplete_items.is_empty() {
             return Vec::new();
         }
+        let color = color_enabled();
         let start = self
             .autocomplete_selected
             .saturating_add(1)
@@ -768,24 +769,40 @@ impl Editor {
             .skip(start)
             .take(self.autocomplete_max_visible)
             .map(|(index, item)| {
-                let marker = if index == self.autocomplete_selected {
-                    "> "
+                let selected = index == self.autocomplete_selected;
+                let marker = if selected { "› " } else { "  " };
+                let marker_style = if selected {
+                    self.theme.select_list.selected_prefix
                 } else {
-                    "  "
+                    self.theme.select_list.description
                 };
-                let mut line = format!("{marker}{}", item.label);
+                let text_style = if selected {
+                    self.theme.select_list.selected_text
+                } else {
+                    Style::default()
+                };
+                let mut line = format!(
+                    "{}{}",
+                    paint_with(marker, &marker_style, color),
+                    paint_with(&item.label, &text_style, color)
+                );
                 if let Some(description) = &item.description {
-                    line.push_str(" - ");
-                    line.push_str(description);
+                    line.push_str("  ");
+                    line.push_str(&paint_with(
+                        description,
+                        &self.theme.select_list.description,
+                        color,
+                    ));
                 }
                 fit_render_line(&line, width)
             })
             .collect()
     }
-}
 
-impl Component for Editor {
-    fn render(&mut self, width: usize) -> Vec<String> {
+    /// Render only the editable input viewport. Assistance can be projected
+    /// separately with [`Self::render_assistance`] when a host owns overlay
+    /// placement; [`Component::render`] preserves the embedded legacy shape.
+    pub fn render_input(&mut self, width: usize) -> Vec<String> {
         if width == 0 {
             return Vec::new();
         }
@@ -864,7 +881,14 @@ impl Component for Editor {
             ));
         }
 
-        lines.extend(self.render_autocomplete(width));
+        lines
+    }
+}
+
+impl Component for Editor {
+    fn render(&mut self, width: usize) -> Vec<String> {
+        let mut lines = self.render_input(width);
+        lines.extend(self.render_assistance(width));
         lines
     }
 

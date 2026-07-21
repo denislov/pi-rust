@@ -1,5 +1,20 @@
 # Changes
 
+## 0.5.6 - 2026-07-22
+
+### Changed
+
+- Align slash and file-completion assistance to the fullscreen composer while
+  retaining independent modal geometry and deterministic overlay focus.
+- Render Context as a wide rail, medium drawer, or narrow page with explicit
+  shell dividers, prioritized Tips, compact tabs, and bounded tiny/threshold
+  behavior.
+- Apply semantic dark/light/basic/no-color hierarchy to panels, transcript,
+  child pages, status, context pressure, metadata, and distinct focus/selection
+  markers; remove session identity from the fullscreen status line.
+- Preserve RPC `2.1`, ProductEvent `2.2`, and UI snapshot `2.2`; all changes are
+  local presentation and generic editor composition.
+
 ## 0.5.5 - 2026-07-22
 
 ### Changed

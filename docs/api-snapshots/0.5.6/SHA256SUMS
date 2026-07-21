@@ -1,0 +1,5 @@
+577817783d8e7952a1823ac261bbf5694a20afad2cb65c417bafc99bcc527264  ./pi-ai.public-api.json
+7c96405d927b5b085ce8a7c6b45a9c54ad7e73a2cba5470ec88f6e0792f149eb  ./pi-agent-core.public-api.json
+9b634e10b94e07872d30fc824a803c81b3b69bf7ee8c4af56f351165620c3ff9  ./pi-coding-agent.public-api.json
+cd1bfca435a3638c720fe82e2d6dcf4258b97da2824fc730962ce07d24b1216c  ./pi-tui.public-api.json
+d2af0a6e145d9f3636a91d22ee9ee693c7d960d278b1f3c35152c68ac8fd1687  ./toolchain.txt

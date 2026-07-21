@@ -1000,6 +1000,50 @@ fn wrap_to_lines(text: &str, width: usize) -> Vec<String> {
     lines
 }
 
+fn push_table_line(blocks: &mut Vec<String>, line: String) {
+    blocks.push(format!("{SKIP_WRAP}{line}"));
+}
+
+fn align_table_cell(text: &str, width: usize, alignment: Alignment) -> String {
+    let padding = width.saturating_sub(visible_width(text));
+    let (left, right) = match alignment {
+        Alignment::Right => (padding, 0),
+        Alignment::Center => (padding / 2, padding.saturating_sub(padding / 2)),
+        Alignment::None | Alignment::Left => (0, padding),
+    };
+    format!("{}{}{}", " ".repeat(left), text, " ".repeat(right))
+}
+
+fn render_narrow_table(table: &TableAccum, blocks: &mut Vec<String>) {
+    for (row_index, row) in table.body_rows.iter().enumerate() {
+        if row_index > 0 {
+            blocks.push(String::new());
+        }
+        for column in 0..table.alignments.len() {
+            let label = table
+                .header_cells
+                .get(column)
+                .map(|cell| cell.raw.replace('\t', " "))
+                .filter(|label| !label.trim().is_empty())
+                .unwrap_or_else(|| format!("Column {}", column + 1));
+            let value = row
+                .get(column)
+                .map(|cell| cell.raw.replace('\t', " "))
+                .unwrap_or_default();
+            blocks.push(format!("{}: {}", label.trim(), value.trim()));
+        }
+    }
+    if table.body_rows.is_empty() {
+        for (column, cell) in table.header_cells.iter().enumerate() {
+            blocks.push(format!(
+                "Column {}: {}",
+                column + 1,
+                cell.raw.replace('\t', " ").trim()
+            ));
+        }
+    }
+}
+
 /// Render a parsed table as ANSI-styled lines with box-drawing borders.
 fn render_table(
     table: &TableAccum,
@@ -1016,7 +1060,8 @@ fn render_table(
 
     // Border overhead per row: "│ a │ b │" = 2 + 3*(n-1) + 2 = 3n + 1
     let border_overhead = 3 * num_cols + 1;
-    if total_width <= border_overhead {
+    if total_width < border_overhead.saturating_add(num_cols) {
+        render_narrow_table(table, blocks);
         return;
     }
     let available_for_cells = total_width - border_overhead;
@@ -1024,9 +1069,10 @@ fn render_table(
     const MAX_UNBROKEN_WORD: usize = 30;
 
     // ── Compute column widths from raw text ──────────────────────────
-    let cell_visible = |raw: &str| -> usize { visible_width(raw.trim_end()) };
+    let cell_visible = |raw: &str| -> usize { visible_width(raw.replace('\t', " ").trim_end()) };
     let longest_word = |raw: &str| -> usize {
-        raw.split_whitespace()
+        raw.replace('\t', " ")
+            .split_whitespace()
             .map(visible_width)
             .max()
             .unwrap_or(0)
@@ -1058,17 +1104,23 @@ fn render_table(
     } else {
         // ── Shrink proportionally ────────────────────────────────────
         let min_cells_width: usize = min_word_widths.iter().sum();
+        let lower_bounds = if min_cells_width <= available_for_cells {
+            min_word_widths.clone()
+        } else {
+            vec![1; num_cols]
+        };
+        let min_cells_width: usize = lower_bounds.iter().sum();
         let extra_width = available_for_cells.saturating_sub(min_cells_width);
         let total_grow_potential: usize = natural_widths
             .iter()
-            .zip(min_word_widths.iter())
+            .zip(lower_bounds.iter())
             .map(|(nat, min)| nat.saturating_sub(*min))
             .sum();
 
-        let mut col_widths = min_word_widths.clone();
+        let mut col_widths = lower_bounds.clone();
         if total_grow_potential > 0 {
             for i in 0..num_cols {
-                let grow = (natural_widths[i].saturating_sub(min_word_widths[i]) as f64
+                let grow = (natural_widths[i].saturating_sub(lower_bounds[i]) as f64
                     / total_grow_potential as f64
                     * extra_width as f64) as usize;
                 col_widths[i] += grow;
@@ -1097,8 +1149,9 @@ fn render_table(
 
     // ── Style + wrap cells ───────────────────────────────────────────
     let style_cell = |cell: &CellContent| -> String {
+        let normalized = cell.raw.replace('\t', " ");
         apply_inline_spans(
-            cell.raw.trim_end(),
+            normalized.trim_end(),
             &cell.spans,
             theme,
             hyperlinks_enabled,
@@ -1117,7 +1170,7 @@ fn render_table(
 
     // ── Top border ────────────────────────────────────────────────────
     let top_parts: Vec<String> = column_widths.iter().map(|w| "─".repeat(*w)).collect();
-    blocks.push(format!("┌─{}─┐", top_parts.join("─┬─")));
+    push_table_line(blocks, format!("┌─{}─┐", top_parts.join("─┬─")));
 
     // ── Header rows ───────────────────────────────────────────────────
     if !table.header_cells.is_empty() {
@@ -1139,20 +1192,16 @@ fn render_table(
                 .enumerate()
                 .map(|(ci, lines)| {
                     let text = lines.get(line_idx).map(|s| s.as_str()).unwrap_or("");
-                    let padded = format!(
-                        "{}{}",
-                        text,
-                        " ".repeat(column_widths[ci].saturating_sub(visible_width(text)))
-                    );
+                    let padded = align_table_cell(text, column_widths[ci], table.alignments[ci]);
                     paint_markdown(&padded, &theme.bold)
                 })
                 .collect();
-            blocks.push(format!("│ {} │", row_parts.join(" │ ")));
+            push_table_line(blocks, format!("│ {} │", row_parts.join(" │ ")));
         }
 
         // Header / body separator: ├──┼──┤
         let sep_parts: Vec<String> = column_widths.iter().map(|w| "─".repeat(*w)).collect();
-        blocks.push(format!("├─{}─┤", sep_parts.join("─┼─")));
+        push_table_line(blocks, format!("├─{}─┤", sep_parts.join("─┼─")));
     }
 
     // ── Body rows ─────────────────────────────────────────────────────
@@ -1175,24 +1224,20 @@ fn render_table(
                 .enumerate()
                 .map(|(ci, lines)| {
                     let text = lines.get(line_idx).map(|s| s.as_str()).unwrap_or("");
-                    format!(
-                        "{}{}",
-                        text,
-                        " ".repeat(column_widths[ci].saturating_sub(visible_width(text)))
-                    )
+                    align_table_cell(text, column_widths[ci], table.alignments[ci])
                 })
                 .collect();
-            blocks.push(format!("│ {} │", row_parts.join(" │ ")));
+            push_table_line(blocks, format!("│ {} │", row_parts.join(" │ ")));
         }
 
         // Row separator between data rows (no separator after last row)
         if row_idx < table.body_rows.len().saturating_sub(1) && !table.body_rows.is_empty() {
             let sep_parts: Vec<String> = column_widths.iter().map(|w| "─".repeat(*w)).collect();
-            blocks.push(format!("├─{}─┤", sep_parts.join("─┼─")));
+            push_table_line(blocks, format!("├─{}─┤", sep_parts.join("─┼─")));
         }
     }
 
     // ── Bottom border ─────────────────────────────────────────────────
     let bottom_parts: Vec<String> = column_widths.iter().map(|w| "─".repeat(*w)).collect();
-    blocks.push(format!("└─{}─┘", bottom_parts.join("─┴─")));
+    push_table_line(blocks, format!("└─{}─┘", bottom_parts.join("─┴─")));
 }
