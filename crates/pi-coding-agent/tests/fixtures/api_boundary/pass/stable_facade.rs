@@ -1,4 +1,7 @@
-#![allow(dead_code)]
+#![allow(
+    dead_code,
+    reason = "compile-pass fixture imports and constructs the stable facade without executing a test binary"
+)]
 
 use pi_coding_agent::api::runtime::{CodingAgentSessionOptions, CodingSessionError};
 use pi_coding_agent::api::operation::{AgentInvocationOptions, AgentInvocationOutcome, AgentTeamMemberOutcome, AgentTeamOptions, AgentTeamOutcome, BranchSummaryReusePolicy, CodingAgentOperation, CodingAgentOperationOutcome, CodingAgentPluginLoadOutcome, PendingDelegationConfirmation, PromptTurnOptions, PromptTurnOutcome, SelfHealingEditOutcome, SelfHealingEditReplacement, SelfHealingEditRequest};

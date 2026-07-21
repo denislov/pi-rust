@@ -144,7 +144,6 @@ impl OperationPermit {
         }
     }
 
-    #[allow(dead_code)]
     pub(crate) fn capability_snapshot(&self) -> &OperationCapabilitySnapshot {
         &self.execution.capability_snapshot
     }

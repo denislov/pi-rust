@@ -14,6 +14,7 @@ futures = "0.3"
 globset = "0.4"
 ignore = "0.4"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+libc = "0.2"
 notify = "7"
 pi-agent-core = { path = "../pi-agent-core" }
 pi-ai = { path = "../pi-ai" }
@@ -26,7 +27,7 @@ sha2 = "0.10"
 syntect = { version = "5", default-features = false, features = ["default-syntaxes", "parsing", "regex-fancy"] }
 thiserror = "2"
 time = { version = "0.3", features = ["formatting", "parsing"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "process", "time", "io-util", "io-std", "sync", "test-util"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "process", "time", "io-util", "io-std", "sync", "signal", "test-util"] }
 tokio-util = "0.7"
 toml = "0.8"
 unicode-normalization = "0.1"

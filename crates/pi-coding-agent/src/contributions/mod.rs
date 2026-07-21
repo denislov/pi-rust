@@ -16,7 +16,10 @@ pub(crate) enum ContributionKind {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 // Product core contribution assembly begins in EKR-005. Keeping construction
 // private prevents package/WIT data from manufacturing this target meanwhile.
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "the core half of the language-neutral handler contract is retained while core contribution assembly remains skipped"
+)]
 pub(crate) struct CoreHandlerRef {
     pub(crate) kind: ContributionKind,
     pub(crate) handler_id: String,
@@ -36,7 +39,10 @@ pub(crate) struct ExtensionHandlerRef {
 #[serde(tag = "target", content = "handler", rename_all = "snake_case")]
 pub(crate) enum HandlerTarget {
     // EKR-005 wires product-owned built-ins after the target boundary is fixed.
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "the core target discriminator is retained while core contribution assembly remains skipped"
+    )]
     Core(CoreHandlerRef),
     Extension(ExtensionHandlerRef),
 }
@@ -47,7 +53,10 @@ pub(crate) enum HandlerTargetError {
     Invalid(&'static str),
 }
 
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "validated core handler construction is retained while core contribution assembly remains skipped"
+)]
 impl CoreHandlerRef {
     pub(crate) fn new(
         kind: ContributionKind,

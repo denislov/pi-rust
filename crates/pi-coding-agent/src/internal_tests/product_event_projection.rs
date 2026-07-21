@@ -7,9 +7,7 @@ use pi_ai::api::testing::FauxProvider;
 use super::*;
 use crate::app::bootstrap::{PromptInvocation, SessionRunOptions};
 use crate::app::cli::prompt_options::PromptRunOptions;
-use crate::events::{
-    CodingAgentProductEvent, CodingAgentProductEventKind, CodingAgentRuntimeProductEvent,
-};
+use crate::events::{CodingAgentProductEventKind, CodingAgentRuntimeProductEvent};
 use crate::runtime::facade::{
     CodingAgentOperation, CodingAgentSession, CodingAgentSessionOptions,
     CodingAgentShutdownOutcome, CodingSessionError, PromptTurnOptions,
@@ -53,13 +51,6 @@ fn prompt_options(api: &str, ai_client: pi_ai::api::client::AiClient) -> PromptT
         settings: None,
         invocation: PromptInvocation::Text("force real reconnect lag".into()),
     })
-}
-
-#[allow(dead_code)]
-async fn receiver_returns_authoritative_typed_event(
-    receiver: &mut CodingAgentProductEventReceiver,
-) -> CodingAgentProductEvent {
-    receiver.recv().await.unwrap()
 }
 
 #[tokio::test]

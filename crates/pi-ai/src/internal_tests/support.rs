@@ -4,16 +4,13 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use crate::api::client::AiClient;
 use crate::api::provider::ApiProvider;
 
-#[allow(dead_code)]
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
-#[allow(dead_code)]
 pub struct EnvGuard<'a> {
     _lock: MutexGuard<'a, ()>,
     saved: Vec<(&'static str, Option<OsString>)>,
 }
 
-#[allow(dead_code)]
 impl EnvGuard<'static> {
     pub fn new(names: &[&'static str]) -> Self {
         let lock = ENV_LOCK
@@ -27,7 +24,6 @@ impl EnvGuard<'static> {
     }
 }
 
-#[allow(dead_code)]
 impl EnvGuard<'_> {
     pub fn set(&self, name: &str, value: &str) {
         unsafe {
@@ -59,17 +55,9 @@ pub struct ProviderGuard {
     ai_client: AiClient,
 }
 
-#[allow(dead_code)]
 impl ProviderGuard {
     pub fn for_api(api: impl Into<String>) -> Self {
         let _ = api.into();
-        Self {
-            ai_client: AiClient::new(),
-        }
-    }
-
-    pub fn for_apis<const N: usize>(apis: [&str; N]) -> Self {
-        let _ = apis;
         Self {
             ai_client: AiClient::new(),
         }

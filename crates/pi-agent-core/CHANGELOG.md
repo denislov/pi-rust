@@ -1,5 +1,14 @@
 # Changes
 
+## 0.5.3 - 2026-07-21
+
+### Changed
+
+- Advanced with the workspace to `0.5.3`; provider-neutral agent, tool,
+  transcript, resource, compaction, and execution contracts are unchanged.
+- Documented the one retained shared integration-fixture lint scope used by
+  Cargo's separately compiled core test targets.
+
 ## 0.5.2 - 2026-07-20
 
 ### Changed

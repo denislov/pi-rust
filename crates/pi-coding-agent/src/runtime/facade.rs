@@ -75,10 +75,12 @@ pub use crate::runtime::client::projection::{
     CodingAgentTurnUsageSnapshot, CodingAgentUsageSnapshot,
 };
 #[cfg(test)]
+pub(crate) use crate::runtime::client::state::ClientDraft;
+pub(crate) use crate::runtime::client::state::UiSnapshot;
+#[cfg(test)]
 pub(crate) use crate::runtime::client::state::{
     ClientConnectionId, ClientDraftKind, UiSnapshotCursor,
 };
-pub(crate) use crate::runtime::client::state::{ClientDraft, UiSnapshot};
 pub use crate::runtime::error::{CodingAgentLifecycleRejection, CodingSessionError};
 pub use crate::runtime::execution::CodingAgentOperationTask;
 pub use crate::runtime::facade::context::{

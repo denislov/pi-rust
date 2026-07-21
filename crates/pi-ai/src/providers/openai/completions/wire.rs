@@ -111,7 +111,6 @@ pub struct ChatCompletionChunk {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ChoiceDelta {
-    #[allow(dead_code)]
     pub index: u32,
     pub delta: Delta,
     #[serde(rename = "finish_reason")]
@@ -129,9 +128,6 @@ pub struct Delta {
     #[serde(default)]
     pub reasoning_text: Option<String>,
     #[serde(default)]
-    #[allow(dead_code)]
-    pub role: Option<String>,
-    #[serde(default)]
     pub tool_calls: Option<Vec<ToolCallDelta>>,
 }
 
@@ -142,7 +138,6 @@ pub struct ToolCallDelta {
     #[serde(default)]
     pub id: Option<String>,
     #[serde(rename = "type", default)]
-    #[allow(dead_code)]
     pub tool_type: Option<String>,
     #[serde(default)]
     pub function: Option<ToolCallFunctionDelta>,
@@ -166,20 +161,10 @@ pub struct ChatUsage {
     pub total_tokens: u32,
     #[serde(default, rename = "prompt_tokens_details")]
     pub prompt_tokens_details: Option<PromptTokensDetails>,
-    #[serde(default, rename = "completion_tokens_details")]
-    #[allow(dead_code)]
-    pub completion_tokens_details: Option<CompletionTokensDetails>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct PromptTokensDetails {
     #[serde(default)]
     pub cached_tokens: u32,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct CompletionTokensDetails {
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub reasoning_tokens: u32,
 }

@@ -1,5 +1,11 @@
 # Changes
 
+## 0.5.3 - 2026-07-21
+
+### Changed
+
+- Advanced with the workspace to `0.5.3`; this crate remains a placeholder.
+
 ## 0.5.2 - 2026-07-20
 
 ### Changed

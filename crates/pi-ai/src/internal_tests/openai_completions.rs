@@ -292,6 +292,30 @@ async fn completions_clean_truncation_before_done_marker_is_an_error() {
 }
 
 #[tokio::test]
+async fn completions_reject_nonzero_choice_and_non_function_tool_type() {
+    use futures::StreamExt;
+
+    for payload in [
+        r#"{"id":"bad-choice","model":"test","choices":[{"index":1,"delta":{"content":"wrong"},"finish_reason":null}]}"#,
+        r#"{"id":"bad-tool","model":"test","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call-1","type":"custom","function":{"name":"run","arguments":"{}"}}]},"finish_reason":null}]}"#,
+    ] {
+        let body = stream::iter(vec![Ok::<_, String>(Bytes::from(format!(
+            "data: {payload}\n\ndata: [DONE]\n\n"
+        )))]);
+        let events: Vec<_> = completions::stream::process(body, test_model(), None)
+            .collect()
+            .await;
+        assert!(matches!(
+            events.last(),
+            Some(AssistantMessageEvent::Error {
+                reason: StopReason::Error,
+                ..
+            })
+        ));
+    }
+}
+
+#[tokio::test]
 async fn completions_provider_missing_key_returns_error_event() {
     let provider = completions::OpenAICompletionsProvider::new(None);
     let model = Model {

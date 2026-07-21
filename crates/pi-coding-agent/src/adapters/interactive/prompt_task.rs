@@ -1,4 +1,3 @@
-use crate::adapters::interactive::event_bridge::CodingEventBridge;
 use crate::api::operation::{
     BranchSummaryReusePolicy, CodingAgentOperation, CodingAgentPluginLoadOutcome,
 };
@@ -7,20 +6,13 @@ use crate::app::cli::prompt_options::PromptRunOptions;
 use crate::app::session::{ResolvedSessionTarget, open_interactive_session};
 use crate::runtime::control::{OperationControl, OperationKind, operation_control_for_adapter};
 use crate::runtime::facade::{
-    AgentInvocationOptions, AgentTeamOptions, AgentTeamOutcome, CodingAgentSession,
-    CodingSessionError, ProductEvent, ProfileId, PromptTurnOptions, PromptTurnOutcome,
-    SelfHealingEditOutcome, SelfHealingEditRequest, UiSnapshot,
+    AgentInvocationOptions, AgentTeamOptions, AgentTeamOutcome, CodingAgentClientConnection,
+    CodingAgentClientId, CodingAgentSession, CodingSessionError, ProfileId, PromptTurnOptions,
+    PromptTurnOutcome, SelfHealingEditOutcome, SelfHealingEditRequest,
 };
 use tokio::sync::{mpsc, oneshot};
 
-#[allow(
-    clippy::large_enum_variant,
-    reason = "single-owner task events preserve typed snapshot and product-event payloads"
-)]
-pub(super) enum PromptTaskEvent {
-    Snapshot(UiSnapshot),
-    Coding(ProductEvent),
-}
+const PROMPT_TASK_CONTROL_CAPACITY: usize = 32;
 
 #[allow(
     clippy::large_enum_variant,
@@ -95,7 +87,6 @@ pub(super) struct SessionTreeLabelTaskResult {
 
 pub(super) struct DelegationRejectionTaskResult {
     pub(super) session: CodingAgentSession,
-    pub(super) fallback_notice: Option<String>,
 }
 
 pub(super) struct SelfHealingEditTaskResult {
@@ -109,8 +100,8 @@ pub(super) struct PluginReloadTaskResult {
 }
 
 enum PromptTaskControlHandle {
-    Prompt(mpsc::UnboundedSender<PromptTaskControl>),
-    Operation(mpsc::UnboundedSender<PromptTaskControl>),
+    Prompt(mpsc::Sender<PromptTaskControl>),
+    Operation(mpsc::Sender<PromptTaskControl>),
     AbortOnly(Option<oneshot::Sender<()>>),
 }
 
@@ -127,10 +118,10 @@ enum PromptTaskControl {
 
 pub(super) struct PromptTask {
     control: PromptTaskControlHandle,
-    pub(super) events: mpsc::UnboundedReceiver<PromptTaskEvent>,
+    pub(super) connection_handoff:
+        Option<oneshot::Receiver<Result<Option<CodingAgentClientConnection>, CliError>>>,
     pub(super) done: oneshot::Receiver<PromptTaskCompletion>,
     abort_requested: bool,
-    pub(super) events_closed: bool,
 }
 
 impl PromptTask {
@@ -314,16 +305,16 @@ impl PromptTask {
         ))
     }
 
-    pub(super) fn abort_once(&mut self) {
+    pub(super) async fn abort_once(&mut self) {
         if self.abort_requested {
             return;
         }
         match &mut self.control {
             PromptTaskControlHandle::Prompt(control) => {
-                let _ = control.send(PromptTaskControl::Abort);
+                let _ = control.send(PromptTaskControl::Abort).await;
             }
             PromptTaskControlHandle::Operation(control) => {
-                let _ = control.send(PromptTaskControl::Abort);
+                let _ = control.send(PromptTaskControl::Abort).await;
             }
             PromptTaskControlHandle::AbortOnly(abort) => {
                 if let Some(abort) = abort.take() {
@@ -334,25 +325,26 @@ impl PromptTask {
         self.abort_requested = true;
     }
 
-    pub(super) fn steer(&self, text: String) -> bool {
+    pub(super) async fn steer(&self, text: String) -> bool {
         match &self.control {
             PromptTaskControlHandle::Prompt(control) => {
-                control.send(PromptTaskControl::Steer(text)).is_ok()
+                control.send(PromptTaskControl::Steer(text)).await.is_ok()
             }
             PromptTaskControlHandle::Operation(_) | PromptTaskControlHandle::AbortOnly(_) => false,
         }
     }
 
-    pub(super) fn follow_up(&self, text: String) -> bool {
+    pub(super) async fn follow_up(&self, text: String) -> bool {
         match &self.control {
-            PromptTaskControlHandle::Prompt(control) => {
-                control.send(PromptTaskControl::FollowUp(text)).is_ok()
-            }
+            PromptTaskControlHandle::Prompt(control) => control
+                .send(PromptTaskControl::FollowUp(text))
+                .await
+                .is_ok(),
             PromptTaskControlHandle::Operation(_) | PromptTaskControlHandle::AbortOnly(_) => false,
         }
     }
 
-    pub(super) fn decide_tool_authorization(
+    pub(super) async fn decide_tool_authorization(
         &self,
         authorization_id: String,
         decision: crate::authorization::ToolAuthorizationDecision,
@@ -364,6 +356,7 @@ impl PromptTask {
                     authorization_id,
                     decision,
                 })
+                .await
                 .is_ok(),
             PromptTaskControlHandle::AbortOnly(_) => false,
         }
@@ -374,16 +367,16 @@ impl PromptTask {
         existing_session: Option<CodingAgentSession>,
         default_agent_profile_id: ProfileId,
     ) -> Self {
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (connection_tx, connection_rx) = oneshot::channel();
         let (done_tx, done_rx) = oneshot::channel();
-        let (control_tx, control_rx) = mpsc::unbounded_channel();
+        let (control_tx, control_rx) = mpsc::channel(PROMPT_TASK_CONTROL_CAPACITY);
 
         tokio::spawn(async move {
             let result = run_coding_prompt_task(
                 options,
                 existing_session,
                 default_agent_profile_id,
-                event_tx,
+                connection_tx,
                 control_rx,
             )
             .await;
@@ -392,10 +385,9 @@ impl PromptTask {
 
         Self {
             control: PromptTaskControlHandle::Prompt(control_tx),
-            events: event_rx,
+            connection_handoff: Some(connection_rx),
             done: done_rx,
             abort_requested: false,
-            events_closed: false,
         }
     }
 
@@ -404,7 +396,7 @@ impl PromptTask {
         existing_session: Option<CodingAgentSession>,
         default_agent_profile_id: ProfileId,
     ) -> Self {
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (connection_tx, connection_rx) = oneshot::channel();
         let (done_tx, done_rx) = oneshot::channel();
         let (abort_tx, abort_rx) = oneshot::channel();
 
@@ -413,7 +405,7 @@ impl PromptTask {
                 options,
                 existing_session,
                 default_agent_profile_id,
-                event_tx,
+                connection_tx,
                 abort_rx,
             )
             .await;
@@ -422,10 +414,9 @@ impl PromptTask {
 
         Self {
             control: PromptTaskControlHandle::AbortOnly(Some(abort_tx)),
-            events: event_rx,
+            connection_handoff: Some(connection_rx),
             done: done_rx,
             abort_requested: false,
-            events_closed: false,
         }
     }
 
@@ -436,9 +427,9 @@ impl PromptTask {
         task: String,
         default_agent_profile_id: ProfileId,
     ) -> Self {
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (connection_tx, connection_rx) = oneshot::channel();
         let (done_tx, done_rx) = oneshot::channel();
-        let (control_tx, control_rx) = mpsc::unbounded_channel();
+        let (control_tx, control_rx) = mpsc::channel(PROMPT_TASK_CONTROL_CAPACITY);
 
         tokio::spawn(async move {
             let result = run_coding_agent_invocation_task(
@@ -447,7 +438,7 @@ impl PromptTask {
                 profile_id,
                 task,
                 default_agent_profile_id,
-                event_tx,
+                connection_tx,
                 control_rx,
             )
             .await;
@@ -456,10 +447,9 @@ impl PromptTask {
 
         Self {
             control: PromptTaskControlHandle::Prompt(control_tx),
-            events: event_rx,
+            connection_handoff: Some(connection_rx),
             done: done_rx,
             abort_requested: false,
-            events_closed: false,
         }
     }
 
@@ -470,9 +460,9 @@ impl PromptTask {
         task: String,
         default_agent_profile_id: ProfileId,
     ) -> Self {
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (connection_tx, connection_rx) = oneshot::channel();
         let (done_tx, done_rx) = oneshot::channel();
-        let (control_tx, control_rx) = mpsc::unbounded_channel();
+        let (control_tx, control_rx) = mpsc::channel(PROMPT_TASK_CONTROL_CAPACITY);
 
         tokio::spawn(async move {
             let result = run_coding_agent_team_task(
@@ -481,7 +471,7 @@ impl PromptTask {
                 team_id,
                 task,
                 default_agent_profile_id,
-                event_tx,
+                connection_tx,
                 control_rx,
             )
             .await;
@@ -490,10 +480,9 @@ impl PromptTask {
 
         Self {
             control: PromptTaskControlHandle::Operation(control_tx),
-            events: event_rx,
+            connection_handoff: Some(connection_rx),
             done: done_rx,
             abort_requested: false,
-            events_closed: false,
         }
     }
 
@@ -502,16 +491,16 @@ impl PromptTask {
         operation_id: String,
         tool_call_id: String,
     ) -> Self {
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (connection_tx, connection_rx) = oneshot::channel();
         let (done_tx, done_rx) = oneshot::channel();
-        let (control_tx, control_rx) = mpsc::unbounded_channel();
+        let (control_tx, control_rx) = mpsc::channel(PROMPT_TASK_CONTROL_CAPACITY);
 
         tokio::spawn(async move {
             let result = run_coding_delegation_approval_task(
                 existing_session,
                 operation_id,
                 tool_call_id,
-                event_tx,
+                connection_tx,
                 control_rx,
             )
             .await;
@@ -520,10 +509,9 @@ impl PromptTask {
 
         Self {
             control: PromptTaskControlHandle::Operation(control_tx),
-            events: event_rx,
+            connection_handoff: Some(connection_rx),
             done: done_rx,
             abort_requested: false,
-            events_closed: false,
         }
     }
 
@@ -531,7 +519,7 @@ impl PromptTask {
         existing_session: CodingAgentSession,
         profile_id: ProfileId,
     ) -> Self {
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (connection_tx, connection_rx) = oneshot::channel();
         let (done_tx, done_rx) = oneshot::channel();
         let (abort_tx, abort_rx) = oneshot::channel();
 
@@ -539,7 +527,7 @@ impl PromptTask {
             let result = run_coding_set_default_agent_profile_task(
                 existing_session,
                 profile_id,
-                event_tx,
+                connection_tx,
                 abort_rx,
             )
             .await;
@@ -548,10 +536,9 @@ impl PromptTask {
 
         Self {
             control: PromptTaskControlHandle::AbortOnly(Some(abort_tx)),
-            events: event_rx,
+            connection_handoff: Some(connection_rx),
             done: done_rx,
             abort_requested: false,
-            events_closed: false,
         }
     }
 
@@ -560,7 +547,7 @@ impl PromptTask {
         entry_id: String,
         label: Option<String>,
     ) -> Self {
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (connection_tx, connection_rx) = oneshot::channel();
         let (done_tx, done_rx) = oneshot::channel();
         let (abort_tx, abort_rx) = oneshot::channel();
 
@@ -569,7 +556,7 @@ impl PromptTask {
                 existing_session,
                 entry_id,
                 label,
-                event_tx,
+                connection_tx,
                 abort_rx,
             )
             .await;
@@ -578,10 +565,9 @@ impl PromptTask {
 
         Self {
             control: PromptTaskControlHandle::AbortOnly(Some(abort_tx)),
-            events: event_rx,
+            connection_handoff: Some(connection_rx),
             done: done_rx,
             abort_requested: false,
-            events_closed: false,
         }
     }
 
@@ -591,7 +577,7 @@ impl PromptTask {
         tool_call_id: String,
         reason: String,
     ) -> Self {
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (connection_tx, connection_rx) = oneshot::channel();
         let (done_tx, done_rx) = oneshot::channel();
         let (abort_tx, abort_rx) = oneshot::channel();
 
@@ -601,7 +587,7 @@ impl PromptTask {
                 operation_id,
                 tool_call_id,
                 reason,
-                event_tx,
+                connection_tx,
                 abort_rx,
             )
             .await;
@@ -610,10 +596,9 @@ impl PromptTask {
 
         Self {
             control: PromptTaskControlHandle::AbortOnly(Some(abort_tx)),
-            events: event_rx,
+            connection_handoff: Some(connection_rx),
             done: done_rx,
             abort_requested: false,
-            events_closed: false,
         }
     }
 
@@ -622,7 +607,7 @@ impl PromptTask {
         existing_session: Option<CodingAgentSession>,
         default_agent_profile_id: ProfileId,
     ) -> Self {
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (connection_tx, connection_rx) = oneshot::channel();
         let (done_tx, done_rx) = oneshot::channel();
         let (abort_tx, abort_rx) = oneshot::channel();
 
@@ -631,7 +616,7 @@ impl PromptTask {
                 options,
                 existing_session,
                 default_agent_profile_id,
-                event_tx,
+                connection_tx,
                 abort_rx,
             )
             .await;
@@ -640,10 +625,9 @@ impl PromptTask {
 
         Self {
             control: PromptTaskControlHandle::AbortOnly(Some(abort_tx)),
-            events: event_rx,
+            connection_handoff: Some(connection_rx),
             done: done_rx,
             abort_requested: false,
-            events_closed: false,
         }
     }
 
@@ -653,7 +637,7 @@ impl PromptTask {
         request: SelfHealingEditRequest,
         default_agent_profile_id: ProfileId,
     ) -> Self {
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (connection_tx, connection_rx) = oneshot::channel();
         let (done_tx, done_rx) = oneshot::channel();
         let (abort_tx, abort_rx) = oneshot::channel();
 
@@ -663,7 +647,7 @@ impl PromptTask {
                 existing_session,
                 request,
                 default_agent_profile_id,
-                event_tx,
+                connection_tx,
                 abort_rx,
             )
             .await;
@@ -672,10 +656,9 @@ impl PromptTask {
 
         Self {
             control: PromptTaskControlHandle::AbortOnly(Some(abort_tx)),
-            events: event_rx,
+            connection_handoff: Some(connection_rx),
             done: done_rx,
             abort_requested: false,
-            events_closed: false,
         }
     }
 
@@ -687,7 +670,7 @@ impl PromptTask {
         custom_instructions: Option<String>,
         default_agent_profile_id: ProfileId,
     ) -> Self {
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (connection_tx, connection_rx) = oneshot::channel();
         let (done_tx, done_rx) = oneshot::channel();
         let (abort_tx, abort_rx) = oneshot::channel();
 
@@ -699,7 +682,7 @@ impl PromptTask {
                 target_leaf_id,
                 custom_instructions,
                 default_agent_profile_id,
-                event_tx,
+                connection_tx,
                 abort_rx,
             )
             .await;
@@ -708,10 +691,9 @@ impl PromptTask {
 
         Self {
             control: PromptTaskControlHandle::AbortOnly(Some(abort_tx)),
-            events: event_rx,
+            connection_handoff: Some(connection_rx),
             done: done_rx,
             abort_requested: false,
-            events_closed: false,
         }
     }
 
@@ -722,7 +704,7 @@ impl PromptTask {
         target_leaf_id: String,
         default_agent_profile_id: ProfileId,
     ) -> Self {
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (connection_tx, connection_rx) = oneshot::channel();
         let (done_tx, done_rx) = oneshot::channel();
         let (abort_tx, abort_rx) = oneshot::channel();
 
@@ -733,7 +715,7 @@ impl PromptTask {
                 source_leaf_id,
                 target_leaf_id,
                 default_agent_profile_id,
-                event_tx,
+                connection_tx,
                 abort_rx,
             )
             .await;
@@ -742,10 +724,9 @@ impl PromptTask {
 
         Self {
             control: PromptTaskControlHandle::AbortOnly(Some(abort_tx)),
-            events: event_rx,
+            connection_handoff: Some(connection_rx),
             done: done_rx,
             abort_requested: false,
-            events_closed: false,
         }
     }
 
@@ -756,7 +737,7 @@ impl PromptTask {
         completion_notice: Option<String>,
         default_agent_profile_id: ProfileId,
     ) -> Self {
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (connection_tx, connection_rx) = oneshot::channel();
         let (done_tx, done_rx) = oneshot::channel();
         let (abort_tx, abort_rx) = oneshot::channel();
 
@@ -767,7 +748,7 @@ impl PromptTask {
                 target_leaf_id,
                 completion_notice,
                 default_agent_profile_id,
-                event_tx,
+                connection_tx,
                 abort_rx,
             )
             .await;
@@ -776,19 +757,38 @@ impl PromptTask {
 
         Self {
             control: PromptTaskControlHandle::AbortOnly(Some(abort_tx)),
-            events: event_rx,
+            connection_handoff: Some(connection_rx),
             done: done_rx,
             abort_requested: false,
-            events_closed: false,
         }
     }
 }
 
-fn send_ui_snapshot(
-    event_tx: &mpsc::UnboundedSender<PromptTaskEvent>,
+fn handoff_interactive_connection(
+    connection_tx: oneshot::Sender<Result<Option<CodingAgentClientConnection>, CliError>>,
     session: &CodingAgentSession,
-) {
-    let _ = event_tx.send(PromptTaskEvent::Snapshot(session.ui_snapshot(Vec::new())));
+    connect: bool,
+) -> Result<(), CliError> {
+    if !connect {
+        return connection_tx.send(Ok(None)).map_err(|_| {
+            CliError::AgentFailure("interactive connection handoff receiver closed".to_string())
+        });
+    }
+    match session.connect(CodingAgentClientId::new("interactive")) {
+        Ok(connection) => connection_tx.send(Ok(Some(connection))).map_err(|_| {
+            CliError::AgentFailure("interactive connection handoff receiver closed".to_string())
+        }),
+        Err(error) => {
+            connection_tx
+                .send(Err(CliError::from(error.clone())))
+                .map_err(|_| {
+                    CliError::AgentFailure(
+                        "interactive connection handoff receiver closed".to_string(),
+                    )
+                })?;
+            Err(CliError::from(error))
+        }
+    }
 }
 
 fn complete_owned_task<T>(
@@ -823,10 +823,6 @@ fn normalize_interactive_abort_result(
     }
 }
 
-fn product_event_has_visible_ui(bridge: &mut CodingEventBridge, event: &ProductEvent) -> bool {
-    !bridge.push_product_event(event).is_empty()
-}
-
 fn active_session_target(session: &CodingAgentSession) -> ResolvedSessionTarget {
     ResolvedSessionTarget::OpenOrCreateId(session.view().session_id.clone())
 }
@@ -835,9 +831,10 @@ async fn run_coding_prompt_task(
     options: PromptRunOptions,
     existing_session: Option<CodingAgentSession>,
     default_agent_profile_id: ProfileId,
-    event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
-    mut control_rx: mpsc::UnboundedReceiver<PromptTaskControl>,
+    connection_tx: oneshot::Sender<Result<Option<CodingAgentClientConnection>, CliError>>,
+    mut control_rx: mpsc::Receiver<PromptTaskControl>,
 ) -> PromptTaskCompletion {
+    let needs_connection = existing_session.is_none();
     let mut session = match existing_session {
         Some(session) => session,
         None => {
@@ -856,8 +853,7 @@ async fn run_coding_prompt_task(
     let result = async {
         let prompt_control = session.prompt_control_handle()?;
         let tool_authorization_control = session.tool_authorization_control();
-        let mut receiver = session.subscribe_product_events();
-        send_ui_snapshot(&event_tx, &session);
+        handoff_interactive_connection(connection_tx, &session, needs_connection)?;
         let prompt_options = PromptTurnOptions::from_prompt_run_options(options);
 
         let outcome = {
@@ -890,11 +886,6 @@ async fn run_coding_prompt_task(
                             }
                         }
                     }
-                    event = receiver.recv() => {
-                        if let Ok(event) = event {
-                            let _ = event_tx.send(PromptTaskEvent::Coding(event));
-                        }
-                    }
                     outcome = &mut prompt => {
                         break outcome
                             .map_err(CliError::from)
@@ -905,10 +896,6 @@ async fn run_coding_prompt_task(
                 }
             }
         }?;
-
-        while let Ok(Some(event)) = receiver.try_recv() {
-            let _ = event_tx.send(PromptTaskEvent::Coding(event));
-        }
         Ok(outcome)
     }
     .await;
@@ -930,9 +917,10 @@ async fn run_coding_agent_invocation_task(
     profile_id: ProfileId,
     task: String,
     default_agent_profile_id: ProfileId,
-    event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
-    mut control_rx: mpsc::UnboundedReceiver<PromptTaskControl>,
+    connection_tx: oneshot::Sender<Result<Option<CodingAgentClientConnection>, CliError>>,
+    mut control_rx: mpsc::Receiver<PromptTaskControl>,
 ) -> PromptTaskCompletion {
+    let needs_connection = existing_session.is_none();
     let mut session = match existing_session {
         Some(session) => session,
         None => {
@@ -951,8 +939,7 @@ async fn run_coding_agent_invocation_task(
     let result = async {
         let prompt_control = session.prompt_control_handle()?;
         let tool_authorization_control = session.tool_authorization_control();
-        let mut receiver = session.subscribe_product_events();
-        send_ui_snapshot(&event_tx, &session);
+        handoff_interactive_connection(connection_tx, &session, needs_connection)?;
         let invocation_options = AgentInvocationOptions::new(
             profile_id,
             task,
@@ -988,11 +975,6 @@ async fn run_coding_agent_invocation_task(
                         }
                     }
                 }
-                event = receiver.recv() => {
-                    if let Ok(event) = event {
-                        let _ = event_tx.send(PromptTaskEvent::Coding(event));
-                    }
-                }
                 outcome = &mut invocation => {
                     break outcome
                         .map_err(CliError::from)
@@ -1004,10 +986,6 @@ async fn run_coding_agent_invocation_task(
                 }
             }
         }?;
-
-        while let Ok(Some(event)) = receiver.try_recv() {
-            let _ = event_tx.send(PromptTaskEvent::Coding(event));
-        }
         Ok(())
     }
     .await;
@@ -1023,9 +1001,10 @@ async fn run_coding_agent_team_task(
     team_id: ProfileId,
     task: String,
     default_agent_profile_id: ProfileId,
-    event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
-    mut control_rx: mpsc::UnboundedReceiver<PromptTaskControl>,
+    connection_tx: oneshot::Sender<Result<Option<CodingAgentClientConnection>, CliError>>,
+    mut control_rx: mpsc::Receiver<PromptTaskControl>,
 ) -> PromptTaskCompletion {
+    let needs_connection = existing_session.is_none();
     let mut session = match existing_session {
         Some(session) => session,
         None => {
@@ -1042,10 +1021,9 @@ async fn run_coding_agent_team_task(
         }
     };
     let result = async {
-        let mut receiver = session.subscribe_product_events();
         let operation_control = operation_control_for_adapter(&session);
         let tool_authorization_control = session.tool_authorization_control();
-        send_ui_snapshot(&event_tx, &session);
+        handoff_interactive_connection(connection_tx, &session, needs_connection)?;
         let team_options = AgentTeamOptions::new(
             team_id,
             task,
@@ -1076,11 +1054,6 @@ async fn run_coding_agent_team_task(
                         | None => {}
                     }
                 }
-                event = receiver.recv() => {
-                    if let Ok(event) = event {
-                        let _ = event_tx.send(PromptTaskEvent::Coding(event));
-                    }
-                }
                 outcome = &mut invocation => {
                     break outcome
                         .map_err(CliError::from)
@@ -1091,10 +1064,6 @@ async fn run_coding_agent_team_task(
             }
             }
         }?;
-
-    while let Ok(Some(event)) = receiver.try_recv() {
-        let _ = event_tx.send(PromptTaskEvent::Coding(event));
-    }
 
         Ok(outcome)
     }
@@ -1109,14 +1078,14 @@ async fn run_coding_delegation_approval_task(
     mut session: CodingAgentSession,
     operation_id: String,
     tool_call_id: String,
-    event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
-    mut control_rx: mpsc::UnboundedReceiver<PromptTaskControl>,
+    connection_tx: oneshot::Sender<Result<Option<CodingAgentClientConnection>, CliError>>,
+    mut control_rx: mpsc::Receiver<PromptTaskControl>,
 ) -> PromptTaskCompletion {
+    let needs_connection = false;
     let result = async {
-        let mut receiver = session.subscribe_product_events();
         let operation_control = operation_control_for_adapter(&session);
         let tool_authorization_control = session.tool_authorization_control();
-        send_ui_snapshot(&event_tx, &session);
+        handoff_interactive_connection(connection_tx, &session, needs_connection)?;
 
         let mut approval = Box::pin(session.run(CodingAgentOperation::ApproveDelegation {
             operation_id,
@@ -1146,11 +1115,6 @@ async fn run_coding_delegation_approval_task(
                         | None => {}
                     }
                 }
-                event = receiver.recv() => {
-                    if let Ok(event) = event {
-                        let _ = event_tx.send(PromptTaskEvent::Coding(event));
-                    }
-                }
                 outcome = &mut approval => {
                     break outcome
                         .map_err(CliError::from)
@@ -1160,10 +1124,6 @@ async fn run_coding_delegation_approval_task(
                 }
             }
         }?;
-
-    while let Ok(Some(event)) = receiver.try_recv() {
-        let _ = event_tx.send(PromptTaskEvent::Coding(event));
-    }
 
         Ok(())
     }
@@ -1177,38 +1137,25 @@ async fn run_coding_delegation_approval_task(
 async fn run_coding_set_default_agent_profile_task(
     mut session: CodingAgentSession,
     profile_id: ProfileId,
-    event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
+    connection_tx: oneshot::Sender<Result<Option<CodingAgentClientConnection>, CliError>>,
     mut abort_rx: oneshot::Receiver<()>,
 ) -> PromptTaskCompletion {
+    let needs_connection = false;
     let result = async {
-        let mut receiver = session.subscribe_product_events();
-        send_ui_snapshot(&event_tx, &session);
+        handoff_interactive_connection(connection_tx, &session, needs_connection)?;
 
         let mut mutation =
             Box::pin(session.run(CodingAgentOperation::SetDefaultAgentProfile { profile_id }));
-        loop {
-            tokio::select! {
-                _ = &mut abort_rx => {
-                    break Err(CliError::from(CodingSessionError::Cancelled));
-                }
-                event = receiver.recv() => {
-                    if let Ok(event) = event {
-                        let _ = event_tx.send(PromptTaskEvent::Coding(event));
-                    }
-                }
-                outcome = &mut mutation => {
-                    break outcome
-                        .map_err(CliError::from)
-                        .map(|operation_outcome| operation_outcome
-                            .into_default_agent_profile_changed()
-                            .expect("set default agent profile operation returned a different public outcome"));
-                }
+        tokio::select! {
+            _ = &mut abort_rx => Err(CliError::from(CodingSessionError::Cancelled)),
+            outcome = &mut mutation => {
+                outcome
+                    .map_err(CliError::from)
+                    .map(|operation_outcome| operation_outcome
+                        .into_default_agent_profile_changed()
+                        .expect("set default agent profile operation returned a different public outcome"))
             }
         }?;
-
-    while let Ok(Some(event)) = receiver.try_recv() {
-        let _ = event_tx.send(PromptTaskEvent::Coding(event));
-    }
 
         Ok(())
     }
@@ -1223,38 +1170,25 @@ async fn run_coding_session_tree_label_task(
     mut session: CodingAgentSession,
     entry_id: String,
     label: Option<String>,
-    event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
+    connection_tx: oneshot::Sender<Result<Option<CodingAgentClientConnection>, CliError>>,
     mut abort_rx: oneshot::Receiver<()>,
 ) -> PromptTaskCompletion {
+    let needs_connection = false;
     let result = async {
-        let mut receiver = session.subscribe_product_events();
-        send_ui_snapshot(&event_tx, &session);
+        handoff_interactive_connection(connection_tx, &session, needs_connection)?;
 
         let mut mutation =
             Box::pin(session.run(CodingAgentOperation::SetSessionTreeLabel { entry_id, label }));
-        let update = loop {
-            tokio::select! {
-                _ = &mut abort_rx => {
-                    break Err(CliError::from(CodingSessionError::Cancelled));
-                }
-                event = receiver.recv() => {
-                    if let Ok(event) = event {
-                        let _ = event_tx.send(PromptTaskEvent::Coding(event));
-                    }
-                }
-                outcome = &mut mutation => {
-                    break outcome
-                        .map_err(CliError::from)
-                        .map(|operation_outcome| operation_outcome
-                            .into_session_tree_label_changed()
-                            .expect("session tree label operation returned a different public outcome"));
-                }
+        let update = tokio::select! {
+            _ = &mut abort_rx => Err(CliError::from(CodingSessionError::Cancelled)),
+            outcome = &mut mutation => {
+                outcome
+                    .map_err(CliError::from)
+                    .map(|operation_outcome| operation_outcome
+                        .into_session_tree_label_changed()
+                        .expect("session tree label operation returned a different public outcome"))
             }
         }?;
-
-        while let Ok(Some(event)) = receiver.try_recv() {
-            let _ = event_tx.send(PromptTaskEvent::Coding(event));
-        }
 
         Ok(update)
     }
@@ -1275,60 +1209,34 @@ async fn run_coding_delegation_rejection_task(
     operation_id: String,
     tool_call_id: String,
     reason: String,
-    event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
+    connection_tx: oneshot::Sender<Result<Option<CodingAgentClientConnection>, CliError>>,
     mut abort_rx: oneshot::Receiver<()>,
 ) -> PromptTaskCompletion {
-    let fallback_text = format!("Delegation rejected: {operation_id} {tool_call_id}");
+    let needs_connection = false;
     let result = async {
-        let mut receiver = session.subscribe_product_events();
-        send_ui_snapshot(&event_tx, &session);
+        handoff_interactive_connection(connection_tx, &session, needs_connection)?;
 
-        let mut projection = CodingEventBridge::new();
-        let mut had_visible_events = false;
         let mut rejection = Box::pin(session.run(CodingAgentOperation::RejectDelegation {
             operation_id,
             tool_call_id,
             reason,
         }));
-        loop {
-            tokio::select! {
-                _ = &mut abort_rx => {
-                    break Err(CliError::from(CodingSessionError::Cancelled));
-                }
-                event = receiver.recv() => {
-                    if let Ok(event) = event {
-                        had_visible_events |= product_event_has_visible_ui(&mut projection, &event);
-                        let _ = event_tx.send(PromptTaskEvent::Coding(event));
-                    }
-                }
-                outcome = &mut rejection => {
-                    break outcome
-                        .map_err(CliError::from)
-                        .map(|operation_outcome| operation_outcome
-                            .into_delegation_rejected()
-                            .expect("delegation rejection operation returned a different public outcome"));
-                }
+        tokio::select! {
+            _ = &mut abort_rx => Err(CliError::from(CodingSessionError::Cancelled)),
+            outcome = &mut rejection => {
+                outcome
+                    .map_err(CliError::from)
+                    .map(|operation_outcome| operation_outcome
+                        .into_delegation_rejected()
+                        .expect("delegation rejection operation returned a different public outcome"))
             }
         }?;
-
-        while let Ok(Some(event)) = receiver.try_recv() {
-            had_visible_events |= product_event_has_visible_ui(&mut projection, &event);
-            let _ = event_tx.send(PromptTaskEvent::Coding(event));
-        }
-
-        Ok(if had_visible_events {
-            None
-        } else {
-            Some(fallback_text)
-        })
+        Ok(())
     }
     .await;
 
-    complete_owned_task(session, result, |session, fallback_notice| {
-        PromptTaskResult::DelegationRejection(DelegationRejectionTaskResult {
-            session,
-            fallback_notice,
-        })
+    complete_owned_task(session, result, |session, ()| {
+        PromptTaskResult::DelegationRejection(DelegationRejectionTaskResult { session })
     })
 }
 
@@ -1336,9 +1244,10 @@ async fn run_coding_compact_task(
     options: PromptRunOptions,
     existing_session: Option<CodingAgentSession>,
     default_agent_profile_id: ProfileId,
-    event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
+    connection_tx: oneshot::Sender<Result<Option<CodingAgentClientConnection>, CliError>>,
     mut abort_rx: oneshot::Receiver<()>,
 ) -> PromptTaskCompletion {
+    let needs_connection = existing_session.is_none();
     let mut session = match existing_session {
         Some(session) => session,
         None => {
@@ -1355,9 +1264,8 @@ async fn run_coding_compact_task(
         }
     };
     let result = async {
-        let mut receiver = session.subscribe_product_events();
         let operation_control = operation_control_for_adapter(&session);
-        send_ui_snapshot(&event_tx, &session);
+        handoff_interactive_connection(connection_tx, &session, needs_connection)?;
         let compact_options = PromptTurnOptions::from_prompt_run_options(options);
 
         let outcome = {
@@ -1369,11 +1277,6 @@ async fn run_coding_compact_task(
                     abort_requested = true;
                     request_interactive_abort(&operation_control, OperationKind::Compact)?;
                 }
-                event = receiver.recv() => {
-                    if let Ok(event) = event {
-                        let _ = event_tx.send(PromptTaskEvent::Coding(event));
-                    }
-                }
                 outcome = &mut compact => {
                     break outcome
                         .map_err(CliError::from)
@@ -1384,10 +1287,6 @@ async fn run_coding_compact_task(
             }
         }
         }?;
-
-    while let Ok(Some(event)) = receiver.try_recv() {
-        let _ = event_tx.send(PromptTaskEvent::Coding(event));
-    }
 
         Ok(outcome)
     }
@@ -1409,9 +1308,10 @@ async fn run_coding_self_healing_edit_task(
     existing_session: Option<CodingAgentSession>,
     request: SelfHealingEditRequest,
     default_agent_profile_id: ProfileId,
-    event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
+    connection_tx: oneshot::Sender<Result<Option<CodingAgentClientConnection>, CliError>>,
     mut abort_rx: oneshot::Receiver<()>,
 ) -> PromptTaskCompletion {
+    let needs_connection = existing_session.is_none();
     let mut session = match existing_session {
         Some(session) => session,
         None => {
@@ -1428,9 +1328,8 @@ async fn run_coding_self_healing_edit_task(
         }
     };
     let result = async {
-        let mut receiver = session.subscribe_product_events();
         let operation_control = operation_control_for_adapter(&session);
-        send_ui_snapshot(&event_tx, &session);
+        handoff_interactive_connection(connection_tx, &session, needs_connection)?;
 
         let outcome = {
         let mut edit = Box::pin(session.run(CodingAgentOperation::SelfHealingEdit(request)));
@@ -1444,11 +1343,6 @@ async fn run_coding_self_healing_edit_task(
                         OperationKind::SelfHealingEdit,
                     )?;
                 }
-                event = receiver.recv() => {
-                    if let Ok(event) = event {
-                        let _ = event_tx.send(PromptTaskEvent::Coding(event));
-                    }
-                }
                 outcome = &mut edit => {
                     break outcome
                         .map_err(CliError::from)
@@ -1459,10 +1353,6 @@ async fn run_coding_self_healing_edit_task(
             }
         }
         }?;
-
-    while let Ok(Some(event)) = receiver.try_recv() {
-        let _ = event_tx.send(PromptTaskEvent::Coding(event));
-    }
 
         Ok(outcome)
     }
@@ -1477,9 +1367,10 @@ async fn run_coding_plugin_reload_task(
     options: PromptRunOptions,
     existing_session: Option<CodingAgentSession>,
     default_agent_profile_id: ProfileId,
-    event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
+    connection_tx: oneshot::Sender<Result<Option<CodingAgentClientConnection>, CliError>>,
     mut abort_rx: oneshot::Receiver<()>,
 ) -> PromptTaskCompletion {
+    let needs_connection = existing_session.is_none();
     let mut session = match existing_session {
         Some(session) => session,
         None => {
@@ -1496,9 +1387,8 @@ async fn run_coding_plugin_reload_task(
         }
     };
     let result = async {
-        let mut receiver = session.subscribe_product_events();
         let operation_control = operation_control_for_adapter(&session);
-        send_ui_snapshot(&event_tx, &session);
+        handoff_interactive_connection(connection_tx, &session, needs_connection)?;
 
         let outcome = {
         let mut reload = Box::pin(session.run(CodingAgentOperation::PluginLoad));
@@ -1508,11 +1398,6 @@ async fn run_coding_plugin_reload_task(
                 _ = &mut abort_rx, if !abort_requested => {
                     abort_requested = true;
                     request_interactive_abort(&operation_control, OperationKind::PluginLoad)?;
-                }
-                event = receiver.recv() => {
-                    if let Ok(event) = event {
-                        let _ = event_tx.send(PromptTaskEvent::Coding(event));
-                    }
                 }
                 outcome = &mut reload => {
                     break outcome
@@ -1524,12 +1409,6 @@ async fn run_coding_plugin_reload_task(
             }
         }
         }?;
-
-        while let Ok(Some(event)) = receiver.try_recv() {
-            let _ = event_tx.send(PromptTaskEvent::Coding(event));
-        }
-
-        send_ui_snapshot(&event_tx, &session);
 
         Ok(outcome)
     }
@@ -1551,9 +1430,10 @@ async fn run_coding_branch_summary_task(
     target_leaf_id: String,
     custom_instructions: Option<String>,
     default_agent_profile_id: ProfileId,
-    event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
+    connection_tx: oneshot::Sender<Result<Option<CodingAgentClientConnection>, CliError>>,
     mut abort_rx: oneshot::Receiver<()>,
 ) -> PromptTaskCompletion {
+    let needs_connection = existing_session.is_none();
     let mut session = match existing_session {
         Some(session) => session,
         None => {
@@ -1570,9 +1450,8 @@ async fn run_coding_branch_summary_task(
         }
     };
     let result = async {
-        let mut receiver = session.subscribe_product_events();
         let operation_control = operation_control_for_adapter(&session);
-        send_ui_snapshot(&event_tx, &session);
+        handoff_interactive_connection(connection_tx, &session, needs_connection)?;
         let branch_options = PromptTurnOptions::from_prompt_run_options(options);
         let mut abort_requested = false;
 
@@ -1593,11 +1472,6 @@ async fn run_coding_branch_summary_task(
                         OperationKind::BranchSummary,
                     )?;
                 }
-                event = receiver.recv() => {
-                    if let Ok(event) = event {
-                        let _ = event_tx.send(PromptTaskEvent::Coding(event));
-                    }
-                }
                 outcome = &mut branch_summary => {
                     break outcome
                         .map_err(CliError::from)
@@ -1608,10 +1482,6 @@ async fn run_coding_branch_summary_task(
             }
         }
         }?;
-
-    while let Ok(Some(event)) = receiver.try_recv() {
-        let _ = event_tx.send(PromptTaskEvent::Coding(event));
-    }
 
         Ok(outcome)
     }
@@ -1634,9 +1504,10 @@ async fn run_coding_branch_summary_navigation_task(
     source_leaf_id: String,
     target_leaf_id: String,
     default_agent_profile_id: ProfileId,
-    event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
+    connection_tx: oneshot::Sender<Result<Option<CodingAgentClientConnection>, CliError>>,
     mut abort_rx: oneshot::Receiver<()>,
 ) -> PromptTaskCompletion {
+    let needs_connection = existing_session.is_none();
     let mut session = match existing_session {
         Some(session) => session,
         None => {
@@ -1653,9 +1524,8 @@ async fn run_coding_branch_summary_navigation_task(
         }
     };
     let result = async {
-        let mut receiver = session.subscribe_product_events();
         let operation_control = operation_control_for_adapter(&session);
-        send_ui_snapshot(&event_tx, &session);
+        handoff_interactive_connection(connection_tx, &session, needs_connection)?;
         let branch_options = PromptTurnOptions::from_prompt_run_options(options);
         let mut abort_requested = false;
 
@@ -1676,11 +1546,6 @@ async fn run_coding_branch_summary_navigation_task(
                         OperationKind::BranchSummary,
                     )?;
                 }
-                event = receiver.recv() => {
-                    if let Ok(event) = event {
-                        let _ = event_tx.send(PromptTaskEvent::Coding(event));
-                    }
-                }
                 outcome = &mut branch_summary => {
                     break outcome
                         .map_err(CliError::from)
@@ -1692,42 +1557,23 @@ async fn run_coding_branch_summary_navigation_task(
         }
         }?;
 
-    while let Ok(Some(event)) = receiver.try_recv() {
-        let _ = event_tx.send(PromptTaskEvent::Coding(event));
-    }
-
         if !branch_summary_allows_navigation(&outcome) {
             return Ok((outcome, false));
         }
 
-        {
         let mut fork = Box::pin(session.run(CodingAgentOperation::ForkSession {
             target_leaf_id: Some(target_leaf_id),
         }));
-        loop {
-            tokio::select! {
-                _ = &mut abort_rx, if !abort_requested => {
-                    break Err(CliError::from(CodingSessionError::Cancelled));
-                }
-                event = receiver.recv() => {
-                    if let Ok(event) = event {
-                        let _ = event_tx.send(PromptTaskEvent::Coding(event));
-                    }
-                }
-                outcome = &mut fork => {
-                    break outcome
-                        .map_err(CliError::from)
-                        .map(|operation_outcome| operation_outcome
-                            .into_session_forked()
-                            .expect("navigation fork operation returned a different public outcome"));
-                }
+        tokio::select! {
+            _ = &mut abort_rx => Err(CliError::from(CodingSessionError::Cancelled)),
+            outcome = &mut fork => {
+                outcome
+                    .map_err(CliError::from)
+                    .map(|operation_outcome| operation_outcome
+                        .into_session_forked()
+                        .expect("navigation fork operation returned a different public outcome"))
             }
-        }
         }?;
-
-    while let Ok(Some(event)) = receiver.try_recv() {
-        let _ = event_tx.send(PromptTaskEvent::Coding(event));
-    }
 
         Ok((outcome, true))
     }
@@ -1755,9 +1601,10 @@ async fn run_coding_fork_session_task(
     target_leaf_id: Option<String>,
     completion_notice: Option<String>,
     default_agent_profile_id: ProfileId,
-    event_tx: mpsc::UnboundedSender<PromptTaskEvent>,
+    connection_tx: oneshot::Sender<Result<Option<CodingAgentClientConnection>, CliError>>,
     mut abort_rx: oneshot::Receiver<()>,
 ) -> PromptTaskCompletion {
+    let needs_connection = existing_session.is_none();
     let mut session = match existing_session {
         Some(session) => session,
         None => {
@@ -1774,33 +1621,19 @@ async fn run_coding_fork_session_task(
         }
     };
     let result = async {
-        let mut receiver = session.subscribe_product_events();
-        send_ui_snapshot(&event_tx, &session);
+        handoff_interactive_connection(connection_tx, &session, needs_connection)?;
 
         let mut fork = Box::pin(session.run(CodingAgentOperation::ForkSession { target_leaf_id }));
-        loop {
-            tokio::select! {
-                _ = &mut abort_rx => {
-                    break Err(CliError::from(CodingSessionError::Cancelled));
-                }
-                event = receiver.recv() => {
-                    if let Ok(event) = event {
-                        let _ = event_tx.send(PromptTaskEvent::Coding(event));
-                    }
-                }
-                outcome = &mut fork => {
-                    break outcome
-                        .map_err(CliError::from)
-                        .map(|operation_outcome| operation_outcome
-                            .into_session_forked()
-                            .expect("fork session operation returned a different public outcome"));
-                }
+        tokio::select! {
+            _ = &mut abort_rx => Err(CliError::from(CodingSessionError::Cancelled)),
+            outcome = &mut fork => {
+                outcome
+                    .map_err(CliError::from)
+                    .map(|operation_outcome| operation_outcome
+                        .into_session_forked()
+                        .expect("fork session operation returned a different public outcome"))
             }
         }?;
-
-        while let Ok(Some(event)) = receiver.try_recv() {
-            let _ = event_tx.send(PromptTaskEvent::Coding(event));
-        }
 
         Ok(())
     }
@@ -1822,21 +1655,11 @@ mod tests {
     use super::*;
     use crate::app::bootstrap::{PromptInvocation, SessionRunOptions};
     use crate::authorization::ToolAuthorizationDecision;
-    use crate::events::message::MessageEvent;
-    use crate::events::prompt_stream::PromptStreamEvent;
-    use crate::runtime::facade::ProductEventSequence;
+    use crate::runtime::facade::{CodingAgentReconnect, CodingAgentReconnectDelivery};
     use pi_ai::api::conversation::StopReason;
     use pi_ai::api::model::{Model, ModelCost, ModelInput};
     use pi_ai::api::testing::{FauxProvider, FauxResponse, FauxToolCall};
     use std::sync::Arc;
-
-    fn product_event(sequence: u64, event: PromptStreamEvent) -> ProductEvent {
-        ProductEvent::from_draft_for_tests(
-            ProductEventSequence::new(sequence),
-            event.into_product_draft(),
-            None,
-        )
-    }
 
     fn function_body<'a>(source: &'a str, function_name: &str) -> &'a str {
         let signature = format!("async fn {function_name}(");
@@ -1933,15 +1756,43 @@ mod tests {
         )
         .unwrap();
 
+        let connection = task
+            .connection_handoff
+            .take()
+            .expect("new-session task must expose a connection handoff")
+            .await
+            .expect("connection handoff sender")
+            .expect("connection setup")
+            .expect("new-session handoff contains a connection");
+        let (replayed, mut receiver) = match connection
+            .reconnect_from_cursor(&connection.snapshot.cursor)
+            .expect("canonical reconnect")
+        {
+            CodingAgentReconnect::Replayed {
+                events, receiver, ..
+            } => (
+                events
+                    .into_iter()
+                    .collect::<std::collections::VecDeque<_>>(),
+                receiver,
+            ),
+            CodingAgentReconnect::FreshSnapshotRequired(_) => {
+                panic!("freshly handed-off connection must not have a retained gap")
+            }
+        };
         let authorization_id = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            let mut replayed = replayed;
             loop {
-                let event = task.events.recv().await.expect("prompt task event stream");
-                if let PromptTaskEvent::Coding(event) = event
-                    && let crate::events::CodingAgentProductEventKind::Tool(
-                        crate::events::CodingAgentToolProductEvent::AuthorizationRequired {
-                            request,
-                        },
-                    ) = event.event()
+                let event = match replayed.pop_front() {
+                    Some(event) => event,
+                    None => match receiver.recv().await.expect("canonical product event") {
+                        CodingAgentReconnectDelivery::Event(event) => event,
+                        CodingAgentReconnectDelivery::FreshSnapshotRequired(_) => continue,
+                    },
+                };
+                if let crate::events::CodingAgentProductEventKind::Tool(
+                    crate::events::CodingAgentToolProductEvent::AuthorizationRequired { request },
+                ) = event.event()
                 {
                     break request.authorization_id.clone();
                 }
@@ -1952,6 +1803,7 @@ mod tests {
         assert!(!cwd.join("authorized.txt").exists());
         assert!(
             task.decide_tool_authorization(authorization_id, ToolAuthorizationDecision::AllowOnce)
+                .await
         );
 
         let completion = tokio::time::timeout(std::time::Duration::from_secs(2), task.done)
@@ -1966,32 +1818,7 @@ mod tests {
     }
 
     #[test]
-    fn delegation_fallback_visibility_follows_ui_event_projection() {
-        let invisible = product_event(
-            1,
-            PromptStreamEvent::Message(MessageEvent::Started {
-                operation_id: "op_reject".into(),
-                turn_id: "turn_reject".into(),
-                message_id: Some("msg_reject".into()),
-            }),
-        );
-        let visible = product_event(
-            2,
-            PromptStreamEvent::Message(MessageEvent::Delta {
-                operation_id: "op_reject".into(),
-                turn_id: "turn_reject".into(),
-                message_id: Some("msg_reject".into()),
-                text: "visible rejection event".into(),
-            }),
-        );
-
-        let mut bridge = CodingEventBridge::new();
-        assert!(!product_event_has_visible_ui(&mut bridge, &invisible));
-        assert!(product_event_has_visible_ui(&mut bridge, &visible));
-    }
-
-    #[test]
-    fn interactive_prompt_tasks_use_product_event_stream_boundary() {
+    fn interactive_prompt_tasks_handoff_connection_without_local_subscription() {
         let source = include_str!("prompt_task.rs");
         let product_subscription = [".", "subscribe_product_events()"].concat();
         let compatibility_subscription = [".", "subscribe()"].concat();
@@ -2012,17 +1839,79 @@ mod tests {
             "run_coding_fork_session_task",
         ] {
             let body = function_body(source, function_name);
-            assert!(
-                body.contains(&product_subscription),
-                "interactive task runner `{function_name}` must subscribe through the product event boundary"
-            );
+            assert!(!body.contains(&product_subscription));
+            assert!(body.contains("handoff_interactive_connection("));
             assert!(
                 body.contains("complete_owned_task("),
                 "interactive task runner `{function_name}` must return its live owner on completion"
             );
         }
         assert!(!source.contains(&compatibility_subscription));
-        assert!(source.contains("Coding(ProductEvent)"));
+    }
+
+    #[test]
+    fn every_prompt_task_uses_one_connection_handoff() {
+        let source = include_str!("prompt_task.rs");
+        let production = source
+            .split("\n#[cfg(test)]\nmod tests")
+            .next()
+            .expect("production source precedes the test module");
+        assert_eq!(
+            production
+                .matches("let (connection_tx, connection_rx) = oneshot::channel()")
+                .count(),
+            13
+        );
+        assert_eq!(
+            production
+                .matches("mpsc::channel(PROMPT_TASK_CONTROL_CAPACITY)")
+                .count(),
+            4
+        );
+        assert!(!production.contains("subscribe_product_events()"));
+        assert!(!production.contains("let (control_tx, control_rx) = mpsc::unbounded_channel()"));
+    }
+
+    #[tokio::test]
+    async fn saturated_prompt_control_preserves_abort() {
+        let (control_tx, mut control_rx) = mpsc::channel(PROMPT_TASK_CONTROL_CAPACITY);
+        for index in 0..PROMPT_TASK_CONTROL_CAPACITY {
+            control_tx
+                .try_send(PromptTaskControl::Steer(index.to_string()))
+                .unwrap();
+        }
+        let (_connection_tx, connection_rx) = oneshot::channel();
+        let (_done_tx, done_rx) = oneshot::channel();
+        let task = PromptTask {
+            control: PromptTaskControlHandle::Prompt(control_tx),
+            connection_handoff: Some(connection_rx),
+            done: done_rx,
+            abort_requested: false,
+        };
+
+        let blocked = tokio::spawn(async move {
+            let mut task = task;
+            task.abort_once().await;
+            task
+        });
+        tokio::task::yield_now().await;
+        assert!(!blocked.is_finished());
+
+        assert!(matches!(
+            control_rx.recv().await,
+            Some(PromptTaskControl::Steer(_))
+        ));
+        let task = blocked.await.unwrap();
+        assert!(task.abort_requested);
+
+        let mut aborts = 0usize;
+        let mut total = 1usize;
+        while let Ok(control) = control_rx.try_recv() {
+            total += 1;
+            aborts += usize::from(matches!(control, PromptTaskControl::Abort));
+        }
+        assert_eq!(total, PROMPT_TASK_CONTROL_CAPACITY + 1);
+        assert_eq!(aborts, 1);
     }
 
     #[test]

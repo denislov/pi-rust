@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::Path;
+use std::sync::Arc;
 
 use pi_tui::api::component::{Component, Image, Loader, Markdown};
 use pi_tui::api::render::{
@@ -161,7 +162,7 @@ pub(super) struct TranscriptRenderOptions<'a> {
     pub hide_thinking_block: bool,
     pub hidden_thinking_label: &'a str,
     pub styles: TranscriptStyles,
-    pub view: Option<TranscriptViewSnapshot>,
+    pub view: Option<Arc<TranscriptViewSnapshot>>,
     pub selected_block: Option<TranscriptBlockId>,
     pub selection_gutter: bool,
     pub show_images: bool,
@@ -197,6 +198,7 @@ struct TranscriptRowMetadataKey {
 struct TranscriptRowMetadataEntry {
     item_id: u64,
     contribution_line_count: usize,
+    end_row: usize,
     has_visible_rows: bool,
     separator_before: bool,
 }
@@ -238,6 +240,13 @@ pub(super) struct TranscriptBlockRows {
     pub total_rows: usize,
     pub start: usize,
     pub end: usize,
+}
+
+#[derive(Debug, Default)]
+pub(super) struct TranscriptViewport {
+    pub lines: Vec<String>,
+    pub total_rows: usize,
+    pub block_rows: Vec<(TranscriptBlockId, TranscriptBlockRows)>,
 }
 
 #[cfg(test)]
@@ -308,6 +317,7 @@ impl TranscriptRenderCache {
                 item,
                 block.line_count,
                 metadata.has_visible_rows,
+                metadata.total_rows,
             );
             if entry.separator_before {
                 lines.push(String::new());
@@ -321,6 +331,105 @@ impl TranscriptRenderCache {
         self.retain_used_blocks(&used_keys);
         self.record_row_metadata(transcript, row_profile_hash, metadata);
         lines
+    }
+
+    pub(super) fn render_viewport(
+        &mut self,
+        transcript: &Transcript,
+        opts: &TranscriptRenderOptions<'_>,
+        height: usize,
+        scroll_offset: usize,
+    ) -> TranscriptViewport {
+        let profile_hash = render_profile_hash(opts);
+        let row_profile_hash = render_row_profile_hash(opts, profile_hash);
+        let key = self.row_metadata_key(transcript, row_profile_hash);
+        let needs_rebuild = self
+            .row_metadata
+            .get(&key)
+            .is_none_or(|metadata| metadata.content_revision != transcript.content_revision());
+        if needs_rebuild {
+            self.rebuild_row_metadata(transcript, opts, profile_hash, row_profile_hash);
+        }
+        let Some(metadata) = self.row_metadata.get(&key) else {
+            return TranscriptViewport::default();
+        };
+        let total_rows = metadata.total_rows;
+        if height == 0 || total_rows == 0 {
+            return TranscriptViewport {
+                total_rows,
+                ..Default::default()
+            };
+        }
+        let max_offset = total_rows.saturating_sub(height);
+        let offset = scroll_offset.min(max_offset);
+        let viewport_end = total_rows.saturating_sub(offset);
+        let viewport_start = viewport_end.saturating_sub(height);
+        let first_index = metadata
+            .entries
+            .partition_point(|entry| entry.end_row <= viewport_start);
+        let visible_entries = metadata.entries[first_index..]
+            .iter()
+            .take_while(|entry| {
+                entry.end_row.saturating_sub(entry.contribution_line_count) < viewport_end
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+
+        let mut lines = Vec::with_capacity(viewport_end.saturating_sub(viewport_start));
+        let mut block_rows = Vec::with_capacity(visible_entries.len());
+        for (offset, entry) in visible_entries.into_iter().enumerate() {
+            let index = first_index + offset;
+            let Some((render_key, item)) = transcript.render_entry_at(index) else {
+                continue;
+            };
+            let contribution_start = entry.end_row - entry.contribution_line_count;
+            let block_start = contribution_start + usize::from(entry.separator_before);
+            let block_end = entry.end_row;
+            let (display_state, tool_argument_state, selected, selection_gutter) =
+                block_view(render_key, item, opts);
+            let block_key = block_cache_key(
+                render_key,
+                profile_hash,
+                display_state,
+                tool_argument_state,
+                selected,
+                selection_gutter,
+            );
+            let block = self.render_block(
+                &block_key,
+                item,
+                opts,
+                display_state,
+                tool_argument_state,
+                selected,
+                selection_gutter,
+            );
+            let local_start = viewport_start.saturating_sub(contribution_start);
+            let local_end = viewport_end.min(entry.end_row) - contribution_start;
+            if entry.separator_before && local_start == 0 && local_end > 0 {
+                lines.push(String::new());
+            }
+            let block_local_start = local_start.saturating_sub(usize::from(entry.separator_before));
+            let block_local_end = local_end
+                .saturating_sub(usize::from(entry.separator_before))
+                .min(block.lines.len());
+            if block_local_start < block_local_end {
+                lines.extend_from_slice(&block.lines[block_local_start..block_local_end]);
+            }
+            block_rows.push((
+                render_key.block_id(),
+                TranscriptBlockRows {
+                    total_rows,
+                    start: block_start,
+                    end: block_end,
+                },
+            ));
+        }
+        TranscriptViewport {
+            lines,
+            total_rows,
+            block_rows,
+        }
     }
 
     pub(super) fn row_snapshot(
@@ -488,7 +597,7 @@ impl TranscriptRenderCache {
                 selection_gutter,
             );
             let new_entry =
-                row_metadata_entry(render_key, item, block.line_count, separator_before);
+                row_metadata_entry(render_key, item, block.line_count, separator_before, 0);
             let metadata = self
                 .row_metadata
                 .get_mut(&key)
@@ -516,8 +625,17 @@ impl TranscriptRenderCache {
                     signed_anchor_delta += delta;
                 }
                 metadata.total_rows = add_signed_usize(metadata.total_rows, delta);
+                let mut new_entry = new_entry;
+                new_entry.end_row = add_signed_usize(old_entry.end_row, delta);
                 metadata.entries[index] = new_entry;
+                for entry in &mut metadata.entries[index + 1..] {
+                    entry.end_row = add_signed_usize(entry.end_row, delta);
+                }
             } else {
+                let mut new_entry = new_entry;
+                new_entry.end_row = metadata
+                    .total_rows
+                    .saturating_add(new_entry.contribution_line_count);
                 let delta = usize_to_isize(new_entry.contribution_line_count);
                 let old_total_rows = before.total_rows;
                 if anchor_start_row.is_none_or(|anchor| old_total_rows >= anchor) {
@@ -572,44 +690,6 @@ impl TranscriptRenderCache {
             row = block_end;
         }
         None
-    }
-
-    pub(super) fn all_block_rows(
-        &mut self,
-        transcript: &Transcript,
-        opts: &TranscriptRenderOptions<'_>,
-    ) -> Vec<(TranscriptBlockId, TranscriptBlockRows)> {
-        let profile_hash = render_profile_hash(opts);
-        let row_profile_hash = render_row_profile_hash(opts, profile_hash);
-        let key = self.row_metadata_key(transcript, row_profile_hash);
-        let needs_rebuild = self
-            .row_metadata
-            .get(&key)
-            .is_none_or(|metadata| metadata.content_revision != transcript.content_revision());
-        if needs_rebuild {
-            self.rebuild_row_metadata(transcript, opts, profile_hash, row_profile_hash);
-        }
-        let Some(metadata) = self.row_metadata.get(&key) else {
-            return Vec::new();
-        };
-        let mut row = 0usize;
-        transcript
-            .render_entries()
-            .zip(&metadata.entries)
-            .map(|((render_key, _), entry)| {
-                let block_start = row + usize::from(entry.separator_before);
-                let block_end = row + entry.contribution_line_count;
-                row = block_end;
-                (
-                    render_key.block_id(),
-                    TranscriptBlockRows {
-                        total_rows: metadata.total_rows,
-                        start: block_start,
-                        end: block_end,
-                    },
-                )
-            })
-            .collect()
     }
 
     #[allow(
@@ -704,6 +784,7 @@ impl TranscriptRenderCache {
                 item,
                 block.line_count,
                 metadata.has_visible_rows,
+                metadata.total_rows,
             );
             metadata.total_rows += entry.contribution_line_count;
             metadata.has_visible_rows |= entry.has_visible_rows;
@@ -826,6 +907,7 @@ fn row_metadata_entry(
     item: &TranscriptItem,
     block_line_count: usize,
     has_visible_rows_before: bool,
+    contribution_start: usize,
 ) -> TranscriptRowMetadataEntry {
     let is_visible_block = !matches!(item, TranscriptItem::System { .. });
     let has_visible_rows = is_visible_block && block_line_count > 0;
@@ -833,6 +915,9 @@ fn row_metadata_entry(
     TranscriptRowMetadataEntry {
         item_id: render_key.item_id,
         contribution_line_count: block_line_count + usize::from(separator_before),
+        end_row: contribution_start
+            .saturating_add(block_line_count)
+            .saturating_add(usize::from(separator_before)),
         has_visible_rows,
         separator_before,
     }
@@ -858,7 +943,7 @@ fn row_count_delta(current: usize, previous: usize) -> isize {
     }
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 pub(super) fn render_transcript_lines(
     transcript: &Transcript,
     opts: &TranscriptRenderOptions<'_>,
@@ -952,7 +1037,7 @@ fn render_row_profile_hash(opts: &TranscriptRenderOptions<'_>, profile_hash: u64
     profile_hash.hash(&mut hasher);
     opts.view
         .as_ref()
-        .map(TranscriptViewSnapshot::revision)
+        .map(|view| view.revision())
         .hash(&mut hasher);
     opts.selected_block.hash(&mut hasher);
     opts.selection_gutter.hash(&mut hasher);

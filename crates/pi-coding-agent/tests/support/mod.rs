@@ -28,7 +28,10 @@ pub struct EnvGuard<'a> {
     saved: Vec<(&'static str, Option<OsString>)>,
 }
 
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "shared integration support is compiled separately by Cargo targets that use different environment helpers"
+)]
 impl EnvGuard<'static> {
     pub fn new(names: &[&'static str]) -> Self {
         let lock = ENV_LOCK
@@ -48,7 +51,10 @@ impl EnvGuard<'static> {
     }
 }
 
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "shared integration support is compiled separately by Cargo targets that use different environment mutations"
+)]
 impl EnvGuard<'_> {
     pub fn set<V: AsRef<OsStr>>(&self, name: &str, value: V) {
         unsafe {
@@ -84,7 +90,10 @@ pub struct ProviderGuard {
     ai_client: AiClient,
 }
 
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "shared integration support is compiled separately by Cargo targets that use different provider constructors"
+)]
 impl ProviderGuard {
     pub fn register(api: impl Into<String>, provider: Arc<dyn ApiProvider>) -> Self {
         Self::register_many(vec![(api.into(), provider)])
@@ -103,12 +112,18 @@ impl ProviderGuard {
     }
 }
 
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "shared integration support is compiled by targets that do not all construct a primary model"
+)]
 pub fn model(api: &str) -> Model {
     named_model("test-model", "Test Model", api)
 }
 
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "shared integration support is compiled by targets that do not all construct a fallback model"
+)]
 pub fn fallback_model(api: &str) -> Model {
     named_model("fallback-model", "Fallback Model", api)
 }
@@ -131,7 +146,10 @@ fn named_model(id: &str, name: &str, api: &str) -> Model {
     }
 }
 
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "shared integration support is compiled by targets that do not all build prompt options"
+)]
 pub fn prompt_options(
     cwd: &std::path::Path,
     api: &str,
@@ -160,7 +178,10 @@ pub fn prompt_options(
     })
 }
 
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "shared integration support is compiled by targets that do not all build product events"
+)]
 pub fn product_event(event: CodingAgentProductEventKind) -> CodingAgentProductEvent {
     let delivery_class = match &event {
         CodingAgentProductEventKind::Workflow(
@@ -187,31 +208,46 @@ pub fn product_event(event: CodingAgentProductEventKind) -> CodingAgentProductEv
     .expect("typed product-event fixture must deserialize")
 }
 
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "product-event conversion fixtures are used only by the protocol integration target"
+)]
 pub fn product_usage(usage: Usage) -> CodingAgentProductEventUsage {
     usage.into()
 }
 
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "product-event conversion fixtures are used only by the protocol integration target"
+)]
 pub fn product_error(error: CodingSessionError) -> CodingAgentProductEventError {
     error.into()
 }
 
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "product-event conversion fixtures are used only by the protocol integration target"
+)]
 pub fn product_replacement(
     replacement: SelfHealingEditReplacement,
 ) -> CodingAgentProductEventReplacement {
     replacement.into()
 }
 
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "product-event conversion fixtures are used only by the protocol integration target"
+)]
 pub fn product_diagnostic(
     diagnostic: SelfHealingEditDiagnostic,
 ) -> CodingAgentProductEventDiagnostic {
     diagnostic.into()
 }
 
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "product-event conversion fixtures are used only by the protocol integration target"
+)]
 pub fn product_check_output(
     output: SelfHealingEditCheckOutput,
 ) -> CodingAgentProductEventCheckOutput {

@@ -1,4 +1,9 @@
-use std::io::Read;
+use std::io;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+use std::time::Duration;
 
 use pi_tui::api::component::Component;
 use pi_tui::api::input::{InputEvent, matches_key};
@@ -10,93 +15,230 @@ use crate::adapters::interactive::slash::parse_slash_command;
 use crate::adapters::interactive::{TranscriptItem, root::TranscriptScrollCommand};
 
 pub(super) struct InputPump {
-    rx: tokio::sync::mpsc::UnboundedReceiver<String>,
-    consumed_tx: Option<tokio::sync::mpsc::UnboundedSender<String>>,
-    idle_tx: Option<tokio::sync::mpsc::UnboundedSender<()>>,
-    _reader: Option<std::thread::JoinHandle<()>>,
+    rx: tokio::sync::mpsc::Receiver<String>,
+    consumed_tx: Option<tokio::sync::mpsc::Sender<String>>,
+    idle_tx: Option<tokio::sync::mpsc::Sender<()>>,
+    cancel: Arc<AtomicBool>,
+    reader: Option<std::thread::JoinHandle<io::Result<()>>>,
 }
+
+const INPUT_CHANNEL_CAPACITY: usize = 32;
+const INPUT_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
 impl InputPump {
     pub(super) fn from_stdin() -> Self {
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        let reader = std::thread::spawn(move || {
-            let mut stdin = std::io::stdin();
-            loop {
-                let mut buffer = [0_u8; 1024];
-                match stdin.read(&mut buffer) {
-                    Ok(0) => break,
-                    Ok(count) => {
-                        let chunk = String::from_utf8_lossy(&buffer[..count]).to_string();
-                        if tx.send(chunk).is_err() {
-                            break;
-                        }
-                    }
-                    Err(_) => break,
-                }
-            }
-        });
+        let (tx, rx) = tokio::sync::mpsc::channel(INPUT_CHANNEL_CAPACITY);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let reader_cancel = Arc::clone(&cancel);
+        let reader = std::thread::spawn(move || read_stdin(reader_cancel, tx));
         Self {
             rx,
             consumed_tx: None,
             idle_tx: None,
-            _reader: Some(reader),
+            cancel,
+            reader: Some(reader),
         }
     }
 
     #[cfg(test)]
     pub(super) fn from_chunks(chunks: Vec<String>) -> Self {
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx, rx) = tokio::sync::mpsc::channel(chunks.len().max(1));
         for chunk in chunks {
-            let _ = tx.send(chunk);
+            let _ = tx.try_send(chunk);
         }
         drop(tx);
         Self {
             rx,
             consumed_tx: None,
             idle_tx: None,
-            _reader: None,
+            cancel: Arc::new(AtomicBool::new(false)),
+            reader: None,
         }
     }
 
     #[cfg(test)]
-    pub(super) fn from_receiver(rx: tokio::sync::mpsc::UnboundedReceiver<String>) -> Self {
+    pub(super) fn from_receiver(rx: tokio::sync::mpsc::Receiver<String>) -> Self {
         Self {
             rx,
             consumed_tx: None,
             idle_tx: None,
-            _reader: None,
+            cancel: Arc::new(AtomicBool::new(false)),
+            reader: None,
         }
     }
 
     #[cfg(test)]
     pub(super) fn from_receiver_with_observers(
-        rx: tokio::sync::mpsc::UnboundedReceiver<String>,
-        consumed_tx: tokio::sync::mpsc::UnboundedSender<String>,
-        idle_tx: tokio::sync::mpsc::UnboundedSender<()>,
+        rx: tokio::sync::mpsc::Receiver<String>,
+        consumed_tx: tokio::sync::mpsc::Sender<String>,
+        idle_tx: tokio::sync::mpsc::Sender<()>,
     ) -> Self {
         Self {
             rx,
             consumed_tx: Some(consumed_tx),
             idle_tx: Some(idle_tx),
-            _reader: None,
+            cancel: Arc::new(AtomicBool::new(false)),
+            reader: None,
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn cancellable_reader_for_tests() -> (Self, std::sync::mpsc::Receiver<()>) {
+        let (_tx, rx) = tokio::sync::mpsc::channel(1);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let reader_cancel = Arc::clone(&cancel);
+        let (exited_tx, exited_rx) = std::sync::mpsc::sync_channel(1);
+        let reader = std::thread::spawn(move || {
+            while !reader_cancel.load(Ordering::Acquire) {
+                std::thread::park_timeout(INPUT_POLL_INTERVAL);
+            }
+            let _ = exited_tx.send(());
+            Ok(())
+        });
+        (
+            Self {
+                rx,
+                consumed_tx: None,
+                idle_tx: None,
+                cancel,
+                reader: Some(reader),
+            },
+            exited_rx,
+        )
     }
 
     pub(super) async fn recv(&mut self) -> Option<String> {
         self.rx.recv().await
     }
 
+    pub(super) async fn shutdown(&mut self) -> io::Result<()> {
+        self.cancel.store(true, Ordering::Release);
+        self.rx.close();
+        let Some(reader) = self.reader.take() else {
+            return Ok(());
+        };
+        tokio::task::spawn_blocking(move || reader.join())
+            .await
+            .map_err(|error| io::Error::other(format!("stdin join task failed: {error}")))?
+            .map_err(|_| io::Error::other("stdin reader thread panicked"))?
+    }
+
     pub(super) fn mark_processed(&self, chunk: &str) {
-        if let Some(consumed_tx) = &self.consumed_tx {
-            let _ = consumed_tx.send(chunk.to_string());
+        if let Some(consumed_tx) = &self.consumed_tx
+            && let Err(tokio::sync::mpsc::error::TrySendError::Full(_)) =
+                consumed_tx.try_send(chunk.to_string())
+        {
+            panic!("scripted consumed observer exceeded its bounded handshake window");
         }
     }
 
     pub(super) fn mark_idle(&self) {
-        if let Some(idle_tx) = &self.idle_tx {
-            let _ = idle_tx.send(());
+        if let Some(idle_tx) = &self.idle_tx
+            && let Err(tokio::sync::mpsc::error::TrySendError::Full(_)) = idle_tx.try_send(())
+        {
+            panic!("scripted idle observer exceeded its bounded handshake window");
         }
     }
+}
+
+impl Drop for InputPump {
+    fn drop(&mut self) {
+        self.cancel.store(true, Ordering::Release);
+        self.rx.close();
+    }
+}
+
+fn read_stdin(cancel: Arc<AtomicBool>, tx: tokio::sync::mpsc::Sender<String>) -> io::Result<()> {
+    let mut buffer = [0_u8; 1024];
+    while !cancel.load(Ordering::Acquire) {
+        if !stdin_ready(INPUT_POLL_INTERVAL)? {
+            continue;
+        }
+        let count = read_stdin_bytes(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        let mut chunk = String::from_utf8_lossy(&buffer[..count]).to_string();
+        loop {
+            match tx.try_send(chunk) {
+                Ok(()) => break,
+                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => return Ok(()),
+                Err(tokio::sync::mpsc::error::TrySendError::Full(returned)) => {
+                    chunk = returned;
+                    if cancel.load(Ordering::Acquire) {
+                        return Ok(());
+                    }
+                    std::thread::sleep(INPUT_POLL_INTERVAL);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn stdin_ready(timeout: Duration) -> io::Result<bool> {
+    let mut descriptor = libc::pollfd {
+        fd: libc::STDIN_FILENO,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    let timeout_ms = i32::try_from(timeout.as_millis()).unwrap_or(i32::MAX);
+    loop {
+        let result = unsafe { libc::poll(&mut descriptor, 1, timeout_ms) };
+        if result >= 0 {
+            return Ok(result > 0);
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted {
+            return Err(error);
+        }
+    }
+}
+
+#[cfg(unix)]
+fn read_stdin_bytes(buffer: &mut [u8]) -> io::Result<usize> {
+    loop {
+        let result =
+            unsafe { libc::read(libc::STDIN_FILENO, buffer.as_mut_ptr().cast(), buffer.len()) };
+        if result >= 0 {
+            return Ok(result as usize);
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted {
+            return Err(error);
+        }
+    }
+}
+
+#[cfg(windows)]
+fn stdin_ready(timeout: Duration) -> io::Result<bool> {
+    type Handle = *mut std::ffi::c_void;
+    const STD_INPUT_HANDLE: u32 = 0xFFFF_FFF6;
+    const WAIT_OBJECT_0: u32 = 0;
+    const WAIT_TIMEOUT: u32 = 258;
+    unsafe extern "system" {
+        fn GetStdHandle(kind: u32) -> Handle;
+        fn WaitForSingleObject(handle: Handle, milliseconds: u32) -> u32;
+    }
+
+    let handle = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
+    if handle.is_null() || handle as isize == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    let timeout_ms = u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX);
+    match unsafe { WaitForSingleObject(handle, timeout_ms) } {
+        WAIT_OBJECT_0 => Ok(true),
+        WAIT_TIMEOUT => Ok(false),
+        _ => Err(io::Error::last_os_error()),
+    }
+}
+
+#[cfg(windows)]
+fn read_stdin_bytes(buffer: &mut [u8]) -> io::Result<usize> {
+    use std::io::Read;
+
+    std::io::stdin().read(buffer)
 }
 
 pub(super) fn handle_root_input(root: &mut InteractiveRoot, event: &InputEvent) {
@@ -304,5 +446,33 @@ pub(super) fn handle_root_input(root: &mut InteractiveRoot, event: &InputEvent) 
                 root.queue_command(PendingInteractiveCommand::Submit(text));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn input_channel_applies_bounded_pressure() {
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        let _pump = InputPump::from_receiver(rx);
+
+        tx.try_send("first".to_string()).unwrap();
+        assert!(matches!(
+            tx.try_send("second".to_string()),
+            Err(tokio::sync::mpsc::error::TrySendError::Full(chunk)) if chunk == "second"
+        ));
+    }
+
+    #[tokio::test]
+    async fn shutdown_cancels_and_joins_reader() {
+        let (mut pump, exited) = InputPump::cancellable_reader_for_tests();
+
+        pump.shutdown().await.unwrap();
+
+        exited.try_recv().unwrap();
+        assert!(pump.reader.is_none());
+        assert!(pump.cancel.load(Ordering::Acquire));
     }
 }

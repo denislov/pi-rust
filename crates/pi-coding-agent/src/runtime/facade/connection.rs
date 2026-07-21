@@ -152,7 +152,7 @@ impl CodingAgentSession {
         ))
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn ui_snapshot(&self, client_drafts: Vec<ClientDraft>) -> UiSnapshot {
         self.emit_pending_startup_recovery_markers();
         IntentRouter::admit_query(
@@ -187,18 +187,6 @@ impl CodingAgentSession {
                 generation,
                 committed_session_sequence,
             );
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn product_events_after(
-        &self,
-        cursor: ProductEventSequence,
-    ) -> Result<Vec<ProductEvent>, CodingSessionError> {
-        self.emit_pending_startup_recovery_markers();
-        self.runtime_host
-            .event_hub
-            .service
-            .product_events_after(cursor)
     }
 
     #[cfg(test)]

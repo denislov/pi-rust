@@ -374,8 +374,6 @@ fn final_receiver_aware_compatibility_absence_and_retained_api_guard() {
             "fork_session",
             "hydrate_current",
             "subscribe_product_events",
-            "ui_snapshot",
-            "product_events_after",
             "prompt_control_handle",
             "tool_authorization_control",
             "install_submission_lease",
@@ -394,6 +392,7 @@ fn final_receiver_aware_compatibility_absence_and_retained_api_guard() {
             "arm_append_events_failure_for_tests",
             "arm_update_manifest_failure_for_tests",
             "queue_pending_delegation_for_tests",
+            "ui_snapshot",
         ],
     );
 

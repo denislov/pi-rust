@@ -64,6 +64,12 @@ impl SseEventHandler for CompletionsHandler {
         }
 
         for choice in chunk.choices {
+            if choice.index != 0 {
+                return Err(format!(
+                    "unsupported OpenAI completion choice index {}",
+                    choice.index
+                ));
+            }
             if let Some(fr) = choice.finish_reason.as_deref()
                 && !fr.is_empty()
                 && fr != "null"
@@ -128,6 +134,16 @@ impl SseEventHandler for CompletionsHandler {
 
             if let Some(tc_deltas) = &choice.delta.tool_calls {
                 for tc in tc_deltas {
+                    if tc
+                        .tool_type
+                        .as_deref()
+                        .is_some_and(|kind| kind != "function")
+                    {
+                        return Err(format!(
+                            "unsupported OpenAI tool call type {}",
+                            tc.tool_type.as_deref().unwrap_or_default()
+                        ));
+                    }
                     let openai_idx = tc.index.unwrap_or(0);
                     let content_pos = match self.tool_index_map.get(&openai_idx) {
                         Some(&pos) => pos,
@@ -333,7 +349,6 @@ mod tests {
             completion_tokens: 200,
             total_tokens: 1200,
             prompt_tokens_details: Some(wire::PromptTokensDetails { cached_tokens: 800 }),
-            completion_tokens_details: None,
         };
         let mapped = map_usage(&usage, &test_model());
         assert_eq!(mapped.input, 200, "input should exclude cached tokens");
@@ -349,7 +364,6 @@ mod tests {
             completion_tokens: 200,
             total_tokens: 1200,
             prompt_tokens_details: None,
-            completion_tokens_details: None,
         };
         let mapped = map_usage(&usage, &test_model());
         assert_eq!(mapped.input, 1000);

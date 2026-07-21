@@ -205,7 +205,10 @@ pub(crate) mod test_support {
         saved: Vec<(&'static str, Option<OsString>)>,
     }
 
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "the optional test-support feature compiles environment helpers outside the unit-test targets that consume every method"
+    )]
     impl EnvGuard<'static> {
         pub(crate) fn new(names: &[&'static str]) -> Self {
             let lock = env_lock();
@@ -223,7 +226,10 @@ pub(crate) mod test_support {
         }
     }
 
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "the optional test-support feature compiles environment mutations outside the unit-test targets that consume every method"
+    )]
     impl EnvGuard<'_> {
         pub(crate) fn set<V: AsRef<OsStr>>(&self, name: &str, value: V) {
             unsafe {
@@ -259,7 +265,10 @@ pub(crate) mod test_support {
         ai_client: AiClient,
     }
 
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "the optional test-support feature compiles provider helpers outside the unit-test targets that consume every constructor"
+    )]
     impl ProviderGuard {
         pub(crate) fn register(api: impl Into<String>, provider: Arc<dyn ApiProvider>) -> Self {
             Self::register_many(vec![(api.into(), provider)])

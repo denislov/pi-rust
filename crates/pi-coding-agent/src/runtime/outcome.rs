@@ -1001,7 +1001,7 @@ impl CodingAgentOperationOutcome {
         }
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn into_export(self) -> Result<CodingAgentSessionExport, Self> {
         match self {
             Self::Export(outcome) => Ok(outcome),
@@ -1009,7 +1009,7 @@ impl CodingAgentOperationOutcome {
         }
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn into_export_html(self) -> Result<PathBuf, Self> {
         match self {
             Self::ExportHtml(path) => Ok(path),

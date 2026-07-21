@@ -17,7 +17,9 @@ use crate::operations::export::runner::{ExportContext, ExportOptions};
 use crate::operations::prompt::context::{
     PromptTurnContext, PromptTurnOutcome, PromptTurnTransaction,
 };
-use crate::runtime::capability::{OperationCapabilitySnapshot, SessionWriteCapability};
+use crate::runtime::capability::OperationCapabilitySnapshot;
+#[cfg(test)]
+use crate::runtime::capability::SessionWriteCapability;
 use crate::runtime::facade::{
     CodingAgentSessionDiagnostic, CodingAgentSessionHydration, CodingAgentSessionOptions,
     CodingAgentSessionSummary, CodingAgentSessionTranscriptItem, CodingAgentSessionTree,
@@ -32,9 +34,10 @@ use crate::session::event::{
     SessionEventData, SessionEventEnvelope,
 };
 use crate::session::id::{Clock, IdGenerator, SystemClock, SystemIdGenerator};
+#[cfg(test)]
+use crate::session::replay::SessionRecoverySummary;
 use crate::session::replay::{
-    MessageStatus, ReplayTreeLabel, SessionRecoverySummary, SessionReplay, ToolCallStatus,
-    TranscriptItem, fold_events,
+    MessageStatus, ReplayTreeLabel, SessionReplay, ToolCallStatus, TranscriptItem, fold_events,
 };
 #[cfg(test)]
 use crate::session::repository::StoreFailurePoint;
@@ -100,7 +103,6 @@ pub(crate) struct RecoveryRetryCommit {
 
 #[derive(Debug)]
 pub(crate) struct SessionService {
-    #[allow(dead_code)]
     store: SessionLogStore,
     handle: SessionHandle,
     transaction_writer: SessionTransactionWriter,
@@ -738,7 +740,7 @@ impl SessionService {
         })
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn commit_prompt_transaction_with_snapshot(
         &mut self,
         transaction: Option<PromptTurnTransaction>,
@@ -951,7 +953,6 @@ impl SessionService {
         transaction.record_self_healing_edit_completed(outcome)
     }
 
-    #[allow(dead_code)]
     pub(crate) fn abort_prompt_transaction(
         &mut self,
         transaction: Option<PromptTurnTransaction>,
@@ -1181,7 +1182,7 @@ impl SessionService {
         self.transaction_writer.shutdown()
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn recovery_summary(&self) -> Result<SessionRecoverySummary, CodingSessionError> {
         Ok(self.replay()?.recovery_summary())
     }
@@ -1830,7 +1831,6 @@ impl SessionService {
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub(crate) fn take_startup_recovery_markers(&mut self) -> Vec<StartupRecoveryMarker> {
         std::mem::take(&mut self.startup_recovery_markers)
     }

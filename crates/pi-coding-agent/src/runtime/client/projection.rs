@@ -579,6 +579,7 @@ pub struct CodingAgentClientConnection {
     pub client_id: CodingAgentClientId,
     pub generation: CodingAgentConnectionGeneration,
     pub snapshot: CodingAgentSnapshot,
+    initial_ui_snapshot: UiSnapshot,
 }
 
 impl CodingAgentClientConnection {
@@ -594,6 +595,16 @@ impl CodingAgentClientConnection {
             .client_state(&self.handle())
             .map(public_client_snapshot)
             .map_err(|error| registry_error(&self.client_id, error))
+    }
+
+    pub(crate) fn ui_state(&self) -> Result<UiSnapshot, CodingSessionError> {
+        self.coordinator
+            .client_snapshot(&self.handle())
+            .map_err(|error| registry_error(&self.client_id, error))
+    }
+
+    pub(crate) fn initial_ui_state(&self) -> UiSnapshot {
+        self.initial_ui_snapshot.clone()
     }
 
     pub fn pending_tool_authorizations(
@@ -1329,6 +1340,7 @@ pub(crate) fn public_client_connection(
     state: ClientSnapshotState,
 ) -> CodingAgentClientConnection {
     debug_assert_eq!(handle.id.as_str(), id.as_str());
+    let initial_ui_snapshot = state.snapshot.clone();
     CodingAgentClientConnection {
         coordinator,
         event_service,
@@ -1336,6 +1348,7 @@ pub(crate) fn public_client_connection(
         client_id: id,
         generation: CodingAgentConnectionGeneration(handle.generation.0),
         snapshot: public_client_snapshot(state),
+        initial_ui_snapshot,
     }
 }
 

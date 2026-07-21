@@ -144,4 +144,24 @@ async fn anthropic_clean_truncation_is_an_error_terminal() {
             .any(|event| matches!(event, AssistantMessageEvent::Done { .. }))
     );
 }
+
+#[tokio::test]
+async fn anthropic_rejects_interleaved_block_indices() {
+    let body = stream::iter(vec![Ok::<_, String>(Bytes::from(concat!(
+        "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+        "data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"wrong\"}}\n\n"
+    )))]);
+    use futures::StreamExt;
+    let events: Vec<_> = pi_ai::providers::anthropic::stream::process(body, test_model(), None)
+        .collect()
+        .await;
+
+    assert!(matches!(
+        events.last(),
+        Some(AssistantMessageEvent::Error {
+            reason: StopReason::Error,
+            ..
+        })
+    ));
+}
 // Internal Anthropic mapping tests.

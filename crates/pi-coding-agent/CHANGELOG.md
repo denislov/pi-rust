@@ -1,5 +1,20 @@
 # Changes
 
+## 0.5.3 - 2026-07-21
+
+### Changed
+
+- Replaced the PromptTask ProductEvent bridge with a one-time handoff of the
+  canonical runtime client connection, preserving replay-before-live and ACK
+  ordering across session replacement and retained gaps.
+- Unified running and idle interaction under one typed event reducer; bounded
+  stdin/control pressure and added Unix resize signals with a quiet fallback.
+- Added viewport-first transcript caching, revisioned shared view snapshots,
+  visible-block mouse ranges, 1,000/10,000-block baselines, and an offline
+  deterministic soak gate.
+- Completed the production/test dead-code decision ledger while retaining the
+  explicit ADR-002 Extension vertical slice and skipped contribution dispatch.
+
 ## 0.5.1 - 2026-07-20
 
 ### Changed

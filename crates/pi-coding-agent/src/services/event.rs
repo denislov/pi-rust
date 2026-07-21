@@ -270,6 +270,7 @@ impl EventService {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn product_events_after(
         &self,
         cursor: ProductEventSequence,

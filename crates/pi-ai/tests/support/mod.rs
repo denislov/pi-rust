@@ -1,19 +1,13 @@
 use std::ffi::OsString;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Mutex, MutexGuard};
 
-use pi_ai::api::client::AiClient;
-use pi_ai::api::provider::ApiProvider;
-
-#[allow(dead_code)]
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
-#[allow(dead_code)]
 pub struct EnvGuard<'a> {
     _lock: MutexGuard<'a, ()>,
     saved: Vec<(&'static str, Option<OsString>)>,
 }
 
-#[allow(dead_code)]
 impl EnvGuard<'static> {
     pub fn new(names: &[&'static str]) -> Self {
         let lock = ENV_LOCK
@@ -27,7 +21,6 @@ impl EnvGuard<'static> {
     }
 }
 
-#[allow(dead_code)]
 impl EnvGuard<'_> {
     pub fn set(&self, name: &str, value: &str) {
         unsafe {
@@ -52,42 +45,5 @@ impl Drop for EnvGuard<'_> {
                 }
             }
         }
-    }
-}
-
-pub struct ProviderGuard {
-    ai_client: AiClient,
-}
-
-#[allow(dead_code)]
-impl ProviderGuard {
-    pub fn for_api(api: impl Into<String>) -> Self {
-        let _ = api.into();
-        Self {
-            ai_client: AiClient::new(),
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn for_apis<const N: usize>(apis: [&str; N]) -> Self {
-        let _ = apis;
-        Self {
-            ai_client: AiClient::new(),
-        }
-    }
-
-    pub fn clear(api: impl Into<String>) -> Self {
-        Self::for_api(api)
-    }
-
-    pub fn register(api: impl Into<String>, provider: Arc<dyn ApiProvider>) -> Self {
-        let api = api.into();
-        let ai_client = AiClient::new();
-        ai_client.register_provider(api, provider);
-        Self { ai_client }
-    }
-
-    pub fn ai_client(&self) -> AiClient {
-        self.ai_client.clone()
     }
 }

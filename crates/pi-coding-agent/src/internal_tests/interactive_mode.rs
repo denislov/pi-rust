@@ -230,6 +230,35 @@ async fn scripted_interactive_submit_while_running_sends_steer_control() {
 }
 
 #[tokio::test]
+async fn scripted_running_eof_flushes_pending_escape_and_aborts() {
+    let contexts = Arc::new(Mutex::new(Vec::new()));
+    let first_started = Arc::new(Notify::new());
+    let release_first = Arc::new(Notify::new());
+    let provider = Arc::new(PausingTwoTurnProvider {
+        contexts: Arc::clone(&contexts),
+        first_started: Arc::clone(&first_started),
+        release_first,
+    });
+
+    let output = run_observed_interactive_with_timeout(
+        provider,
+        move |mut input| async move {
+            input.send("first prompt\r").unwrap();
+            first_started.notified().await;
+            input.send("\x1b").unwrap();
+            input.wait_for_consumed("\x1b").await;
+            drop(input);
+        },
+        RUNNING_CONTROL_OBSERVED_DRIVER_TIMEOUT,
+        "flushing a pending escape on running stdin EOF",
+    )
+    .await;
+
+    assert_eq!(contexts.lock().unwrap().len(), 1, "{output:?}");
+    assert!(output.terminal_restored, "{output:?}");
+}
+
+#[tokio::test]
 async fn scripted_interactive_shift_enter_while_running_sends_follow_up_control() {
     let contexts = Arc::new(Mutex::new(Vec::new()));
     let first_started = Arc::new(Notify::new());
@@ -274,7 +303,7 @@ async fn scripted_interactive_shift_enter_while_running_sends_follow_up_control(
 #[tokio::test]
 async fn scripted_interactive_prompt_renders_assistant_text() {
     let provider = FauxProvider::new(vec![text_response("hello from tui")]);
-    let output = run_scripted_interactive(provider, "say hi\r\x03")
+    let output = run_scripted_interactive(provider, "say hi\r")
         .await
         .unwrap();
     assert!(output.contains("say hi"));
@@ -577,7 +606,7 @@ async fn scripted_interactive_prompt_leaves_terminal_progress_off_by_default() {
             _ => None,
         })
         .collect::<Vec<_>>();
-    assert!(progress_ops.is_empty(), "{:?}", output.ops);
+    assert_eq!(progress_ops, [false], "{:?}", output.ops);
 }
 
 #[tokio::test]
@@ -1176,9 +1205,7 @@ async fn scripted_interactive_shows_welcome_line_on_empty_transcript() {
 #[tokio::test]
 async fn scripted_interactive_footer_shows_usage_after_a_turn() {
     let provider = FauxProvider::new(vec![text_response("ok")]);
-    let output = run_scripted_interactive(provider, "hi\r\x03")
-        .await
-        .unwrap();
+    let output = run_scripted_interactive(provider, "hi\r").await.unwrap();
     let frame = output.rendered_lines.join("\n");
     assert!(
         frame.contains("status: idle"),

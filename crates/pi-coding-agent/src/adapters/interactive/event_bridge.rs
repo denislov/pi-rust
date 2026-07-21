@@ -139,6 +139,11 @@ impl UiProjection {
         self.pending.drain(..).collect()
     }
 
+    #[cfg(test)]
+    pub(crate) fn last_sequence_for_tests(&self) -> ProductEventSequence {
+        self.last_sequence
+    }
+
     pub(crate) fn context(&self) -> &UiContextProjection {
         &self.context
     }

@@ -39,7 +39,6 @@ impl ProductEventSequence {
         self.0
     }
 
-    #[allow(dead_code)]
     pub(crate) fn next(self) -> Self {
         Self(self.0 + 1)
     }

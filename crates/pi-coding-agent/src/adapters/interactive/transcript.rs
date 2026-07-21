@@ -1,5 +1,9 @@
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 
 static NEXT_TRANSCRIPT_CACHE_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -148,16 +152,24 @@ impl TranscriptViewSnapshot {
 #[derive(Debug, Default)]
 pub(super) struct TranscriptViewState {
     transcript_id: Option<u64>,
+    content_revision: Option<u64>,
     selected: Option<TranscriptBlockId>,
     last_selectable: Option<TranscriptBlockId>,
     display_states: HashMap<TranscriptBlockId, TranscriptDisplayState>,
     tool_argument_states: HashMap<TranscriptBlockId, TranscriptDisplayState>,
     revision: u64,
+    cached_snapshot: RefCell<Option<Arc<TranscriptViewSnapshot>>>,
 }
 
 impl TranscriptViewState {
     pub(super) fn sync(&mut self, transcript: &Transcript) {
         let transcript_id = transcript.render_cache_id();
+        let content_revision = transcript.content_revision();
+        if self.transcript_id == Some(transcript_id)
+            && self.content_revision == Some(content_revision)
+        {
+            return;
+        }
         let mut changed = false;
         if self.transcript_id != Some(transcript_id) {
             self.transcript_id = Some(transcript_id);
@@ -196,15 +208,21 @@ impl TranscriptViewState {
         if changed {
             self.bump_revision();
         }
+        self.content_revision = Some(content_revision);
     }
 
-    pub(super) fn snapshot(&self) -> TranscriptViewSnapshot {
-        TranscriptViewSnapshot {
+    pub(super) fn snapshot(&self) -> Arc<TranscriptViewSnapshot> {
+        if let Some(snapshot) = self.cached_snapshot.borrow().as_ref() {
+            return Arc::clone(snapshot);
+        }
+        let snapshot = Arc::new(TranscriptViewSnapshot {
             revision: self.revision,
             selected: self.selected,
             display_states: self.display_states.clone(),
             tool_argument_states: self.tool_argument_states.clone(),
-        }
+        });
+        *self.cached_snapshot.borrow_mut() = Some(Arc::clone(&snapshot));
+        snapshot
     }
 
     pub(super) fn selected(&self) -> Option<TranscriptBlockId> {
@@ -350,6 +368,7 @@ impl TranscriptViewState {
 
     fn bump_revision(&mut self) {
         self.revision = self.revision.wrapping_add(1);
+        *self.cached_snapshot.get_mut() = None;
     }
 }
 

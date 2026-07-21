@@ -274,6 +274,9 @@ mod tests {
     };
     use crate::runtime::facade::{PendingDelegationConfirmation, ProfileKind};
     use pi_tui::api::input::StdinBuffer;
+    use pi_tui::api::render::Tui;
+    use pi_tui::api::terminal::TerminalMode;
+    use pi_tui::api::testing::VirtualTerminal;
 
     /// Build render options with no resolved theme (fallback palette) and
     /// color disabled, for layout-focused assertions.
@@ -390,6 +393,118 @@ mod tests {
         assert!(updated.join("\n").contains("first reply plus delta"));
         assert_eq!(stats.block_hits, 2, "{stats:?}");
         assert_eq!(stats.block_misses, 1, "{stats:?}");
+    }
+
+    #[test]
+    fn fullscreen_steady_frame_clones_only_viewport_intersecting_blocks() {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "model".to_string(),
+            "session".to_string(),
+        );
+        root.set_fullscreen_viewport(true);
+        root.set_viewport_size(80, 24);
+        for index in 0..10_000 {
+            root.transcript
+                .push(TranscriptItem::user(format!("history {index}")));
+        }
+
+        let first = root.render(80);
+        assert!(first.join("\n").contains("history 9999"));
+        root.reset_render_cache_stats();
+
+        let second = root.render(80);
+        let stats = root.render_cache_stats();
+
+        assert_eq!(second, first);
+        assert_eq!(stats.block_misses, 0, "{stats:?}");
+        assert!(
+            stats.block_hits <= 24,
+            "steady frame touched more blocks than viewport rows: {stats:?}"
+        );
+    }
+
+    #[test]
+    fn viewport_first_render_matches_full_render_at_each_scroll_anchor() {
+        let mut transcript = Transcript::new();
+        transcript.push(TranscriptItem::system("system row"));
+        transcript.push(TranscriptItem::user("alpha beta gamma delta"));
+        transcript.push(TranscriptItem::assistant(
+            "assistant-1",
+            "one\ntwo\nthree\nfour",
+            true,
+        ));
+        transcript.push(TranscriptItem::user("tail"));
+        let opts = opts(12, 3);
+        let mut cache = TranscriptRenderCache::new();
+        let full = cache.render_lines(&transcript, &opts);
+
+        for height in 1..=6 {
+            for scroll_offset in 0..=full.len() + 2 {
+                let viewport = cache.render_viewport(&transcript, &opts, height, scroll_offset);
+                let max_offset = full.len().saturating_sub(height);
+                let offset = scroll_offset.min(max_offset);
+                let end = full.len().saturating_sub(offset);
+                let start = end.saturating_sub(height);
+                assert_eq!(
+                    viewport.lines,
+                    full[start..end],
+                    "height={height}, scroll_offset={scroll_offset}"
+                );
+                assert_eq!(viewport.total_rows, full.len());
+            }
+        }
+    }
+
+    fn assert_long_transcript_baseline(blocks: usize) {
+        let mut root = InteractiveRoot::new(
+            PathBuf::from("."),
+            "model".to_string(),
+            "session".to_string(),
+        );
+        root.set_fullscreen_viewport(true);
+        for index in 0..blocks {
+            root.transcript
+                .push(TranscriptItem::user(format!("history {index}")));
+        }
+        let terminal = VirtualTerminal::new(80, 24);
+        let mut tui = Tui::start(terminal, TerminalMode::Fullscreen).unwrap();
+        let root_id = tui.add_child_with_id(Box::new(root));
+
+        let warm = tui.render_once().unwrap();
+        assert_eq!(warm.line_count, 24);
+        assert_eq!(tui.full_redraws(), 1);
+        tui.terminal_mut().clear_ops();
+        tui.component_as_mut::<InteractiveRoot>(root_id)
+            .unwrap()
+            .reset_render_cache_stats();
+
+        let steady = tui.render_once().unwrap();
+        let stats = tui
+            .component_as::<InteractiveRoot>(root_id)
+            .unwrap()
+            .render_cache_stats();
+        let bytes_written = tui.terminal().written_output().len();
+
+        assert_eq!(steady.line_count, 24);
+        assert_eq!(tui.full_redraws(), 1);
+        assert_eq!(stats.block_misses, 0, "{stats:?}");
+        assert!(stats.block_hits <= 24, "{stats:?}");
+        assert_eq!(bytes_written, 0);
+        println!(
+            "tui_baseline\tblocks={blocks}\tviewport_rows=24\tsteady_block_hits={}\tsteady_bytes_written={bytes_written}",
+            stats.block_hits
+        );
+    }
+
+    #[test]
+    fn fullscreen_1k_block_runtime_baseline() {
+        assert_long_transcript_baseline(1_000);
+    }
+
+    #[test]
+    fn fullscreen_10k_block_runtime_baseline() {
+        assert_long_transcript_baseline(10_000);
     }
 
     #[test]
@@ -4092,6 +4207,45 @@ members = ["coder"]
         assert_eq!(&*events.lock().unwrap(), &["start", "input"]);
     }
 
+    #[tokio::test]
+    async fn interactive_loop_joins_input_owner_before_returning() {
+        let (pump, exited) = InputPump::cancellable_reader_for_tests();
+        let mut pump = Some(pump);
+        let parsed = CliArgs::default();
+        let options = CliRunOptions {
+            register_builtins: false,
+            ..CliRunOptions::default()
+        };
+
+        let result = run_interactive_loop_with_input(
+            parsed,
+            options,
+            pi_tui::api::testing::VirtualTerminal::new(80, 24),
+            move || pump.take().expect("input factory is called exactly once"),
+        )
+        .await
+        .expect("interactive loop should shut down cleanly");
+
+        exited
+            .try_recv()
+            .expect("reader must exit before the loop returns");
+        let drain = result
+            .tui
+            .terminal()
+            .ops()
+            .iter()
+            .position(|op| matches!(op, pi_tui::api::testing::TerminalOp::DrainInput { .. }))
+            .expect("shutdown drains terminal input");
+        let stop = result
+            .tui
+            .terminal()
+            .ops()
+            .iter()
+            .position(|op| matches!(op, pi_tui::api::testing::TerminalOp::Stop))
+            .expect("shutdown stops the terminal");
+        assert!(drain < stop);
+    }
+
     fn write_profile_file(path: impl AsRef<Path>, content: &str) {
         let path = path.as_ref();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -4291,17 +4445,17 @@ pub mod test_harness {
     }
 
     pub struct ScriptedInputDriver {
-        tx: tokio::sync::mpsc::UnboundedSender<String>,
-        consumed_rx: tokio::sync::mpsc::UnboundedReceiver<String>,
-        idle_rx: tokio::sync::mpsc::UnboundedReceiver<()>,
+        tx: tokio::sync::mpsc::Sender<String>,
+        consumed_rx: tokio::sync::mpsc::Receiver<String>,
+        idle_rx: tokio::sync::mpsc::Receiver<()>,
     }
 
     impl ScriptedInputDriver {
         pub fn send(
             &self,
             chunk: impl Into<String>,
-        ) -> Result<(), tokio::sync::mpsc::error::SendError<String>> {
-            self.tx.send(chunk.into())
+        ) -> Result<(), tokio::sync::mpsc::error::TrySendError<String>> {
+            self.tx.try_send(chunk.into())
         }
 
         pub async fn wait_for_consumed(&mut self, expected: &str) {
@@ -4425,9 +4579,9 @@ pub mod test_harness {
         );
         let _provider_guard = crate::test_support::ProviderGuard::register(api.clone(), provider);
 
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        let (consumed_tx, consumed_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (idle_tx, idle_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx, rx) = tokio::sync::mpsc::channel(64);
+        let (consumed_tx, consumed_rx) = tokio::sync::mpsc::channel(64);
+        let (idle_tx, idle_rx) = tokio::sync::mpsc::channel(64);
         let mut input = InputPump::from_receiver_with_observers(rx, consumed_tx, idle_tx);
         let parsed = CliArgs::default();
         let options = CliRunOptions {
@@ -4531,9 +4685,9 @@ pub mod test_harness {
         columns: usize,
         rows: usize,
     ) -> Result<ScriptedInteractiveOutput, CliError> {
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        let (consumed_tx, consumed_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (idle_tx, idle_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx, rx) = tokio::sync::mpsc::channel(64);
+        let (consumed_tx, consumed_rx) = tokio::sync::mpsc::channel(64);
+        let (idle_tx, idle_rx) = tokio::sync::mpsc::channel(64);
         let mut input = InputPump::from_receiver_with_observers(rx, consumed_tx, idle_tx);
         let parsed = CliArgs::default();
         let options = CliRunOptions {
@@ -4666,7 +4820,7 @@ pub mod test_harness {
         );
         let _provider_guard = crate::test_support::ProviderGuard::register(api.clone(), provider);
 
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx, rx) = tokio::sync::mpsc::channel(64);
         let mut input = InputPump::from_receiver(rx);
         let parsed = CliArgs {
             tui_mode,
@@ -4692,7 +4846,7 @@ pub mod test_harness {
             .collect::<Vec<_>>();
         let input_driver = async move {
             for (chunk, wait_for) in input_steps {
-                if tx.send(chunk).is_err() {
+                if tx.send(chunk).await.is_err() {
                     return Ok::<(), CliError>(());
                 }
                 wait_for_session_text(&session_dir_for_input, &wait_for).await?;

@@ -1,5 +1,17 @@
 # Changes
 
+## 0.5.3 - 2026-07-21
+
+### Changed
+
+- Added failure-safe synchronized render transactions and best-effort terminal
+  teardown that continues after individual cleanup errors.
+- Removed the background progress keepalive writer; progress is now owned by the
+  active terminal and is idempotent.
+- Suspend zero-sized frames and recover on resize; retry failed Kitty cleanup;
+  cover full, differential, overlay, resize, panic, progress, and stop paths
+  with deterministic terminal failpoints.
+
 ## 0.5.2 - 2026-07-20
 
 ### Changed

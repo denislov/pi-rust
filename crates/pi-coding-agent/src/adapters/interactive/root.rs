@@ -34,8 +34,8 @@ use crate::adapters::interactive::profile_menu::{
     PendingProfileTask, ProfileMenuOutcome, ProfileMenuRenderState, ProfileMenuState,
 };
 use crate::adapters::interactive::render::{
-    TranscriptRenderCache, TranscriptRenderOptions, TranscriptRowSnapshot, TranscriptStyles,
-    WARNING, abbreviate_cwd, editor_border_line, fit_line, format_tokens,
+    TranscriptBlockRows, TranscriptRenderCache, TranscriptRenderOptions, TranscriptRowSnapshot,
+    TranscriptStyles, WARNING, abbreviate_cwd, editor_border_line, fit_line, format_tokens,
     markdown_theme_from_resolved, running_status_text,
 };
 use crate::adapters::interactive::session_actions::{HydratedSession, SessionChoice};
@@ -800,6 +800,13 @@ impl InteractiveRoot {
 
     pub(super) fn drain_shared_ui_events(&mut self) -> Vec<UiEvent> {
         self.shared_projection.drain()
+    }
+
+    #[cfg(test)]
+    pub(super) fn shared_event_sequence_for_tests(
+        &self,
+    ) -> crate::runtime::facade::ProductEventSequence {
+        self.shared_projection.last_sequence_for_tests()
     }
 
     #[cfg(test)]
@@ -2422,6 +2429,7 @@ impl InteractiveRoot {
             .render_lines(&self.transcript, &opts)
     }
 
+    #[cfg(test)]
     fn transcript_lines_at(&mut self, width: usize, max_tool_result_lines: usize) -> Vec<String> {
         self.sync_transcript_view();
         let opts = self.transcript_render_options(width, max_tool_result_lines);
@@ -2841,6 +2849,7 @@ impl InteractiveRoot {
         layout: ShellLayout,
         conversation_body: Rect,
         transcript_total_rows: usize,
+        block_rows: &[(TranscriptBlockId, TranscriptBlockRows)],
     ) {
         self.local.mouse_hits.clear();
         self.local.mouse_hits.push(HitRegion::new(
@@ -2853,13 +2862,7 @@ impl InteractiveRoot {
             conversation_body.height,
             self.transcript.scroll_offset(),
         );
-        let opts =
-            self.transcript_render_options(conversation_body.width.max(1), MAX_TOOL_RESULT_LINES);
-        let block_rows = self
-            .local
-            .render_cache
-            .all_block_rows(&self.transcript, &opts);
-        for (block_id, rows) in block_rows {
+        for &(block_id, rows) in block_rows {
             let visible_start = rows.start.max(viewport_start);
             let visible_end = rows.end.min(viewport_end);
             if visible_start >= visible_end {
@@ -2957,13 +2960,20 @@ impl InteractiveRoot {
         self.conversation_viewport_width = conversation_body.width.max(1);
         self.conversation_viewport_height = conversation_body.height.max(1);
         let max_tool_result_lines = MAX_TOOL_RESULT_LINES;
-        let transcript_lines =
-            self.transcript_lines_at(conversation_body.width.max(1), max_tool_result_lines);
-        self.rebuild_mouse_hit_regions(layout, conversation_body, transcript_lines.len());
-        let transcript_lines = transcript_viewport(
-            &transcript_lines,
+        self.sync_transcript_view();
+        let opts =
+            self.transcript_render_options(conversation_body.width.max(1), max_tool_result_lines);
+        let transcript_viewport = self.local.render_cache.render_viewport(
+            &self.transcript,
+            &opts,
             conversation_body.height,
             self.transcript.scroll_offset(),
+        );
+        self.rebuild_mouse_hit_regions(
+            layout,
+            conversation_body,
+            transcript_viewport.total_rows,
+            &transcript_viewport.block_rows,
         );
         frame.draw(
             Rect::new(
@@ -2978,7 +2988,7 @@ impl InteractiveRoot {
                 layout.conversation.width,
             )],
         );
-        frame.draw(conversation_body, &transcript_lines);
+        frame.draw(conversation_body, &transcript_viewport.lines);
 
         if layout.mode == ShellLayoutMode::Wide {
             let separator = Rect::new(
@@ -4045,6 +4055,7 @@ fn format_token_total(count: u64) -> String {
     )
 }
 
+#[cfg(test)]
 fn transcript_viewport(lines: &[String], height: usize, scroll_offset: usize) -> Vec<String> {
     if height == 0 || lines.is_empty() {
         return Vec::new();

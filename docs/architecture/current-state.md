@@ -5,8 +5,8 @@
 Baseline version: `0.3.1`, released as annotated tag `v0.3.1`.
 
 Source baseline: commit `870d4bb`; dated release record: `180f219`; post-baseline
-`0.4.0` through completed `0.5.2` convergence evidence is recorded below. Last
-refreshed: 2026-07-20.
+`0.4.0` through completed `0.5.3` convergence evidence is recorded below. Last
+refreshed: 2026-07-21.
 
 This file records implementation facts, not desired behavior. Cargo manifests,
 compiled source, tests, and CodeGraph call paths outrank this summary when they
@@ -18,7 +18,7 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   `pi-coding-agent -> {pi-agent-core, pi-ai, pi-tui}`.
 - `pi-ai` and `pi-tui` have no workspace dependencies.
 - `pi-mom`, `pi-pods`, and `pi-web-ui` are placeholder crates.
-- All workspace packages inherit version `0.5.2` from the root manifest.
+- All workspace packages inherit version `0.5.3` from the root manifest.
 - The reduced 0.4.x train ends at `0.4.2`; reserved Extension release plans
   `0.4.3` through `0.4.5` are Skip records and did not produce package versions.
 - `pi-rust` is a placeholder binary; `pi-coding-agent` is user-facing.
@@ -186,6 +186,15 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   pending-command slot, one ordered `UiProjection`, and a separate
   `InteractiveLocalState`; it no longer mirrors shared projection facts across
   the event loop and root component.
+- The fullscreen adapter owns one long-lived client connection generation and
+  consumes the canonical snapshot/replay/live/ack path. Prompt tasks hand off
+  that connection once and no longer create a parallel ProductEvent bridge.
+  Input and task/control queues are bounded, running/idle modes share one typed
+  select loop, and Unix resize delivery is signal-driven with a quiet fallback.
+- Fullscreen transcript rendering uses cached cumulative row metadata to locate
+  viewport-intersecting blocks before cloning lines. Unchanged 1,000- and
+  10,000-block frames touch five visible blocks and write zero bytes in the
+  frozen 24-row baseline.
 - A durable ProductEvent outbox now shares the bounded writer commit point with
   its source SessionEvents. Prompt, Compact, PluginLoad, and SelfHealingEdit
   terminal records persist and publish only after the corresponding commit.
@@ -240,6 +249,10 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   trusted-host reload, and durable PluginLoad restart/outbox coverage.
   Wasmtime remains pinned to `46.0.1`; skipped contribution productization is
   not claimed.
+- The 0.5.3 dead-code audit retains only the reasoned ADR-002 Extension runtime
+  scopes and core handler boundary in default production. Provider wire fields
+  are either validated/consumed or removed; the complete source inventory has
+  23 reasoned occurrences and zero unreasoned exceptions.
 - PluginLoad uses the admitted snapshot operation ID and typed
   Completed/Failed/Aborted root terminal evidence. Its terminal draft now
   persists through the coordinator outbox and publishes only after commit.
@@ -261,7 +274,7 @@ The supported `pi_coding_agent::api` facade now contains runtime, operation,
 event, client, required view, protocol, Extension, authorization, and
 high-level CLI runner contracts. Low-level CLI parser/config/input/resource/
 theme implementation categories are private; migration details are recorded in
-`docs/0.5.2-migration-guide.md` and the 0.5.2 API snapshot.
+`docs/0.5.3-migration-guide.md` and the 0.5.3 API snapshot.
 
 The archived detailed `0.3.1` inventory is preserved in
 [`migrations/0.3.1-monolithic-architecture.md`](migrations/0.3.1-monolithic-architecture.md).

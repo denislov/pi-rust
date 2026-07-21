@@ -29,7 +29,6 @@ pub(crate) enum OperationKind {
     SwitchActiveLeaf,
     SetSessionTreeLabel,
     SetDefaultAgentProfile,
-    #[allow(dead_code)]
     SelfHealingEdit,
 }
 

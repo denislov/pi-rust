@@ -148,57 +148,71 @@ impl SseEventHandler for AnthropicHandler {
                 }
             }
 
-            wire::StreamEvent::ContentBlockDelta { index: _, delta } => match delta {
-                wire::ContentBlockDelta::TextDelta { text } => {
-                    if let Some(ContentBlock::Text { text: t, .. }) =
-                        partial.content.get_mut(self.block_index as usize)
-                    {
-                        t.push_str(&text);
-                    }
-                    self.accumulated_text.push_str(&text);
-                    events.push(AssistantMessageEvent::TextDelta {
-                        content_index: self.block_index,
-                        delta: text,
-                        partial: partial.clone(),
-                    });
+            wire::StreamEvent::ContentBlockDelta { index, delta } => {
+                if index != self.block_index {
+                    return Err(format!(
+                        "unsupported interleaved Anthropic content block index {index}; active block is {}",
+                        self.block_index
+                    ));
                 }
-                wire::ContentBlockDelta::ThinkingDelta { thinking } => {
-                    if let Some(ContentBlock::Thinking { thinking: t, .. }) =
-                        partial.content.get_mut(self.block_index as usize)
-                    {
-                        t.push_str(&thinking);
+                match delta {
+                    wire::ContentBlockDelta::TextDelta { text } => {
+                        if let Some(ContentBlock::Text { text: t, .. }) =
+                            partial.content.get_mut(self.block_index as usize)
+                        {
+                            t.push_str(&text);
+                        }
+                        self.accumulated_text.push_str(&text);
+                        events.push(AssistantMessageEvent::TextDelta {
+                            content_index: self.block_index,
+                            delta: text,
+                            partial: partial.clone(),
+                        });
                     }
-                    self.accumulated_thinking.push_str(&thinking);
-                    events.push(AssistantMessageEvent::ThinkingDelta {
-                        content_index: self.block_index,
-                        delta: thinking,
-                        partial: partial.clone(),
-                    });
-                }
-                wire::ContentBlockDelta::SignatureDelta { signature } => {
-                    match self.block_type.as_deref() {
-                        Some("thinking") => self.pending_thinking_signature = Some(signature),
-                        Some("tool_use") => self.pending_thought_signature = Some(signature),
-                        _ => self.pending_text_signature = Some(signature),
+                    wire::ContentBlockDelta::ThinkingDelta { thinking } => {
+                        if let Some(ContentBlock::Thinking { thinking: t, .. }) =
+                            partial.content.get_mut(self.block_index as usize)
+                        {
+                            t.push_str(&thinking);
+                        }
+                        self.accumulated_thinking.push_str(&thinking);
+                        events.push(AssistantMessageEvent::ThinkingDelta {
+                            content_index: self.block_index,
+                            delta: thinking,
+                            partial: partial.clone(),
+                        });
+                    }
+                    wire::ContentBlockDelta::SignatureDelta { signature } => {
+                        match self.block_type.as_deref() {
+                            Some("thinking") => self.pending_thinking_signature = Some(signature),
+                            Some("tool_use") => self.pending_thought_signature = Some(signature),
+                            _ => self.pending_text_signature = Some(signature),
+                        }
+                    }
+                    wire::ContentBlockDelta::InputJsonDelta { partial_json } => {
+                        self.accumulated_tool_args.push_str(&partial_json);
+                        let parsed = parse_streaming_json(&self.accumulated_tool_args);
+                        if let Some(ContentBlock::ToolCall { arguments, .. }) =
+                            partial.content.get_mut(self.block_index as usize)
+                        {
+                            *arguments = parsed;
+                        }
+                        events.push(AssistantMessageEvent::ToolcallDelta {
+                            content_index: self.block_index,
+                            delta: partial_json,
+                            partial: partial.clone(),
+                        });
                     }
                 }
-                wire::ContentBlockDelta::InputJsonDelta { partial_json } => {
-                    self.accumulated_tool_args.push_str(&partial_json);
-                    let parsed = parse_streaming_json(&self.accumulated_tool_args);
-                    if let Some(ContentBlock::ToolCall { arguments, .. }) =
-                        partial.content.get_mut(self.block_index as usize)
-                    {
-                        *arguments = parsed;
-                    }
-                    events.push(AssistantMessageEvent::ToolcallDelta {
-                        content_index: self.block_index,
-                        delta: partial_json,
-                        partial: partial.clone(),
-                    });
-                }
-            },
+            }
 
-            wire::StreamEvent::ContentBlockStop { index: _ } => {
+            wire::StreamEvent::ContentBlockStop { index } => {
+                if index != self.block_index {
+                    return Err(format!(
+                        "Anthropic content block stop index {index} does not match active block {}",
+                        self.block_index
+                    ));
+                }
                 match self.block_type.as_deref() {
                     Some("text") => {
                         if let Some(ContentBlock::Text { text_signature, .. }) =

@@ -1,5 +1,16 @@
 # Changes
 
+## 0.5.3 - 2026-07-21
+
+### Changed
+
+- Validate OpenAI/Mistral choice indices and tool-call kinds and Anthropic block
+  indices instead of silently merging unsupported streamed shapes.
+- Removed unused wire decoration and unrepresented reasoning-token detail DTOs;
+  unknown compatible provider fields continue to deserialize.
+- Removed stale provider/test-support dead-code suppressions and obsolete test
+  helpers. All provider fixtures remain offline.
+
 ## 0.5.2 - 2026-07-20
 
 ### Changed

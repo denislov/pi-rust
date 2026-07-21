@@ -1,5 +1,23 @@
 # Changes
 
+## 0.5.3 - 2026-07-21
+
+### Fullscreen TUI Runtime Hardening
+
+- Converged fullscreen interaction on one canonical client
+  snapshot/replay/live/ack connection and one typed running/idle event loop.
+- Bounded stdin and operation controls, removed the independent progress writer,
+  added signal-driven resize, and hardened synchronized render/terminal cleanup
+  across injected I/O failures and panics.
+- Added viewport-first transcript rendering with fixed steady-frame work for
+  1,000/10,000-block histories, deterministic baseline and 20-iteration soak
+  gates, and tmux lifecycle coverage.
+- Reduced `dead_code` allowances from 68 to 23, with zero unreasoned exceptions;
+  provider wire ordering/type fields now fail closed and obsolete DTO/test
+  helpers were deleted.
+- Preserved RPC `2.1`, ProductEvent `2.2`, UI snapshot `2.1`, crate boundaries,
+  and the explicitly skipped Extension contribution-dispatch decision.
+
 ## 0.5.2 - 2026-07-20
 
 ### `pi-coding-agent` Lean Product-Runtime Convergence

@@ -69,6 +69,12 @@ impl SseEventHandler for MistralHandler {
         }
 
         for choice in chunk.choices {
+            if choice.index != 0 {
+                return Err(format!(
+                    "unsupported Mistral completion choice index {}",
+                    choice.index
+                ));
+            }
             if let Some(reason) = choice.finish_reason.as_deref()
                 && !reason.is_empty()
                 && reason != "null"
@@ -123,6 +129,16 @@ impl SseEventHandler for MistralHandler {
                     events.push(event);
                 }
                 for tool_call in tool_calls {
+                    if tool_call
+                        .tool_type
+                        .as_deref()
+                        .is_some_and(|kind| kind != "function")
+                    {
+                        return Err(format!(
+                            "unsupported Mistral tool call type {}",
+                            tool_call.tool_type.as_deref().unwrap_or_default()
+                        ));
+                    }
                     let provider_index = tool_call.index.unwrap_or(0);
                     let content_pos = match self.tool_index_map.get(&provider_index) {
                         Some(&pos) => pos,

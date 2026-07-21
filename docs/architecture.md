@@ -6,9 +6,16 @@ This concise index is the normative entry point for `pi-rust` architecture from
 the `0.4.x` train onward. Normative contracts, current implementation evidence,
 decisions, migrations, and test procedures are intentionally separated.
 
-The workspace is still at `0.3.1`; contracts introduced for `0.4.0` are target
-contracts until their owning task and completion evidence close. A document must
-label current facts separately from target requirements.
+The workspace is at `0.5.3`. Contracts introduced by completed version plans are
+normative where the contract documents below say so; implementation facts remain
+version-stamped in `current-state.md`. A document must label current facts
+separately from target requirements.
+
+## Completed Version Plan
+
+- [`0.5.3-fullscreen-tui-runtime-hardening-plan.md`](0.5.3-fullscreen-tui-runtime-hardening-plan.md):
+  fullscreen TUI runtime pressure/fault hardening and workspace `dead_code`
+  convergence, completed with the workspace `0.5.3` release.
 
 ## Normative Contracts
 

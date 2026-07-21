@@ -220,12 +220,6 @@ pub struct OutputItem {
     #[serde(rename = "type")]
     pub item_type: String,
     #[serde(default)]
-    #[allow(dead_code)]
-    pub role: Option<String>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub content: Option<Vec<serde_json::Value>>,
-    #[serde(default)]
     pub name: Option<String>,
     #[serde(default)]
     pub call_id: Option<String>,

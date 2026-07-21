@@ -102,7 +102,6 @@ pub struct ChatCompletionChunk {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ChoiceDelta {
-    #[allow(dead_code)]
     pub index: u32,
     #[serde(default)]
     pub delta: Delta,
@@ -148,7 +147,6 @@ pub struct ToolCallDelta {
     #[serde(default)]
     pub id: Option<String>,
     #[serde(rename = "type", default)]
-    #[allow(dead_code)]
     pub tool_type: Option<String>,
     #[serde(default)]
     pub function: Option<ToolCallFunctionDelta>,

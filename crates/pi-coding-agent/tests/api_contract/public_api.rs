@@ -1670,11 +1670,6 @@ fn typed_event_family(event: &CodingAgentProductEventKind) -> CodingAgentProduct
     }
 }
 
-#[allow(dead_code)]
-fn typed_product_event_family(event: &CodingAgentProductEvent) -> CodingAgentProductEventFamily {
-    event.family()
-}
-
 #[test]
 fn protocol_wire_types_are_importable_from_api_facade() {
     fn type_name<T>() -> &'static str {

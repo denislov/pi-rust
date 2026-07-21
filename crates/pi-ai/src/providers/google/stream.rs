@@ -29,7 +29,6 @@ where
 
 #[derive(Default)]
 struct GoogleHandler {
-    #[allow(dead_code)]
     first_event: bool,
 }
 

@@ -13,7 +13,7 @@ use pi_tui::api::terminal::{
 use crate::adapters::interactive::app::{PromptContext, build_prompt_context, session_label};
 use crate::adapters::interactive::input::InputPump;
 use crate::adapters::interactive::prompt_task::{
-    PromptTask, PromptTaskCompletion, PromptTaskEvent, PromptTaskFailure, PromptTaskResult,
+    PromptTask, PromptTaskCompletion, PromptTaskFailure, PromptTaskResult,
 };
 use crate::adapters::interactive::root::{
     InteractiveAction, InteractiveRoot, InteractiveStatus, PendingAgentInvocationRequest,
@@ -36,15 +36,66 @@ use crate::app::cli::request::resolve_provider_api_key;
 use crate::app::configuration::persist_global_settings;
 use crate::app::session::ResolvedSessionTarget;
 use crate::runtime::facade::{
-    CodingAgentClientId, CodingAgentSession, ProfileId, PromptTurnOptions, PromptTurnOutcome,
-    SelfHealingEditModelRepairOptions, SelfHealingEditRequest,
+    CodingAgentClientConnection, CodingAgentClientId, CodingAgentReconnect,
+    CodingAgentReconnectDelivery, CodingAgentReconnectReceiver, CodingAgentSession,
+    CodingSessionError, ProfileId, PromptTurnOptions, PromptTurnOutcome,
+    SelfHealingEditModelRepairOptions, SelfHealingEditRequest, UiSnapshot,
 };
+
+#[cfg(test)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "test fixture exercises snapshot and event projection with their exact payloads"
+)]
+enum PromptTaskEvent {
+    Snapshot(UiSnapshot),
+    Coding(crate::runtime::facade::ProductEvent),
+}
 
 const NORMAL_RENDER_INTERVAL: Duration = Duration::from_millis(16);
 const SPINNER_INTERVAL: Duration = Duration::from_millis(120);
 const RESIZE_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const SHUTDOWN_DRAIN_MAX: Duration = Duration::from_millis(1000);
 const SHUTDOWN_DRAIN_IDLE: Duration = Duration::from_millis(50);
+
+struct ResizeSource {
+    #[cfg(unix)]
+    platform: Option<tokio::signal::unix::Signal>,
+    fallback: tokio::time::Interval,
+}
+
+impl ResizeSource {
+    fn new() -> Self {
+        let mut fallback = tokio::time::interval(RESIZE_POLL_INTERVAL);
+        fallback.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        Self {
+            #[cfg(unix)]
+            platform: tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change())
+                .ok(),
+            fallback,
+        }
+    }
+
+    async fn recv(&mut self) {
+        #[cfg(unix)]
+        tokio::select! {
+            _ = receive_platform_resize(&mut self.platform), if self.platform.is_some() => {}
+            _ = self.fallback.tick() => {}
+        }
+        #[cfg(not(unix))]
+        self.fallback.tick().await;
+    }
+}
+
+#[cfg(unix)]
+async fn receive_platform_resize(signal: &mut Option<tokio::signal::unix::Signal>) {
+    match signal {
+        Some(signal) => {
+            let _ = signal.recv().await;
+        }
+        None => std::future::pending().await,
+    }
+}
 
 /// Print startup resource summary to stderr before the TUI takes over.
 /// Mirrors the TS startup banner with [Context], [Skills], [Extensions].
@@ -112,23 +163,88 @@ fn print_exit_resume_hint(active_session_path: Option<&std::path::Path>) {
 }
 
 pub(super) struct LoopResult<T: Terminal> {
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(super) tui: Tui<T>,
+    #[cfg(not(test))]
+    terminal_type: std::marker::PhantomData<fn() -> T>,
     pub(super) exit_code: i32,
     pub(super) coding_session: Option<CodingAgentSession>,
 }
 
-fn detach_interactive_client(
-    session: &CodingAgentSession,
-    connection: &mut Option<crate::runtime::facade::CodingAgentClientConnection>,
-) {
-    if connection.is_none() {
-        *connection = session
-            .connect(CodingAgentClientId::new("interactive"))
-            .ok();
-    }
+struct InteractiveClientConnection {
+    connection: CodingAgentClientConnection,
+    receiver: CodingAgentReconnectReceiver,
+    session_id: String,
+}
+
+fn detach_interactive_client(connection: &mut Option<InteractiveClientConnection>) {
     if let Some(connection) = connection.take() {
-        let _ = connection.detach();
+        let _ = connection.connection.detach();
+    }
+}
+
+async fn receive_interactive_client(
+    connection: &mut Option<InteractiveClientConnection>,
+) -> Result<CodingAgentReconnectDelivery, CodingSessionError> {
+    match connection {
+        Some(connection) => connection.receiver.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
+async fn receive_prompt_connection_handoff(
+    handoff: &mut Option<
+        tokio::sync::oneshot::Receiver<Result<Option<CodingAgentClientConnection>, CliError>>,
+    >,
+) -> Result<
+    Result<Option<CodingAgentClientConnection>, CliError>,
+    tokio::sync::oneshot::error::RecvError,
+> {
+    match handoff.as_mut() {
+        Some(receiver) => receiver.await,
+        None => std::future::pending().await,
+    }
+}
+
+enum PromptSourceEvent {
+    ConnectionHandoff(
+        Box<
+            Result<
+                Result<Option<CodingAgentClientConnection>, CliError>,
+                tokio::sync::oneshot::error::RecvError,
+            >,
+        >,
+    ),
+    SpinnerTick,
+    Completed(Box<PromptTaskCompletion>),
+}
+
+enum InteractiveLoopEvent {
+    RenderDeadline,
+    StdinTimeout,
+    ResizeWake,
+    Input(Option<String>),
+    Prompt(Box<PromptSourceEvent>),
+    Client(Box<Result<CodingAgentReconnectDelivery, CodingSessionError>>),
+    Theme(Box<crate::theme::ThemeReloadSignal>),
+}
+
+async fn receive_prompt_source(task: Option<&mut PromptTask>) -> PromptSourceEvent {
+    let Some(task) = task else {
+        return std::future::pending().await;
+    };
+    tokio::select! {
+        handoff = receive_prompt_connection_handoff(&mut task.connection_handoff), if task.connection_handoff.is_some() => {
+            PromptSourceEvent::ConnectionHandoff(Box::new(handoff))
+        }
+        _ = tokio::time::sleep(SPINNER_INTERVAL) => PromptSourceEvent::SpinnerTick,
+        done = &mut task.done => {
+            PromptSourceEvent::Completed(Box::new(done.unwrap_or_else(|_| {
+                PromptTaskCompletion::SetupFailed(CliError::AgentFailure(
+                    "prompt task dropped before completion".to_string(),
+                ))
+            })))
+        }
     }
 }
 
@@ -156,6 +272,13 @@ impl RenderRequest {
             }
         } else {
             Self::NONE
+        }
+    }
+
+    fn merge(self, other: Self) -> Self {
+        Self {
+            requested: self.requested || other.requested,
+            force: self.force || other.force,
         }
     }
 }
@@ -258,6 +381,7 @@ where
     let _ = tui
         .terminal_mut()
         .drain_input(SHUTDOWN_DRAIN_MAX, SHUTDOWN_DRAIN_IDLE);
+    let input_shutdown = input.shutdown().await.map_err(to_cli_error);
     let stop_result = tui.stop().map_err(tui_error);
 
     // Print resume hint after terminal cleanup.
@@ -265,14 +389,17 @@ where
         print_exit_resume_hint(root.active_session_path.as_deref());
     }
 
-    match (loop_result, stop_result) {
-        (Ok((exit_code, coding_session)), Ok(())) => Ok(LoopResult {
+    match (loop_result, input_shutdown, stop_result) {
+        (Ok((exit_code, coding_session)), Ok(()), Ok(())) => Ok(LoopResult {
+            #[cfg(test)]
             tui,
+            #[cfg(not(test))]
+            terminal_type: std::marker::PhantomData,
             exit_code,
             coding_session,
         }),
-        (Err(error), _) => Err(error),
-        (Ok(_), Err(error)) => Err(error),
+        (Err(error), _, _) => Err(error),
+        (Ok(_), Err(error), _) | (Ok(_), Ok(()), Err(error)) => Err(error),
     }
 }
 
@@ -295,8 +422,8 @@ where
         .unwrap_or(prompt_context.settings.terminal.mode)
         .into();
     let mut tui = Tui::start(terminal, terminal_mode).map_err(tui_error)?;
-    let mut input = make_input();
     let root_id = initialize_started_tui(&mut tui, &prompt_context)?;
+    let mut input = make_input();
 
     let clock = SystemInteractiveClock;
     let loop_result = run_started_interactive_loop(
@@ -313,6 +440,7 @@ where
     let _ = tui
         .terminal_mut()
         .drain_input(SHUTDOWN_DRAIN_MAX, SHUTDOWN_DRAIN_IDLE);
+    let input_shutdown = input.shutdown().await.map_err(to_cli_error);
     let stop_result = tui.stop().map_err(tui_error);
 
     // Print resume hint after terminal cleanup.
@@ -320,14 +448,17 @@ where
         print_exit_resume_hint(root.active_session_path.as_deref());
     }
 
-    match (loop_result, stop_result) {
-        (Ok((exit_code, session)), Ok(())) => Ok(LoopResult {
+    match (loop_result, input_shutdown, stop_result) {
+        (Ok((exit_code, session)), Ok(()), Ok(())) => Ok(LoopResult {
+            #[cfg(test)]
             tui,
+            #[cfg(not(test))]
+            terminal_type: std::marker::PhantomData,
             exit_code,
             coding_session: session,
         }),
-        (Err(error), _) => Err(error),
-        (Ok(_), Err(error)) => Err(error),
+        (Err(error), _, _) => Err(error),
+        (Ok(_), Err(error), _) | (Ok(_), Ok(()), Err(error)) => Err(error),
     }
 }
 
@@ -470,6 +601,7 @@ where
     let mut client_connection = None;
     let mut input_open = true;
     let mut terminal_size = tui.terminal().size();
+    let mut resize_source = ResizeSource::new();
     let mut render_scheduler = RenderScheduler::new(NORMAL_RENDER_INTERVAL);
     render_scheduler.request(true);
     flush_render_if_ready(tui, root_id, &mut render_scheduler, clock.now())?;
@@ -486,19 +618,41 @@ where
 
     loop {
         flush_render_if_ready(tui, root_id, &mut render_scheduler, clock.now())?;
-        if let Some(mut task) = running.take() {
-            let render_delay = pending_render_delay(&render_scheduler, clock.now());
-            let stdin_delay = stdin_pending_delay(&stdin_buffer, clock.now());
-            tokio::select! {
-                _ = sleep_render_delay(render_delay), if render_delay.is_some() => {
-                    flush_render_if_ready(tui, root_id, &mut render_scheduler, clock.now())?;
-                    running = Some(task);
-                }
-                _ = sleep_stdin_pending(stdin_delay), if stdin_delay.is_some() => {
-                    running = Some(task);
-                    let events = stdin_buffer.tick(clock.now());
-                    if !events.is_empty() {
-                        match process_input_events(
+        if !input_open && running.is_none() {
+            flush_pending_render(tui, root_id, &mut render_scheduler, clock.now())?;
+            detach_interactive_client(&mut client_connection);
+            return Ok((0, coding_session));
+        }
+
+        let render_delay = pending_render_delay(&render_scheduler, clock.now());
+        let stdin_delay = stdin_pending_delay(&stdin_buffer, clock.now());
+        let event = tokio::select! {
+            _ = sleep_render_delay(render_delay), if render_delay.is_some() => {
+                InteractiveLoopEvent::RenderDeadline
+            }
+            _ = sleep_stdin_pending(stdin_delay), if stdin_delay.is_some() => {
+                InteractiveLoopEvent::StdinTimeout
+            }
+            _ = resize_source.recv() => InteractiveLoopEvent::ResizeWake,
+            chunk = input.recv(), if input_open => InteractiveLoopEvent::Input(chunk),
+            event = receive_prompt_source(running.as_mut()), if running.is_some() => {
+                InteractiveLoopEvent::Prompt(Box::new(event))
+            }
+            delivery = receive_interactive_client(&mut client_connection), if client_connection.is_some() => {
+                InteractiveLoopEvent::Client(Box::new(delivery))
+            }
+            Some(reload) = theme_reload.recv() => InteractiveLoopEvent::Theme(Box::new(reload)),
+        };
+
+        match event {
+            InteractiveLoopEvent::RenderDeadline => {
+                flush_render_if_ready(tui, root_id, &mut render_scheduler, clock.now())?;
+            }
+            InteractiveLoopEvent::StdinTimeout => {
+                let events = stdin_buffer.tick(clock.now());
+                if !events.is_empty()
+                    && matches!(
+                        process_input_events(
                             tui,
                             root_id,
                             events,
@@ -509,231 +663,147 @@ where
                             parsed,
                             options,
                             clock.now(),
-                        )? {
-                            LoopControl::Continue(_) => {}
-                            LoopControl::Exit => {
-                                if let Some(session) = coding_session.as_ref() {
-                                    detach_interactive_client(session, &mut client_connection);
-                                }
-                                return Ok((0, coding_session));
-                            }
+                        )
+                        .await?,
+                        LoopControl::Exit
+                    )
+                {
+                    detach_interactive_client(&mut client_connection);
+                    return Ok((0, coding_session));
+                }
+            }
+            InteractiveLoopEvent::ResizeWake => {
+                schedule_resize_render(tui, &mut terminal_size, &mut render_scheduler);
+                flush_render_if_ready(tui, root_id, &mut render_scheduler, clock.now())?;
+            }
+            InteractiveLoopEvent::Input(chunk) => {
+                let control = match chunk {
+                    Some(chunk) => {
+                        let control = process_input_events(
+                            tui,
+                            root_id,
+                            stdin_buffer.process_at(&chunk, clock.now()),
+                            &mut prompt_context,
+                            &mut running,
+                            &mut coding_session,
+                            &mut render_scheduler,
+                            parsed,
+                            options,
+                            clock.now(),
+                        )
+                        .await?;
+                        if matches!(control, LoopControl::Continue(_)) {
+                            input.mark_processed(&chunk);
                         }
+                        control
                     }
-                }
-                _ = tokio::time::sleep(RESIZE_POLL_INTERVAL) => {
-                    schedule_resize_render(tui, &mut terminal_size, &mut render_scheduler);
-                    flush_render_if_ready(tui, root_id, &mut render_scheduler, clock.now())?;
-                    running = Some(task);
-                }
-                chunk = input.recv(), if input_open => {
-                    match chunk {
-                        Some(chunk) => {
-                            running = Some(task);
-                            match process_input_events(
-                                tui,
-                                root_id,
-                                stdin_buffer.process_at(&chunk, clock.now()),
-                                &mut prompt_context,
-                                &mut running,
-                                &mut coding_session,
-                                &mut render_scheduler,
-                                parsed,
-                                options,
-                                clock.now(),
-                            )? {
-                                LoopControl::Continue(_) => {
-                                    input.mark_processed(&chunk);
-                                }
-                                LoopControl::Exit => {
-                                    if let Some(session) = coding_session.as_ref() {
-                                        detach_interactive_client(session, &mut client_connection);
-                                    }
-                                    return Ok((0, coding_session));
-                                }
-                            }
-                        }
-                        None => {
-                            input_open = false;
-                            running = Some(task);
-                        }
+                    None => {
+                        input_open = false;
+                        process_stdin_eof(
+                            tui,
+                            root_id,
+                            &mut stdin_buffer,
+                            &mut prompt_context,
+                            &mut running,
+                            &mut coding_session,
+                            &mut render_scheduler,
+                            parsed,
+                            options,
+                            clock.now(),
+                        )
+                        .await?
                     }
+                };
+                if matches!(control, LoopControl::Exit) {
+                    detach_interactive_client(&mut client_connection);
+                    return Ok((0, coding_session));
                 }
-                maybe_event = task.events.recv(), if !task.events_closed => {
-                    match maybe_event {
-                        Some(event) => {
-                            schedule_render(
-                                &mut render_scheduler,
-                                apply_prompt_task_event(
-                                    tui,
-                                    root_id,
-                                    event,
-                                )?,
-                            );
-                        }
-                        None => {
-                            task.events_closed = true;
-                        }
+                if running.is_some() {
+                    tokio::task::yield_now().await;
+                }
+            }
+            InteractiveLoopEvent::Prompt(event) => match *event {
+                PromptSourceEvent::ConnectionHandoff(handoff) => {
+                    if let Some(task) = running.as_mut() {
+                        task.connection_handoff = None;
                     }
-                    running = Some(task);
+                    schedule_render(
+                        &mut render_scheduler,
+                        apply_prompt_connection_handoff(
+                            tui,
+                            root_id,
+                            &mut client_connection,
+                            *handoff,
+                        )?,
+                    );
                 }
-                _ = tokio::time::sleep(SPINNER_INTERVAL) => {
+                PromptSourceEvent::SpinnerTick => {
                     if let Some(root) = tui.component_as_mut::<InteractiveRoot>(root_id) {
                         root.spinner_frame = root.spinner_frame.wrapping_add(1);
                     }
                     render_scheduler.request(true);
-                    running = Some(task);
                 }
-                done = &mut task.done => {
-                    let result = done.unwrap_or_else(|_| {
-                        PromptTaskCompletion::SetupFailed(CliError::AgentFailure(
-                            "prompt task dropped before completion".to_string(),
-                        ))
-                    });
-                    while let Ok(event) = task.events.try_recv() {
+                PromptSourceEvent::Completed(result) => {
+                    let mut task = running
+                        .take()
+                        .expect("prompt source requires a running task");
+                    if let Some(mut handoff) = task.connection_handoff.take()
+                        && let Ok(handoff) = handoff.try_recv()
+                    {
                         schedule_render(
                             &mut render_scheduler,
-                            apply_prompt_task_event(
+                            apply_prompt_connection_handoff(
                                 tui,
                                 root_id,
-                                event,
+                                &mut client_connection,
+                                Ok(handoff),
                             )?,
                         );
                     }
+                    schedule_render(
+                        &mut render_scheduler,
+                        drain_interactive_client(tui, root_id, &mut client_connection)?,
+                    );
                     finish_prompt(
                         tui,
                         root_id,
-                        result,
+                        *result,
                         &mut coding_session,
                         &mut prompt_context.session_target,
                     )?;
                     if let Some(session) = coding_session.as_ref() {
+                        let session_view = session.view();
+                        if client_connection.as_ref().is_some_and(|connection| {
+                            connection.session_id != session_view.session_id
+                        }) {
+                            detach_interactive_client(&mut client_connection);
+                        }
                         if client_connection.is_none() {
-                            client_connection = session
-                                .connect(CodingAgentClientId::new("interactive"))
-                                .ok();
+                            let (connection, request) =
+                                connect_interactive_client(tui, root_id, session)?;
+                            client_connection = Some(connection);
+                            schedule_render(&mut render_scheduler, request);
                         }
                         prompt_context.default_agent_profile_id =
-                            session.view().default_agent_profile_id.clone();
+                            session_view.default_agent_profile_id.clone();
                     }
                     schedule_render(&mut render_scheduler, RenderRequest::FORCE);
                     flush_render_if_ready(tui, root_id, &mut render_scheduler, clock.now())?;
-                    running = None;
                     input.mark_idle();
                 }
-                Some(reload) = theme_reload.recv() => {
-                    apply_theme_reload(tui, root_id, reload);
-                    render_scheduler.request(true);
-                    running = Some(task);
-                }
+            },
+            InteractiveLoopEvent::Client(delivery) => {
+                let request = apply_interactive_client_delivery(
+                    tui,
+                    root_id,
+                    &mut client_connection,
+                    *delivery,
+                )?;
+                schedule_render(&mut render_scheduler, request);
             }
-        } else {
-            if !input_open {
-                flush_pending_render(tui, root_id, &mut render_scheduler, clock.now())?;
-                if let Some(session) = coding_session.as_ref() {
-                    detach_interactive_client(session, &mut client_connection);
-                }
-                return Ok((0, coding_session));
-            }
-
-            let render_delay = pending_render_delay(&render_scheduler, clock.now());
-            let stdin_delay = stdin_pending_delay(&stdin_buffer, clock.now());
-            tokio::select! {
-                _ = sleep_render_delay(render_delay), if render_delay.is_some() => {
-                    flush_render_if_ready(tui, root_id, &mut render_scheduler, clock.now())?;
-                }
-                _ = sleep_stdin_pending(stdin_delay), if stdin_delay.is_some() => {
-                    let events = stdin_buffer.tick(clock.now());
-                    if !events.is_empty() {
-                        match process_input_events(
-                            tui,
-                            root_id,
-                            events,
-                            &mut prompt_context,
-                            &mut running,
-                            &mut coding_session,
-                            &mut render_scheduler,
-                            parsed,
-                            options,
-                            clock.now(),
-                        )? {
-                            LoopControl::Continue(_) => {}
-                            LoopControl::Exit => {
-                                if let Some(session) = coding_session.as_ref() {
-                                    detach_interactive_client(session, &mut client_connection);
-                                }
-                                return Ok((0, coding_session));
-                            }
-                        }
-                    }
-                }
-                _ = tokio::time::sleep(RESIZE_POLL_INTERVAL) => {
-                    schedule_resize_render(tui, &mut terminal_size, &mut render_scheduler);
-                    flush_render_if_ready(tui, root_id, &mut render_scheduler, clock.now())?;
-                }
-                chunk = input.recv() => {
-                    let Some(chunk) = chunk else {
-                        input_open = false;
-                        match process_input_events(
-                            tui,
-                            root_id,
-                            stdin_buffer.flush(),
-                            &mut prompt_context,
-                            &mut running,
-                            &mut coding_session,
-                            &mut render_scheduler,
-                            parsed,
-                            options,
-                            clock.now(),
-                        )? {
-                            LoopControl::Continue(_) => {}
-                            LoopControl::Exit => {
-                                if let Some(session) = coding_session.as_ref() {
-                                    detach_interactive_client(session, &mut client_connection);
-                                }
-                                return Ok((0, coding_session));
-                            }
-                        }
-                        if running.is_none() {
-                            flush_pending_render(tui, root_id, &mut render_scheduler, clock.now())?;
-                            if let Some(session) = coding_session.as_ref() {
-                                detach_interactive_client(session, &mut client_connection);
-                            }
-                            return Ok((0, coding_session));
-                        }
-                        tokio::task::yield_now().await;
-                        continue;
-                    };
-
-                    match process_input_events(
-                        tui,
-                        root_id,
-                        stdin_buffer.process_at(&chunk, clock.now()),
-                        &mut prompt_context,
-                        &mut running,
-                        &mut coding_session,
-                        &mut render_scheduler,
-                        parsed,
-                        options,
-                        clock.now(),
-                    )? {
-                        LoopControl::Continue(_) => {
-                            input.mark_processed(&chunk);
-                        }
-                        LoopControl::Exit => {
-                            if let Some(session) = coding_session.as_ref() {
-                                detach_interactive_client(session, &mut client_connection);
-                            }
-                            return Ok((0, coding_session));
-                        }
-                    }
-                    if running.is_some() {
-                        tokio::task::yield_now().await;
-                    }
-                }
-                Some(reload) = theme_reload.recv() => {
-                    apply_theme_reload(tui, root_id, reload);
-                    render_scheduler.request(true);
-                }
+            InteractiveLoopEvent::Theme(reload) => {
+                apply_theme_reload(tui, root_id, *reload);
+                render_scheduler.request(true);
             }
         }
     }
@@ -741,9 +811,40 @@ where
 
 #[allow(
     clippy::too_many_arguments,
+    reason = "stdin EOF flushes through the same explicitly owned interactive reducer state"
+)]
+async fn process_stdin_eof<T: Terminal>(
+    tui: &mut Tui<T>,
+    root_id: usize,
+    stdin_buffer: &mut StdinBuffer,
+    prompt_context: &mut PromptContext,
+    running: &mut Option<PromptTask>,
+    coding_session: &mut Option<CodingAgentSession>,
+    render_scheduler: &mut RenderScheduler,
+    parsed: &CliArgs,
+    options: &CliRunOptions,
+    now: Instant,
+) -> Result<LoopControl, CliError> {
+    process_input_events(
+        tui,
+        root_id,
+        stdin_buffer.flush(),
+        prompt_context,
+        running,
+        coding_session,
+        render_scheduler,
+        parsed,
+        options,
+        now,
+    )
+    .await
+}
+
+#[allow(
+    clippy::too_many_arguments,
     reason = "interactive loop dependencies remain explicit and borrow-scoped"
 )]
-fn process_input_events<T: Terminal>(
+async fn process_input_events<T: Terminal>(
     tui: &mut Tui<T>,
     root_id: usize,
     events: Vec<InputEvent>,
@@ -756,7 +857,6 @@ fn process_input_events<T: Terminal>(
     now: Instant,
 ) -> Result<LoopControl, CliError> {
     for event in events {
-        let was_running = running.is_some();
         match handle_input_event(
             tui,
             root_id,
@@ -766,15 +866,14 @@ fn process_input_events<T: Terminal>(
             coding_session,
             parsed,
             options,
-        )? {
+        )
+        .await?
+        {
             LoopControl::Continue(request) => {
                 schedule_render(render_scheduler, request);
                 flush_render_if_ready(tui, root_id, render_scheduler, now)?;
             }
             LoopControl::Exit => return Ok(LoopControl::Exit),
-        }
-        if !was_running && running.is_some() {
-            break;
         }
     }
     Ok(LoopControl::Continue(RenderRequest::NONE))
@@ -851,7 +950,7 @@ fn flush_pending_render<T: Terminal>(
     clippy::too_many_arguments,
     reason = "interactive input dispatch keeps mutable owners explicit and borrow-scoped"
 )]
-fn handle_input_event<T: Terminal>(
+async fn handle_input_event<T: Terminal>(
     tui: &mut Tui<T>,
     root_id: usize,
     event: InputEvent,
@@ -1026,8 +1125,10 @@ fn handle_input_event<T: Terminal>(
     }
     if let Some(settings) = settings_update {
         let clear_on_shrink = settings.terminal.clear_on_shrink;
+        let show_progress = settings.terminal.show_progress;
         prompt_context.settings = settings;
         tui.set_clear_on_shrink(clear_on_shrink);
+        set_terminal_progress(tui, running.is_some() && show_progress)?;
 
         // Persist settings delta to disk
         if let Ok(root) = root_mut(tui, root_id) {
@@ -1144,14 +1245,12 @@ fn handle_input_event<T: Terminal>(
     match action {
         InteractiveAction::None => Ok(LoopControl::Continue(render_request)),
         InteractiveAction::Exit => {
-            if root_settings_show_progress(tui, root_id)? {
-                set_terminal_progress(tui, false)?;
-            }
+            set_terminal_progress(tui, false)?;
             Ok(LoopControl::Exit)
         }
         InteractiveAction::AbortRunning => {
             if let Some(task) = running.as_mut() {
-                task.abort_once();
+                task.abort_once().await;
             }
             Ok(LoopControl::Continue(RenderRequest::FORCE))
         }
@@ -1159,9 +1258,13 @@ fn handle_input_event<T: Terminal>(
             let Some((request, decision)) = tool_authorization_decision else {
                 return Ok(LoopControl::Continue(render_request));
             };
-            let accepted = running.as_ref().is_some_and(|task| {
-                task.decide_tool_authorization(request.authorization_id.clone(), decision)
-            });
+            let accepted = match running.as_ref() {
+                Some(task) => {
+                    task.decide_tool_authorization(request.authorization_id.clone(), decision)
+                        .await
+                }
+                None => false,
+            };
             if !accepted {
                 let root = root_mut(tui, root_id)?;
                 root.restore_tool_authorization(request);
@@ -1273,7 +1376,7 @@ fn handle_input_event<T: Terminal>(
                 return Ok(LoopControl::Continue(render_request));
             }
             if let Some(task) = running.as_ref() {
-                if task.steer(prompt) {
+                if task.steer(prompt).await {
                     return Ok(LoopControl::Continue(RenderRequest::FORCE));
                 }
                 return Ok(LoopControl::Continue(render_request));
@@ -1295,7 +1398,7 @@ fn handle_input_event<T: Terminal>(
                 return Ok(LoopControl::Continue(render_request));
             }
             if let Some(task) = running.as_ref()
-                && task.follow_up(prompt)
+                && task.follow_up(prompt).await
             {
                 return Ok(LoopControl::Continue(RenderRequest::FORCE));
             }
@@ -2183,21 +2286,66 @@ fn start_branch_summary_task<T: Terminal>(
     Ok(task)
 }
 
+fn apply_prompt_connection_handoff<T: Terminal>(
+    tui: &mut Tui<T>,
+    root_id: usize,
+    current: &mut Option<InteractiveClientConnection>,
+    handoff: Result<
+        Result<Option<CodingAgentClientConnection>, CliError>,
+        tokio::sync::oneshot::error::RecvError,
+    >,
+) -> Result<RenderRequest, CliError> {
+    match handoff {
+        Ok(Ok(Some(connection))) => {
+            detach_interactive_client(current);
+            let (connection, render) = resume_interactive_client(tui, root_id, connection)?;
+            *current = Some(connection);
+            Ok(render)
+        }
+        Ok(Ok(None)) | Ok(Err(_)) | Err(_) => Ok(RenderRequest::NONE),
+    }
+}
+
+#[cfg(test)]
 fn apply_prompt_task_event<T: Terminal>(
     tui: &mut Tui<T>,
     root_id: usize,
     event: PromptTaskEvent,
 ) -> Result<RenderRequest, CliError> {
+    match event {
+        PromptTaskEvent::Snapshot(snapshot) => apply_interactive_snapshot(tui, root_id, snapshot),
+        PromptTaskEvent::Coding(event) => apply_interactive_product_event(tui, root_id, &event),
+    }
+}
+
+fn apply_interactive_snapshot<T: Terminal>(
+    tui: &mut Tui<T>,
+    root_id: usize,
+    snapshot: UiSnapshot,
+) -> Result<RenderRequest, CliError> {
+    apply_interactive_projection(tui, root_id, |root| {
+        root.install_shared_snapshot(snapshot);
+    })
+}
+
+fn apply_interactive_product_event<T: Terminal>(
+    tui: &mut Tui<T>,
+    root_id: usize,
+    event: &crate::runtime::facade::ProductEvent,
+) -> Result<RenderRequest, CliError> {
+    apply_interactive_projection(tui, root_id, |root| {
+        root.apply_shared_product_event(event);
+    })
+}
+
+fn apply_interactive_projection<T: Terminal>(
+    tui: &mut Tui<T>,
+    root_id: usize,
+    apply: impl FnOnce(&mut InteractiveRoot),
+) -> Result<RenderRequest, CliError> {
     let root = root_mut(tui, root_id)?;
     let before = root.render_state();
-    match event {
-        PromptTaskEvent::Snapshot(snapshot) => {
-            root.install_shared_snapshot(snapshot);
-        }
-        PromptTaskEvent::Coding(event) => {
-            root.apply_shared_product_event(&event);
-        }
-    }
+    apply(root);
     let ui_events = root.drain_shared_ui_events();
     let force_render = ui_events.iter().any(ui_event_updates_visible_block);
     root.apply_events(ui_events);
@@ -2208,6 +2356,135 @@ fn apply_prompt_task_event<T: Terminal>(
     } else {
         RenderRequest::changed(changed)
     })
+}
+
+fn connect_interactive_client<T: Terminal>(
+    tui: &mut Tui<T>,
+    root_id: usize,
+    session: &CodingAgentSession,
+) -> Result<(InteractiveClientConnection, RenderRequest), CliError> {
+    let connection = session
+        .connect(CodingAgentClientId::new("interactive"))
+        .map_err(coding_session_error)?;
+    resume_interactive_client(tui, root_id, connection)
+}
+
+fn resume_interactive_client<T: Terminal>(
+    tui: &mut Tui<T>,
+    root_id: usize,
+    connection: CodingAgentClientConnection,
+) -> Result<(InteractiveClientConnection, RenderRequest), CliError> {
+    let mut render = RenderRequest::NONE;
+    let mut snapshot = connection.initial_ui_state();
+    loop {
+        let session_id = snapshot.session.session_id.clone();
+        let requested_after = snapshot.cursor.last_event_sequence.get();
+        render = render.merge(apply_interactive_snapshot(tui, root_id, snapshot)?);
+        connection
+            .acknowledge(requested_after)
+            .map_err(coding_session_error)?;
+
+        match connection
+            .reconnect(requested_after)
+            .map_err(coding_session_error)?
+        {
+            CodingAgentReconnect::Replayed {
+                events, receiver, ..
+            } => {
+                for event in events {
+                    let sequence = event.sequence();
+                    render = render.merge(apply_interactive_product_event(tui, root_id, &event)?);
+                    connection
+                        .acknowledge(sequence)
+                        .map_err(coding_session_error)?;
+                }
+                return Ok((
+                    InteractiveClientConnection {
+                        connection,
+                        receiver,
+                        session_id,
+                    },
+                    render,
+                ));
+            }
+            CodingAgentReconnect::FreshSnapshotRequired(_) => {
+                snapshot = connection.ui_state().map_err(coding_session_error)?;
+            }
+        }
+    }
+}
+
+fn apply_interactive_client_delivery<T: Terminal>(
+    tui: &mut Tui<T>,
+    root_id: usize,
+    connection: &mut Option<InteractiveClientConnection>,
+    delivery: Result<CodingAgentReconnectDelivery, CodingSessionError>,
+) -> Result<RenderRequest, CliError> {
+    match delivery {
+        Ok(CodingAgentReconnectDelivery::Event(event)) => {
+            let sequence = event.sequence();
+            let render = apply_interactive_product_event(tui, root_id, &event)?;
+            let Some(connection) = connection.as_ref() else {
+                return Err(CliError::AgentFailure(
+                    "interactive client receiver lost its owning connection".to_string(),
+                ));
+            };
+            connection
+                .connection
+                .acknowledge(sequence)
+                .map_err(coding_session_error)?;
+            Ok(render)
+        }
+        Ok(CodingAgentReconnectDelivery::FreshSnapshotRequired(_)) => {
+            let Some(current) = connection.take() else {
+                return Err(CliError::AgentFailure(
+                    "interactive client recovery lost its owning connection".to_string(),
+                ));
+            };
+            let (resumed, render) = resume_interactive_client(tui, root_id, current.connection)?;
+            *connection = Some(resumed);
+            Ok(render)
+        }
+        Err(CodingSessionError::Cancelled) => {
+            detach_interactive_client(connection);
+            Ok(RenderRequest::NONE)
+        }
+        Err(error) => Err(coding_session_error(error)),
+    }
+}
+
+fn drain_interactive_client<T: Terminal>(
+    tui: &mut Tui<T>,
+    root_id: usize,
+    connection: &mut Option<InteractiveClientConnection>,
+) -> Result<RenderRequest, CliError> {
+    let mut render = RenderRequest::NONE;
+    loop {
+        let delivery = match connection.as_mut() {
+            Some(connection) => connection.receiver.try_recv(),
+            None => return Ok(render),
+        };
+        match delivery {
+            Ok(Some(delivery)) => {
+                render = render.merge(apply_interactive_client_delivery(
+                    tui,
+                    root_id,
+                    connection,
+                    Ok(delivery),
+                )?);
+            }
+            Ok(None) => return Ok(render),
+            Err(CodingSessionError::Cancelled) => {
+                detach_interactive_client(connection);
+                return Ok(render);
+            }
+            Err(error) => return Err(coding_session_error(error)),
+        }
+    }
+}
+
+fn coding_session_error(error: CodingSessionError) -> CliError {
+    CliError::AgentFailure(error.to_string())
 }
 
 fn ui_event_updates_visible_block(event: &UiEvent) -> bool {
@@ -2238,9 +2515,7 @@ fn finish_prompt<T: Terminal>(
     coding_session: &mut Option<CodingAgentSession>,
     session_target: &mut Option<ResolvedSessionTarget>,
 ) -> Result<(), CliError> {
-    if root_settings_show_progress(tui, root_id)? {
-        set_terminal_progress(tui, false)?;
-    }
+    set_terminal_progress(tui, false)?;
     let root = root_mut(tui, root_id)?;
     match result {
         PromptTaskCompletion::Completed(PromptTaskResult::Coding(result)) => {
@@ -2335,9 +2610,6 @@ fn finish_prompt<T: Terminal>(
             *coding_session = Some(result.session);
         }
         PromptTaskCompletion::Completed(PromptTaskResult::DelegationRejection(result)) => {
-            if let Some(notice) = result.fallback_notice {
-                root.transcript.push(TranscriptItem::system(notice));
-            }
             root.set_default_agent_profile_id(
                 result.session.view().default_agent_profile_id.clone(),
             );
@@ -2444,6 +2716,38 @@ mod tests {
     use pi_ai::api::testing::FauxProvider;
     use pi_tui::api::input::parse_key;
     use pi_tui::api::testing::VirtualTerminal;
+
+    #[test]
+    fn terminal_progress_transitions_through_the_owned_terminal() {
+        let mut tui = Tui::new(VirtualTerminal::new(80, 24));
+
+        set_terminal_progress(&mut tui, true).unwrap();
+        set_terminal_progress(&mut tui, false).unwrap();
+
+        assert_eq!(
+            tui.terminal().ops(),
+            &[
+                pi_tui::api::testing::TerminalOp::SetProgress(true),
+                pi_tui::api::testing::TerminalOp::SetProgress(false),
+            ]
+        );
+    }
+
+    #[test]
+    fn parsed_events_continue_after_an_event_changes_running_state() {
+        let source = include_str!("loop.rs");
+        let start = source
+            .find("async fn process_input_events")
+            .expect("input reducer exists");
+        let end = source[start..]
+            .find("\nfn schedule_render")
+            .map(|offset| start + offset)
+            .expect("input reducer has a bounded source region");
+        let reducer = &source[start..end];
+
+        assert!(reducer.contains("for event in events"));
+        assert!(!reducer.contains("break;"));
+    }
 
     fn test_tui() -> (Tui<VirtualTerminal>, usize) {
         let mut tui = Tui::new(VirtualTerminal::new(80, 24));
@@ -2773,15 +3077,117 @@ mod tests {
         .unwrap()
     }
 
-    async fn await_prompt_task(
-        mut task: PromptTask,
-    ) -> (PromptTaskCompletion, Vec<PromptTaskEvent>) {
-        let completion = task.done.await.expect("prompt task must send completion");
-        let mut events = Vec::new();
-        while let Ok(event) = task.events.try_recv() {
-            events.push(event);
+    #[tokio::test]
+    async fn canonical_interactive_client_applies_live_event_before_acknowledgement() {
+        let temp = tempfile::tempdir().unwrap();
+        let session = persistent_session(temp.path(), "sess_interactive_client_live").await;
+        let (mut tui, root_id) = test_tui();
+        let (connection, _) = connect_interactive_client(&mut tui, root_id, &session).unwrap();
+        let mut connection = Some(connection);
+
+        let published = session.emit_diagnostic_for_tests("canonical live diagnostic");
+        let delivery = tokio::time::timeout(
+            Duration::from_secs(1),
+            receive_interactive_client(&mut connection),
+        )
+        .await
+        .expect("canonical interactive receiver must remain live");
+        let render =
+            apply_interactive_client_delivery(&mut tui, root_id, &mut connection, delivery)
+                .unwrap();
+
+        assert!(!render.requested);
+        assert_eq!(
+            root_ref(&tui, root_id)
+                .unwrap()
+                .shared_event_sequence_for_tests(),
+            ProductEventSequence::new(published.sequence())
+        );
+        assert_eq!(
+            connection
+                .as_ref()
+                .unwrap()
+                .connection
+                .acknowledge(published.sequence())
+                .unwrap(),
+            published.sequence()
+        );
+    }
+
+    #[tokio::test]
+    async fn delayed_connection_handoff_replays_events_after_its_initial_cursor() {
+        let session = CodingAgentSession::non_persistent_with_event_capacities_for_tests(
+            CodingAgentSessionOptions::new(),
+            8,
+            8,
+        )
+        .await
+        .unwrap();
+        let connection = session
+            .connect(CodingAgentClientId::new("interactive"))
+            .unwrap();
+        let published = session.emit_diagnostic_for_tests("published before handoff reduction");
+        let (mut tui, root_id) = test_tui();
+
+        let (connection, _) = resume_interactive_client(&mut tui, root_id, connection).unwrap();
+
+        assert_eq!(
+            root_ref(&tui, root_id)
+                .unwrap()
+                .shared_event_sequence_for_tests(),
+            ProductEventSequence::new(published.sequence())
+        );
+        assert_eq!(
+            connection
+                .connection
+                .acknowledge(published.sequence())
+                .unwrap(),
+            published.sequence()
+        );
+    }
+
+    #[tokio::test]
+    async fn retained_gap_handoff_installs_fresh_snapshot_cursor() {
+        let session = CodingAgentSession::non_persistent_with_event_capacities_for_tests(
+            CodingAgentSessionOptions::new(),
+            8,
+            1,
+        )
+        .await
+        .unwrap();
+        let connection = session
+            .connect(CodingAgentClientId::new("interactive"))
+            .unwrap();
+        for index in 0..4 {
+            session.emit_diagnostic_for_tests(format!("evict retained event {index}"));
         }
-        (completion, events)
+        let expected_sequence = session
+            .connect(CodingAgentClientId::new("observer"))
+            .unwrap()
+            .snapshot
+            .cursor
+            .last_event_sequence;
+        let (mut tui, root_id) = test_tui();
+
+        let (connection, _) = resume_interactive_client(&mut tui, root_id, connection).unwrap();
+
+        assert_eq!(
+            root_ref(&tui, root_id)
+                .unwrap()
+                .shared_event_sequence_for_tests(),
+            ProductEventSequence::new(expected_sequence)
+        );
+        assert_eq!(
+            connection
+                .connection
+                .acknowledge(expected_sequence)
+                .unwrap(),
+            expected_sequence
+        );
+    }
+
+    async fn await_prompt_task(task: PromptTask) -> PromptTaskCompletion {
+        task.done.await.expect("prompt task must send completion")
     }
 
     fn event_log_path(root: &Path, session_id: &str) -> PathBuf {
@@ -3065,7 +3471,7 @@ mod tests {
         let task =
             PromptTask::spawn_set_default_agent_profile(session, ProfileId::from("reviewer"))
                 .unwrap();
-        let (completion, _events) = await_prompt_task(task).await;
+        let completion = await_prompt_task(task).await;
         let expected_error =
             CliError::SessionFailure("injected session store failure at UpdateManifest".into());
         match &completion {
@@ -3114,7 +3520,7 @@ mod tests {
             "declined".into(),
         )
         .unwrap();
-        let (completion, _events) = await_prompt_task(task).await;
+        let completion = await_prompt_task(task).await;
         let expected_message = "session error: injected session store failure at UpdateManifest";
         match &completion {
             PromptTaskCompletion::Failed(PromptTaskFailure { session, error }) => {
@@ -3170,6 +3576,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let session_id = "sess_real_prompt_partial_commit";
         let session = persistent_session(temp.path(), session_id).await;
+        let mut event_receiver = session.subscribe_product_events();
         let log_path = event_log_path(temp.path(), session_id);
         let previous_line_count = event_log_line_count(&log_path);
         session.arm_update_manifest_failure_for_tests(0);
@@ -3178,7 +3585,11 @@ mod tests {
         let task =
             PromptTask::spawn_prompt(prompt_options, Some(session), ProfileId::from("default"))
                 .unwrap();
-        let (completion, events) = await_prompt_task(task).await;
+        let completion = await_prompt_task(task).await;
+        let mut events = Vec::new();
+        while let Some(event) = event_receiver.try_recv().unwrap() {
+            events.push(event);
+        }
         let (outcome_operation_id, partial_commit_operation_id, expected_error) = match &completion
         {
             PromptTaskCompletion::Completed(PromptTaskResult::Coding(result)) => {
@@ -3213,26 +3624,18 @@ mod tests {
             "the failed prompt transaction must retain its durable operation id"
         );
         assert!(!events.iter().any(|event| {
-            matches!(
-                event,
-                PromptTaskEvent::Coding(event)
-                    if event.operation_id() == Some(partial_commit_operation_id.as_str())
-                        && event.terminal_operation().is_some()
-            )
+            event.operation_id() == Some(partial_commit_operation_id.as_str())
+                && event.terminal_operation().is_some()
         }));
         assert_eq!(
             events
                 .iter()
                 .filter(|event| {
                     matches!(
-                        event,
-                        PromptTaskEvent::Coding(event)
-                            if matches!(
-                                event.event(),
-                                CodingAgentProductEventKind::Workflow(
-                                    CodingAgentWorkflowProductEvent::OperationRecoveryPending { .. }
-                                )
-                            )
+                        event.event(),
+                        CodingAgentProductEventKind::Workflow(
+                            CodingAgentWorkflowProductEvent::OperationRecoveryPending { .. }
+                        )
                     )
                 })
                 .count(),
@@ -3241,7 +3644,7 @@ mod tests {
 
         let (mut tui, root_id) = test_tui();
         for event in events {
-            apply_prompt_task_event(&mut tui, root_id, event).unwrap();
+            apply_interactive_product_event(&mut tui, root_id, &event).unwrap();
         }
         let expected_error_text = expected_error.to_string();
         let projected_before_finish = transcript_error_count(&tui, root_id, &expected_error_text);
@@ -3306,7 +3709,7 @@ mod tests {
             ProfileId::from("default"),
         )
         .unwrap();
-        let (completion, task_events) = await_prompt_task(task).await;
+        let completion = await_prompt_task(task).await;
         let expected_error =
             CliError::SessionFailure("injected session store failure at AppendEvents".into());
         match &completion {
@@ -3321,16 +3724,6 @@ mod tests {
             initial_session_count,
             "the failed attempted target must be cleaned before completion"
         );
-        assert!(!task_events.iter().any(|event| {
-            matches!(
-                event,
-                PromptTaskEvent::Coding(event)
-                    if matches!(
-                        event.event(),
-                        CodingAgentProductEventKind::Session(CodingAgentSessionProductEvent::Opened { .. })
-                    )
-            )
-        }));
         while let Some(event) = source_receiver.try_recv().unwrap() {
             assert!(
                 !matches!(
@@ -3554,13 +3947,6 @@ fn set_terminal_progress<T: Terminal>(tui: &mut Tui<T>, active: bool) -> Result<
     tui.terminal_mut()
         .set_progress(active)
         .map_err(to_cli_error)
-}
-
-fn root_settings_show_progress<T: Terminal>(
-    tui: &mut Tui<T>,
-    root_id: usize,
-) -> Result<bool, CliError> {
-    Ok(root_mut(tui, root_id)?.settings.terminal.show_progress)
 }
 
 fn render_tui<T: Terminal>(tui: &mut Tui<T>) -> Result<(), CliError> {

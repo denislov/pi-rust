@@ -75,6 +75,7 @@ pub struct Tui<T: Terminal> {
     rendered_once: bool,
     terminal_mode: TerminalMode,
     terminal_active: bool,
+    synchronized_output_active: bool,
     hardware_cursor_row: usize,
     hardware_cursor_col: usize,
     hardware_cursor_visible: bool,
@@ -113,6 +114,7 @@ impl<T: Terminal> Tui<T> {
             rendered_once: false,
             terminal_mode: TerminalMode::Inline,
             terminal_active: false,
+            synchronized_output_active: false,
             hardware_cursor_row: 0,
             hardware_cursor_col: 0,
             hardware_cursor_visible: false,
@@ -146,11 +148,14 @@ impl<T: Terminal> Tui<T> {
         if !self.terminal_active {
             return Ok(());
         }
+        let sync_cleanup = self.end_synchronized_output();
         let image_cleanup = self.delete_previous_kitty_images();
         let stop_result = self.terminal.stop();
         if stop_result.is_ok() {
             self.terminal_active = false;
+            self.synchronized_output_active = false;
         }
+        sync_cleanup?;
         image_cleanup?;
         stop_result?;
         Ok(())
@@ -493,6 +498,14 @@ impl<T: Terminal> Tui<T> {
         let size = self.terminal.size();
         let width = size.columns;
         let height = size.rows;
+        if width == 0 || height == 0 {
+            self.previous_width = width;
+            self.previous_height = height;
+            return Ok(RenderOutcome {
+                strategy: RenderStrategy::NoChange,
+                line_count: 0,
+            });
+        }
         let mut lines = self.render_lines(width, height);
         if self.terminal_mode == TerminalMode::Fullscreen {
             lines = fullscreen_frame(lines, height);
@@ -662,50 +675,43 @@ impl<T: Terminal> Tui<T> {
     }
 
     fn render_full_fullscreen(&mut self, lines: &[String], height: usize) -> Result<(), TuiError> {
-        self.terminal.write(SYNC_START)?;
-        self.terminal.hide_cursor()?;
-        self.hardware_cursor_visible = false;
-
-        // Delete previous Kitty images before clearing screen
-        self.delete_previous_kitty_images()?;
-
-        self.terminal.clear_screen()?;
-        self.write_lines(lines)?;
-        self.terminal.write(SYNC_END)?;
-        self.terminal.flush()?;
-        self.hardware_cursor_row = lines.len().saturating_sub(1);
-        self.hardware_cursor_col = last_line_width(lines);
-        self.owned_rows = lines.len().min(height);
-        Ok(())
+        self.synchronized_render(|tui| {
+            tui.terminal.hide_cursor()?;
+            tui.hardware_cursor_visible = false;
+            tui.delete_previous_kitty_images()?;
+            tui.terminal.clear_screen()?;
+            tui.write_lines(lines)?;
+            tui.hardware_cursor_row = lines.len().saturating_sub(1);
+            tui.hardware_cursor_col = last_line_width(lines);
+            tui.owned_rows = lines.len().min(height);
+            Ok(())
+        })
     }
 
     fn render_full_inline(&mut self, lines: &[String], height: usize) -> Result<(), TuiError> {
-        self.terminal.write(SYNC_START)?;
-        self.terminal.hide_cursor()?;
-        self.hardware_cursor_visible = false;
+        self.synchronized_render(|tui| {
+            tui.terminal.hide_cursor()?;
+            tui.hardware_cursor_visible = false;
 
-        if self.rendered_once {
-            // Delete previous Kitty images before rewriting
-            self.delete_previous_kitty_images()?;
+            if tui.rendered_once {
+                tui.delete_previous_kitty_images()?;
 
-            let next_viewport_top = viewport_top(lines.len(), height);
-            let visible_lines = &lines[next_viewport_top..];
-            let rows_to_clear = self.owned_rows.max(visible_lines.len()).min(height);
-            if rows_to_clear > 0 {
-                self.move_to_logical_row(self.previous_viewport_top)?;
-                self.terminal.move_to_column(0)?;
-                self.hardware_cursor_col = 0;
-                self.rewrite_rows(next_viewport_top, visible_lines, rows_to_clear)?;
+                let next_viewport_top = viewport_top(lines.len(), height);
+                let visible_lines = &lines[next_viewport_top..];
+                let rows_to_clear = tui.owned_rows.max(visible_lines.len()).min(height);
+                if rows_to_clear > 0 {
+                    tui.move_to_logical_row(tui.previous_viewport_top)?;
+                    tui.terminal.move_to_column(0)?;
+                    tui.hardware_cursor_col = 0;
+                    tui.rewrite_rows(next_viewport_top, visible_lines, rows_to_clear)?;
+                }
+            } else {
+                tui.write_lines(lines)?;
+                tui.hardware_cursor_row = lines.len().saturating_sub(1);
+                tui.hardware_cursor_col = last_line_width(lines);
             }
-        } else {
-            self.write_lines(lines)?;
-            self.hardware_cursor_row = lines.len().saturating_sub(1);
-            self.hardware_cursor_col = last_line_width(lines);
-        }
-
-        self.terminal.write(SYNC_END)?;
-        self.terminal.flush()?;
-        Ok(())
+            Ok(())
+        })
     }
 
     fn render_differential(
@@ -734,22 +740,18 @@ impl<T: Terminal> Tui<T> {
         first_changed_line: usize,
         last_changed_line: usize,
     ) -> Result<(), TuiError> {
-        self.terminal.write(SYNC_START)?;
-
-        // Delete Kitty images in the changed range
-        self.delete_changed_kitty_images(first_changed_line, last_changed_line)?;
-
-        let target = first_changed_line as i16;
-        let current = self.hardware_cursor_row as i16;
-        self.terminal.move_by(target - current)?;
-        self.terminal.move_to_column(0)?;
-        self.terminal.clear_from_cursor()?;
-        self.write_lines(&lines[first_changed_line..])?;
-        self.terminal.write(SYNC_END)?;
-        self.terminal.flush()?;
-        self.hardware_cursor_row = lines.len().saturating_sub(1);
-        self.hardware_cursor_col = last_line_width(lines);
-        Ok(())
+        self.synchronized_render(|tui| {
+            tui.delete_changed_kitty_images(first_changed_line, last_changed_line)?;
+            let target = first_changed_line as i16;
+            let current = tui.hardware_cursor_row as i16;
+            tui.terminal.move_by(target - current)?;
+            tui.terminal.move_to_column(0)?;
+            tui.terminal.clear_from_cursor()?;
+            tui.write_lines(&lines[first_changed_line..])?;
+            tui.hardware_cursor_row = lines.len().saturating_sub(1);
+            tui.hardware_cursor_col = last_line_width(lines);
+            Ok(())
+        })
     }
 
     fn render_differential_inline(
@@ -765,45 +767,79 @@ impl<T: Terminal> Tui<T> {
 
         let appended_lines = lines.len() > self.previous_lines.len()
             && first_changed_line == self.previous_lines.len();
+        self.synchronized_render(|tui| {
+            tui.delete_changed_kitty_images(first_changed_line, last_changed_line)?;
+
+            if appended_lines && first_changed_line > 0 {
+                tui.move_to_logical_row(first_changed_line - 1)?;
+                tui.terminal.move_to_column(0)?;
+                tui.hardware_cursor_col = 0;
+                tui.terminal.write("\r\n")?;
+                tui.write_lines(&lines[first_changed_line..])?;
+                tui.hardware_cursor_row = lines.len().saturating_sub(1);
+                tui.hardware_cursor_col = last_line_width(lines);
+            } else {
+                tui.move_to_logical_row(first_changed_line)?;
+                tui.terminal.move_to_column(0)?;
+                tui.hardware_cursor_col = 0;
+
+                let rows_to_write = if first_changed_line < lines.len() {
+                    last_changed_line.min(lines.len() - 1) - first_changed_line + 1
+                } else {
+                    0
+                };
+                let old_rows_to_clear = if first_changed_line < tui.previous_lines.len() {
+                    last_changed_line.min(tui.previous_lines.len() - 1) - first_changed_line + 1
+                } else {
+                    0
+                };
+                let rows_to_clear = rows_to_write.max(old_rows_to_clear);
+                let changed_lines = if rows_to_write > 0 {
+                    &lines[first_changed_line..first_changed_line + rows_to_write]
+                } else {
+                    &[]
+                };
+                tui.rewrite_rows(first_changed_line, changed_lines, rows_to_clear)?;
+            }
+
+            Ok(())
+        })
+    }
+
+    fn synchronized_render<R>(
+        &mut self,
+        render: impl FnOnce(&mut Self) -> Result<R, TuiError>,
+    ) -> Result<R, TuiError> {
         self.terminal.write(SYNC_START)?;
-
-        // Delete Kitty images in the changed range
-        self.delete_changed_kitty_images(first_changed_line, last_changed_line)?;
-
-        if appended_lines && first_changed_line > 0 {
-            self.move_to_logical_row(first_changed_line - 1)?;
-            self.terminal.move_to_column(0)?;
-            self.hardware_cursor_col = 0;
-            self.terminal.write("\r\n")?;
-            self.write_lines(&lines[first_changed_line..])?;
-            self.hardware_cursor_row = lines.len().saturating_sub(1);
-            self.hardware_cursor_col = last_line_width(lines);
-        } else {
-            self.move_to_logical_row(first_changed_line)?;
-            self.terminal.move_to_column(0)?;
-            self.hardware_cursor_col = 0;
-
-            let rows_to_write = if first_changed_line < lines.len() {
-                last_changed_line.min(lines.len() - 1) - first_changed_line + 1
-            } else {
-                0
-            };
-            let old_rows_to_clear = if first_changed_line < self.previous_lines.len() {
-                last_changed_line.min(self.previous_lines.len() - 1) - first_changed_line + 1
-            } else {
-                0
-            };
-            let rows_to_clear = rows_to_write.max(old_rows_to_clear);
-            let changed_lines = if rows_to_write > 0 {
-                &lines[first_changed_line..first_changed_line + rows_to_write]
-            } else {
-                &[]
-            };
-            self.rewrite_rows(first_changed_line, changed_lines, rows_to_clear)?;
+        self.synchronized_output_active = true;
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| render(self)));
+        let end = self.end_synchronized_output();
+        let flush = self.terminal.flush().map_err(TuiError::from);
+        match outcome {
+            Err(payload) => {
+                let _ = end;
+                let _ = flush;
+                std::panic::resume_unwind(payload)
+            }
+            Ok(Err(error)) => {
+                let _ = end;
+                let _ = flush;
+                Err(error)
+            }
+            Ok(Ok(value)) => {
+                end?;
+                flush?;
+                Ok(value)
+            }
         }
+    }
 
+    fn end_synchronized_output(&mut self) -> Result<(), TuiError> {
+        if !self.synchronized_output_active {
+            return Ok(());
+        }
         self.terminal.write(SYNC_END)?;
-        self.terminal.flush()?;
+        self.synchronized_output_active = false;
         Ok(())
     }
 
@@ -910,6 +946,7 @@ impl<T: Terminal> Drop for Tui<T> {
         if !self.terminal_active {
             return;
         }
+        let _ = self.end_synchronized_output();
         let _ = self.delete_previous_kitty_images();
         let _ = self.terminal.stop();
         self.terminal_active = false;

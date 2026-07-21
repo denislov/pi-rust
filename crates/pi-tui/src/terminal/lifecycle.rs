@@ -1,11 +1,4 @@
-#[cfg(windows)]
-use std::io;
-use std::io::{Write, stdout};
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
-use std::thread::{self, JoinHandle};
+use std::io::{self, Write, stdout};
 use std::time::Duration;
 
 use crossterm::{
@@ -15,7 +8,6 @@ use crossterm::{
 
 use crate::input::set_kitty_protocol_active;
 
-const TERMINAL_PROGRESS_KEEPALIVE_MS: u64 = 1000;
 const TERMINAL_PROGRESS_ACTIVE_SEQUENCE: &str = "\x1b]9;4;3\x07";
 const TERMINAL_PROGRESS_CLEAR_SEQUENCE: &str = "\x1b]9;4;0;\x07";
 const MOUSE_CAPTURE_ENABLE_SEQUENCE: &str = "\x1b[?1000h\x1b[?1002h\x1b[?1006h";
@@ -27,7 +19,10 @@ fn mouse_capture_enable_sequence(mode: TerminalMode) -> Option<&'static str> {
 
 #[cfg(windows)]
 mod win32 {
-    #![allow(non_snake_case, dead_code)]
+    #![allow(
+        non_snake_case,
+        reason = "Windows console API names follow the platform ABI"
+    )]
 
     pub type HANDLE = *mut std::ffi::c_void;
     pub const STD_INPUT_HANDLE: u32 = 0xFFFF_FFF6u32; // -10
@@ -148,8 +143,6 @@ pub struct ProcessTerminal {
     negotiation_done: bool,
     negotiation_flush_deadline: Option<std::time::Instant>,
     progress_active: bool,
-    progress_stop_flag: Option<Arc<AtomicBool>>,
-    progress_thread: Option<JoinHandle<()>>,
 }
 
 impl ProcessTerminal {
@@ -167,8 +160,6 @@ impl ProcessTerminal {
             negotiation_done: false,
             negotiation_flush_deadline: None,
             progress_active: false,
-            progress_stop_flag: None,
-            progress_thread: None,
         }
     }
 
@@ -327,7 +318,7 @@ impl ProcessTerminal {
         if let Some(flags) = parse_kitty_flags_response(&self.negotiation_buffer) {
             self.clear_negotiation_buffer();
             if flags != 0 {
-                self.disable_modify_other_keys();
+                let _ = self.disable_modify_other_keys();
                 if !self.kitty_protocol_active {
                     self.kitty_protocol_active = true;
                     set_kitty_protocol_active(true);
@@ -387,40 +378,36 @@ impl ProcessTerminal {
         self.modify_other_keys_active = true;
     }
 
-    fn disable_modify_other_keys(&mut self) {
+    fn disable_modify_other_keys(&mut self) -> io::Result<()> {
         if !self.modify_other_keys_active {
-            return;
+            return Ok(());
         }
-        let _ = self.write("\x1b[>4;0m");
+        let result = self.write("\x1b[>4;0m");
         self.modify_other_keys_active = false;
+        result
     }
 
-    fn disable_mouse_capture(&mut self) {
+    fn disable_mouse_capture(&mut self) -> io::Result<()> {
         if !self.mouse_capture_active {
-            return;
+            return Ok(());
         }
-        let _ = self.write(MOUSE_CAPTURE_DISABLE_SEQUENCE);
+        let result = self.write(MOUSE_CAPTURE_DISABLE_SEQUENCE);
         self.mouse_capture_active = false;
-    }
-
-    fn stop_progress_thread(&mut self) {
-        if let Some(stop) = self.progress_stop_flag.take() {
-            stop.store(true, Ordering::Relaxed);
-        }
-        if let Some(handle) = self.progress_thread.take() {
-            let _ = handle.join();
-        }
-        if self.progress_active {
-            let _ = self.write(TERMINAL_PROGRESS_CLEAR_SEQUENCE);
-            let _ = self.flush();
-        }
-        self.progress_active = false;
+        result
     }
 }
 
 impl Default for ProcessTerminal {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+fn record_cleanup_error(first_error: &mut Option<io::Error>, result: io::Result<()>) {
+    if let Err(error) = result
+        && first_error.is_none()
+    {
+        *first_error = Some(error);
     }
 }
 
@@ -514,34 +501,40 @@ impl Terminal for ProcessTerminal {
     }
 
     fn stop(&mut self) -> std::io::Result<()> {
-        self.stop_progress_thread();
-        // Fire-and-forget escape sequences, matching TS behaviour.
-        // Never let a write failure skip the critical disable_raw_mode call.
-        let _ = self.write("\x1b[?2004l");
-        self.disable_mouse_capture();
+        let mut first_error = None;
+        record_cleanup_error(&mut first_error, self.write("\x1b[?2026l"));
+        record_cleanup_error(&mut first_error, self.set_progress(false));
+        record_cleanup_error(&mut first_error, self.write("\x1b[?2004l"));
+        record_cleanup_error(&mut first_error, self.disable_mouse_capture());
         let should_disable = self.keyboard_protocol_pushed || self.kitty_protocol_active;
         self.negotiation_buffer.clear();
         self.negotiation_done = true;
 
         if should_disable {
-            let _ = self.write("\x1b[<u");
+            record_cleanup_error(&mut first_error, self.write("\x1b[<u"));
             self.keyboard_protocol_pushed = false;
             self.kitty_protocol_active = false;
             set_kitty_protocol_active(false);
         }
-        self.disable_modify_other_keys();
-        let _ = self.show_cursor();
+        record_cleanup_error(&mut first_error, self.disable_modify_other_keys());
+        record_cleanup_error(&mut first_error, self.show_cursor());
         if self.alternate_screen_active {
-            let _ = self.write("\x1b[?1049l");
+            record_cleanup_error(&mut first_error, self.write("\x1b[?1049l"));
             self.alternate_screen_active = false;
         }
-        let _ = self.flush();
-        let restored_windows_mode = self.restore_windows_stdin_mode()?;
+        record_cleanup_error(&mut first_error, self.flush());
+        let restored_windows_mode = match self.restore_windows_stdin_mode() {
+            Ok(restored) => restored,
+            Err(error) => {
+                record_cleanup_error(&mut first_error, Err(error));
+                false
+            }
+        };
         if self.raw_mode_enabled_by_us && !restored_windows_mode {
-            terminal::disable_raw_mode()?;
+            record_cleanup_error(&mut first_error, terminal::disable_raw_mode());
         }
         self.raw_mode_enabled_by_us = false;
-        Ok(())
+        first_error.map_or(Ok(()), Err)
     }
 
     /// Drain stdin before exiting to prevent Kitty key release events from
@@ -562,8 +555,8 @@ impl Terminal for ProcessTerminal {
             self.kitty_protocol_active = false;
             set_kitty_protocol_active(false);
         }
-        self.disable_modify_other_keys();
-        self.disable_mouse_capture();
+        let _ = self.disable_modify_other_keys();
+        let _ = self.disable_mouse_capture();
         self.flush()?;
 
         // Simple drain: sleep for `idle` to let in-flight data arrive and be
@@ -581,27 +574,18 @@ impl Terminal for ProcessTerminal {
     }
 
     fn set_progress(&mut self, active: bool) -> std::io::Result<()> {
+        if active == self.progress_active {
+            return Ok(());
+        }
+
         if active {
             self.write(TERMINAL_PROGRESS_ACTIVE_SEQUENCE)?;
             self.flush()?;
-            if self.progress_thread.is_none() {
-                let stop = Arc::new(AtomicBool::new(false));
-                let stop_clone = stop.clone();
-                self.progress_stop_flag = Some(stop);
-                self.progress_thread = Some(thread::spawn(move || {
-                    while !stop_clone.load(Ordering::Relaxed) {
-                        thread::sleep(Duration::from_millis(TERMINAL_PROGRESS_KEEPALIVE_MS));
-                        if !stop_clone.load(Ordering::Relaxed) {
-                            let _ =
-                                stdout().write_all(TERMINAL_PROGRESS_ACTIVE_SEQUENCE.as_bytes());
-                            let _ = stdout().flush();
-                        }
-                    }
-                }));
-            }
             self.progress_active = true;
         } else {
-            self.stop_progress_thread();
+            self.progress_active = false;
+            self.write(TERMINAL_PROGRESS_CLEAR_SEQUENCE)?;
+            self.flush()?;
         }
         Ok(())
     }
@@ -743,29 +727,25 @@ mod tests {
     }
 
     #[test]
-    fn progress_keepalive_spawns_and_stops_thread() {
+    fn progress_state_is_owned_by_the_terminal() {
         let mut term = ProcessTerminal::new();
-        // Activate progress (spawns keepalive thread)
         term.set_progress(true).unwrap();
         assert!(term.progress_active);
-        assert!(term.progress_thread.is_some());
-        assert!(term.progress_stop_flag.is_some());
-        // Deactivate (stops thread, clears progress)
+
+        // Repeating the same state is an idempotent operation owned by this
+        // terminal instance; it never starts an independent writer.
+        term.set_progress(true).unwrap();
+        assert!(term.progress_active);
+
         term.set_progress(false).unwrap();
         assert!(!term.progress_active);
-        assert!(term.progress_thread.is_none());
-        assert!(term.progress_stop_flag.is_none());
     }
 
     #[test]
-    fn stop_cleans_up_progress_thread() {
+    fn stop_cleans_up_progress_state() {
         let mut term = ProcessTerminal::new();
         term.set_progress(true).unwrap();
-        assert!(term.progress_thread.is_some());
-        // stop() should join the thread and clear progress
-        term.stop_progress_thread();
+        term.stop().unwrap();
         assert!(!term.progress_active);
-        assert!(term.progress_thread.is_none());
-        assert!(term.progress_stop_flag.is_none());
     }
 }

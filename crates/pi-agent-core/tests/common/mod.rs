@@ -1,4 +1,7 @@
-#![allow(dead_code)]
+#![allow(
+    dead_code,
+    reason = "Cargo compiles this shared integration fixture separately for agent, compaction, execution, and hook targets"
+)]
 
 use async_stream::stream;
 use pi_agent_core::api::agent::{AgentConfig, ProviderStreamer};
