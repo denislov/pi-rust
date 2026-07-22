@@ -4,7 +4,7 @@ members = ["crates/pi-agent-core",
 ]
 
 [workspace.package]
-version = "0.5.7"
+version = "0.5.8"
 
 [package]
 name = "pi-rust"

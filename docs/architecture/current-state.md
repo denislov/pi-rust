@@ -5,8 +5,8 @@
 Baseline version: `0.3.1`, released as annotated tag `v0.3.1`.
 
 Source baseline: commit `870d4bb`; dated release record: `180f219`; post-baseline
-`0.4.0` through completed `0.5.7` convergence evidence is recorded below. Last
-refreshed: 2026-07-22.
+`0.4.0` through completed `0.5.8` evidence is recorded below. Last refreshed:
+2026-07-22.
 
 This file records implementation facts, not desired behavior. Cargo manifests,
 compiled source, tests, and CodeGraph call paths outrank this summary when they
@@ -18,7 +18,7 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   `pi-coding-agent -> {pi-agent-core, pi-ai, pi-tui}`.
 - `pi-ai` and `pi-tui` have no workspace dependencies.
 - `pi-mom`, `pi-pods`, and `pi-web-ui` are placeholder crates.
-- All workspace packages inherit version `0.5.7` from the root manifest.
+- All workspace packages inherit version `0.5.8` from the root manifest.
 - The reduced 0.4.x train ends at `0.4.2`; reserved Extension release plans
   `0.4.3` through `0.4.5` are Skip records and did not produce package versions.
 - `pi-rust` is a placeholder binary; `pi-coding-agent` is user-facing.
@@ -217,6 +217,10 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   that connection once and no longer create a parallel ProductEvent bridge.
   Input and task/control queues are bounded, running/idle modes share one typed
   select loop, and Unix resize delivery is signal-driven with a quiet fallback.
+- A main-loop-owned 120ms interval independently advances the running spinner
+  and requests operation-elapsed redraws; prompt/client delivery cannot reset
+  it. Compact Context Operations rows omit operation IDs, while the detail
+  surface retains complete operation/parent/root identities.
 - ProductEvent envelopes are folded by operation lineage into a root
   conversation and at most 32 direct-child conversation projections. Nested
   AgentInvocation Prompt events and AgentTeam member events aggregate under the

@@ -6,7 +6,7 @@ This concise index is the normative entry point for `pi-rust` architecture from
 the `0.4.x` train onward. Normative contracts, current implementation evidence,
 decisions, migrations, and test procedures are intentionally separated.
 
-The workspace is at `0.5.7`. Contracts introduced by completed version plans are
+The workspace is at `0.5.8`. Contracts introduced by completed version plans are
 normative where the contract documents below say so; implementation facts remain
 version-stamped in `current-state.md`. A document must label current facts
 separately from target requirements.
@@ -34,10 +34,13 @@ separately from target requirements.
   built-in delegated helper read-only filesystem capability correction,
   least-privilege regression coverage, and release convergence, completed with
   workspace `0.5.7`.
+- [`0.5.8-fullscreen-runtime-status-refresh-plan.md`](0.5.8-fullscreen-runtime-status-refresh-plan.md):
+  independent running-status/elapsed refresh and compact Context operation
+  summaries, completed with workspace `0.5.8`.
 
 ## Active Version Plan
 
-No version plan is active after completion of 0.5.7.
+No version plan is active after the completed 0.5.8 release convergence.
 
 ## Queued Version Plan
 
@@ -70,6 +73,9 @@ No later version plan is queued.
 - [`0.5.7-release-evidence.md`](0.5.7-release-evidence.md): built-in helper
   capability correction, least-privilege tests, API/protocol audit, repeated
   schedules, and workspace/Extension release gates.
+- [`0.5.8-release-evidence.md`](0.5.8-release-evidence.md): independent
+  fullscreen runtime refresh, compact Context operation rows, API/protocol
+  audit, repeated schedules, smoke, and workspace/Extension release gates.
 - [`decisions/`](architecture/decisions/README.md): accepted, proposed, and
   scheduled ADRs with task/test traceability.
 - [`migrations/`](architecture/migrations/README.md): historical baselines and

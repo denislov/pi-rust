@@ -1405,7 +1405,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "pi-agent-core"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "async-stream",
  "futures",
@@ -1425,7 +1425,7 @@ dependencies = [
 
 [[package]]
 name = "pi-ai"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "async-stream",
  "base64",
@@ -1443,7 +1443,7 @@ dependencies = [
 
 [[package]]
 name = "pi-coding-agent"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "async-stream",
  "base64",
@@ -1475,19 +1475,19 @@ dependencies = [
 
 [[package]]
 name = "pi-mom"
-version = "0.5.7"
+version = "0.5.8"
 
 [[package]]
 name = "pi-pods"
-version = "0.5.7"
+version = "0.5.8"
 
 [[package]]
 name = "pi-rust"
-version = "0.5.7"
+version = "0.5.8"
 
 [[package]]
 name = "pi-tui"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "base64",
  "bitflags 2.12.1",
@@ -1500,7 +1500,7 @@ dependencies = [
 
 [[package]]
 name = "pi-web-ui"
-version = "0.5.7"
+version = "0.5.8"
 
 [[package]]
 name = "pin-project-lite"

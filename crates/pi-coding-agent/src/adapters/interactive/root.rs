@@ -3529,10 +3529,9 @@ impl InteractiveRoot {
                 });
         let cancel = if cancellable { " cancel" } else { "" };
         let summary = format!(
-            "{:<9} {} {} {}{cancel}",
+            "{:<9} {} {}{cancel}",
             operation.status.as_str(),
             operation.kind,
-            short_id(&operation.operation_id),
             elapsed
         );
         let mut detail_lines = vec![
@@ -4844,7 +4843,10 @@ fn format_http_idle_timeout_ms(timeout_ms: u64) -> String {
 #[cfg(test)]
 mod transcript_viewport_tests {
     use std::collections::VecDeque;
-    use std::path::PathBuf;
+    use std::{
+        path::PathBuf,
+        time::{Duration, Instant},
+    };
 
     use base64::Engine;
     use pi_tui::api::component::Component;
@@ -5545,14 +5547,17 @@ mod transcript_viewport_tests {
         let ops = root.render(120).join("\n");
         assert!(ops.contains("running"), "{ops}");
         assert!(ops.contains("prompt"), "{ops}");
-        assert!(ops.contains("operation-"), "{ops}");
+        assert!(
+            !ops.contains("operation-"),
+            "operation IDs should stay out of compact Context rows: {ops}"
+        );
 
         assert!(root.handle_shell_input(&key("\r")));
         assert!(root.has_context_detail());
         let overlay = root.prepare_transient_overlays(120);
         assert!(overlay.modal_visible);
         let detail = root.render_modal_surface(72).join("\n");
-        assert!(detail.contains("operation:"), "{detail}");
+        assert!(detail.contains("operation: operation-1"), "{detail}");
         assert!(detail.contains("cancel: available"), "{detail}");
         root.handle_context_detail_input(&key("\x1b"));
 
@@ -5613,6 +5618,32 @@ mod transcript_viewport_tests {
         assert!(known_usage.contains("model-1"), "{known_usage}");
         assert!(known_usage.contains("127/128k"), "{known_usage}");
         assert!(known_usage.contains("$0.0030"), "{known_usage}");
+    }
+
+    #[test]
+    fn running_operation_elapsed_changes_when_periodic_render_occurs() {
+        let mut root = InteractiveRoot::new(PathBuf::from("."), "model".into(), "session".into());
+        root.set_fullscreen_viewport(true);
+        root.set_viewport_size(120, 24);
+        root.set_context_projection(context_projection(2));
+
+        root.local
+            .context_operation_timing
+            .get_mut("operation-1")
+            .unwrap()
+            .first_seen = Instant::now() - Duration::from_secs(2);
+        let at_two_seconds = root.render(120).join("\n");
+
+        root.local
+            .context_operation_timing
+            .get_mut("operation-1")
+            .unwrap()
+            .first_seen = Instant::now() - Duration::from_secs(3);
+        let at_three_seconds = root.render(120).join("\n");
+
+        assert!(at_two_seconds.contains("2s"), "{at_two_seconds}");
+        assert!(at_three_seconds.contains("3s"), "{at_three_seconds}");
+        assert_ne!(at_two_seconds, at_three_seconds);
     }
 
     #[test]

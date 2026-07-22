@@ -215,12 +215,12 @@ enum PromptSourceEvent {
             >,
         >,
     ),
-    SpinnerTick,
     Completed(Box<PromptTaskCompletion>),
 }
 
 enum InteractiveLoopEvent {
     RenderDeadline,
+    RuntimeTick,
     StdinTimeout,
     ResizeWake,
     Input(Option<String>),
@@ -237,7 +237,6 @@ async fn receive_prompt_source(task: Option<&mut PromptTask>) -> PromptSourceEve
         handoff = receive_prompt_connection_handoff(&mut task.connection_handoff), if task.connection_handoff.is_some() => {
             PromptSourceEvent::ConnectionHandoff(Box::new(handoff))
         }
-        _ = tokio::time::sleep(SPINNER_INTERVAL) => PromptSourceEvent::SpinnerTick,
         done = &mut task.done => {
             PromptSourceEvent::Completed(Box::new(done.unwrap_or_else(|_| {
                 PromptTaskCompletion::SetupFailed(CliError::AgentFailure(
@@ -648,6 +647,11 @@ where
     let mut terminal_size = tui.terminal().size();
     let mut resize_source = ResizeSource::new();
     let mut render_scheduler = RenderScheduler::new(NORMAL_RENDER_INTERVAL);
+    let mut runtime_tick = tokio::time::interval_at(
+        tokio::time::Instant::now() + SPINNER_INTERVAL,
+        SPINNER_INTERVAL,
+    );
+    runtime_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     render_scheduler.request(true);
     flush_render_if_ready(tui, root_id, &mut render_scheduler, clock.now())?;
 
@@ -678,6 +682,9 @@ where
             _ = sleep_stdin_pending(stdin_delay), if stdin_delay.is_some() => {
                 InteractiveLoopEvent::StdinTimeout
             }
+            _ = runtime_tick.tick(), if running.is_some() => {
+                InteractiveLoopEvent::RuntimeTick
+            }
             _ = resize_source.recv() => InteractiveLoopEvent::ResizeWake,
             chunk = input.recv(), if input_open => InteractiveLoopEvent::Input(chunk),
             event = receive_prompt_source(running.as_mut()), if running.is_some() => {
@@ -692,6 +699,9 @@ where
         match event {
             InteractiveLoopEvent::RenderDeadline => {
                 flush_render_if_ready(tui, root_id, &mut render_scheduler, clock.now())?;
+            }
+            InteractiveLoopEvent::RuntimeTick => {
+                schedule_runtime_refresh(tui, root_id, &mut render_scheduler);
             }
             InteractiveLoopEvent::StdinTimeout => {
                 let events = stdin_buffer.tick(clock.now());
@@ -781,12 +791,6 @@ where
                             *handoff,
                         )?,
                     );
-                }
-                PromptSourceEvent::SpinnerTick => {
-                    if let Some(root) = tui.component_as_mut::<InteractiveRoot>(root_id) {
-                        root.spinner_frame = root.spinner_frame.wrapping_add(1);
-                    }
-                    render_scheduler.request(true);
                 }
                 PromptSourceEvent::Completed(result) => {
                     let mut task = running
@@ -928,6 +932,17 @@ fn schedule_render(render_scheduler: &mut RenderScheduler, request: RenderReques
     if request.requested {
         render_scheduler.request(request.force);
     }
+}
+
+fn schedule_runtime_refresh<T: Terminal>(
+    tui: &mut Tui<T>,
+    root_id: usize,
+    render_scheduler: &mut RenderScheduler,
+) {
+    if let Some(root) = tui.component_as_mut::<InteractiveRoot>(root_id) {
+        root.spinner_frame = root.spinner_frame.wrapping_add(1);
+    }
+    render_scheduler.request(true);
 }
 
 fn schedule_resize_render<T: Terminal>(
@@ -2777,6 +2792,21 @@ mod tests {
                 pi_tui::api::testing::TerminalOp::SetProgress(false),
             ]
         );
+    }
+
+    #[test]
+    fn runtime_tick_advances_spinner_and_schedules_elapsed_refresh() {
+        let (mut tui, root_id) = test_tui();
+        root_mut(&mut tui, root_id)
+            .unwrap()
+            .set_status(InteractiveStatus::Running);
+        let before = root_ref(&tui, root_id).unwrap().spinner_frame;
+        let mut scheduler = RenderScheduler::new(NORMAL_RENDER_INTERVAL);
+
+        schedule_runtime_refresh(&mut tui, root_id, &mut scheduler);
+
+        assert_eq!(root_ref(&tui, root_id).unwrap().spinner_frame, before + 1);
+        assert!(scheduler.has_pending());
     }
 
     #[test]

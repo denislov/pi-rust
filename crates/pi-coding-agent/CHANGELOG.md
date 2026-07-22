@@ -1,5 +1,17 @@
 # Changes
 
+## 0.5.8 - 2026-07-22
+
+### Fixed
+
+- Drive the fullscreen running spinner and operation elapsed labels from an
+  independent main-loop interval that cannot be reset by streaming client
+  deliveries.
+- Remove `op_xxx` identities from compact Context Operations rows while keeping
+  complete operation/parent/root identities in the detail surface.
+- Add deterministic runtime-tick, render-scheduling, elapsed-refresh, and
+  compact/detail presentation tests.
+
 ## 0.5.7 - 2026-07-22
 
 ### Fixed

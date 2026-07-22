@@ -1,5 +1,22 @@
 # Changes
 
+## 0.5.8 - 2026-07-22
+
+### Fullscreen Runtime Status Refresh
+
+- Moved the running spinner/elapsed refresh from a cancellable nested prompt
+  receive future to an independent 120ms main-loop interval, preventing
+  continuous ProductEvent delivery from starving visual time updates.
+- Made the same runtime tick advance the status spinner and request a complete
+  elapsed-time redraw, so running Context operations refresh without waiting for
+  input, resize, or another product event.
+- Removed operation IDs from compact Context Operations rows to preserve width;
+  the selected detail surface retains the complete operation, parent, and root
+  identities for diagnostics and control.
+- Added scheduler, spinner, elapsed, compact-row, and detail-identity regression
+  coverage and completed the scoped 0.5.8 plan in
+  `docs/0.5.8-fullscreen-runtime-status-refresh-plan.md`.
+
 ## 0.5.7 - 2026-07-22
 
 ### Built-In Helper Read-Only Filesystem Capability
