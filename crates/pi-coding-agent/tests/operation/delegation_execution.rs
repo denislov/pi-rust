@@ -313,6 +313,7 @@ async fn built_in_default_profile_auto_approves_read_only_helper_delegation() {
     let cwd = temp.path().join("workspace");
     let global = temp.path().join("global");
     fs::create_dir_all(&global).unwrap();
+    write_file(cwd.join("README.md"), "delegated read fixture\n");
     let _env_guard = EnvGuard::with_pi_rust_dir(global);
 
     let api = "delegation-built-in-default-helper-api";
@@ -325,6 +326,11 @@ async fn built_in_default_profile_auto_approves_read_only_helper_delegation() {
                 "tool_delegate_explore",
                 "delegate_agent",
                 serde_json::json!({"agent_id": "explore", "task": "inspect replay"}),
+            ),
+            ScriptedResponse::tool_call(
+                "tool_child_read",
+                "read",
+                serde_json::json!({"path": "README.md"}),
             ),
             ScriptedResponse::text("explore result"),
             ScriptedResponse::text("parent ready"),
@@ -345,7 +351,7 @@ async fn built_in_default_profile_auto_approves_read_only_helper_delegation() {
             &cwd,
             api,
             "plan feature",
-            vec![parent_only_tool()],
+            vec![parent_only_tool(), read_fixture_tool(&cwd)],
         )))
         .await
         .unwrap();
@@ -354,8 +360,8 @@ async fn built_in_default_profile_auto_approves_read_only_helper_delegation() {
     let calls = calls.lock().unwrap();
     assert_eq!(
         calls.len(),
-        3,
-        "expected parent tool, parent final, and built-in helper calls"
+        4,
+        "expected parent delegation, helper read/continuation, and parent final calls"
     );
     assert_eq!(user_texts(&calls[0].context), vec!["plan feature"]);
     assert_eq!(user_texts(&calls[1].context), vec!["inspect replay"]);
@@ -376,6 +382,7 @@ async fn built_in_default_profile_auto_approves_read_only_helper_delegation() {
         "parent should keep explicitly configured runtime tools: {parent_tools:#?}"
     );
     let helper_tools = tool_names(&calls[1].context);
+    assert_eq!(helper_tools, ["read"]);
     assert!(
         !helper_tools.iter().any(|tool| tool == "parent_only"),
         "built-in helper must not inherit parent runtime tools: {helper_tools:#?}"
@@ -383,6 +390,19 @@ async fn built_in_default_profile_auto_approves_read_only_helper_delegation() {
     assert!(
         !helper_tools.iter().any(|tool| tool == "delegate_agent"),
         "built-in helper must not inherit delegation authority: {helper_tools:#?}"
+    );
+    assert!(
+        !helper_tools
+            .iter()
+            .any(|tool| matches!(tool.as_str(), "write" | "edit" | "bash")),
+        "built-in helper must not receive mutation or shell tools: {helper_tools:#?}"
+    );
+    assert!(
+        context_texts(&calls[2].context)
+            .iter()
+            .any(|text| text.contains("delegated read fixture")),
+        "the delegated helper should receive the workspace read result: {:#?}",
+        context_texts(&calls[2].context)
     );
     drop(calls);
 
@@ -2193,6 +2213,28 @@ fn parent_only_tool() -> AgentTool {
         "parent-only capability",
         serde_json::json!({"type": "object"}),
         |_context, _args| async { Ok("parent-only".to_owned()) },
+    )
+}
+
+fn read_fixture_tool(cwd: &Path) -> AgentTool {
+    let cwd = cwd.to_path_buf();
+    AgentTool::new_text(
+        "read",
+        "read a workspace fixture",
+        serde_json::json!({
+            "type": "object",
+            "properties": { "path": { "type": "string" } },
+            "required": ["path"]
+        }),
+        move |_context, arguments| {
+            let cwd = cwd.clone();
+            async move {
+                let path = arguments["path"]
+                    .as_str()
+                    .expect("scripted read call should include a path");
+                Ok(fs::read_to_string(cwd.join(path)).expect("fixture should be readable"))
+            }
+        },
     )
 }
 

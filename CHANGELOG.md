@@ -1,5 +1,22 @@
 # Changes
 
+## 0.5.7 - 2026-07-22
+
+### Built-In Helper Read-Only Filesystem Capability
+
+- Fixed the built-in `explore`, `review`, and `check` delegated-agent profiles
+  so their declared read-only behavior is backed by the exact
+  `read`/`grep`/`find`/`ls` tool allowlist.
+- Preserved least privilege: helpers do not receive `write`, `edit`, `bash`,
+  delegation, session, or UI capabilities, and every released tool remains the
+  intersection of the helper profile and its parent's frozen capabilities.
+- Added profile, capability-snapshot, and real delegation regression coverage,
+  including a child workspace read and proof that unrelated parent tools are
+  not inherited. Tool authorization remains execution approval only and cannot
+  mint a missing capability.
+- Completed the scoped 0.5.7 plan in
+  `docs/0.5.7-built-in-helper-read-only-filesystem-capability-plan.md`.
+
 ## 0.5.6 - 2026-07-22
 
 ### Fullscreen TUI Visual Hierarchy And Interaction Polish

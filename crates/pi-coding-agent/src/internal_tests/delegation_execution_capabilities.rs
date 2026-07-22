@@ -1,8 +1,45 @@
 use crate::operations::delegation::capability_snapshot_for_delegated_profile;
 use crate::profiles::{
-    AgentProfile, DelegationPolicy, ProfileId, ProfileSource, SupervisionPolicy,
+    AgentProfile, DelegationPolicy, ProfileId, ProfileRegistry, ProfileRegistryOptions,
+    ProfileSource, SupervisionPolicy,
 };
 use crate::runtime::capability::{ActorId, ModelCapability, OperationCapabilitySnapshot};
+
+#[test]
+fn built_in_helpers_release_only_parent_granted_read_only_filesystem_capabilities() {
+    let registry = ProfileRegistry::load(ProfileRegistryOptions::new()).unwrap();
+    let parent = OperationCapabilitySnapshot::permissive("op_parent");
+
+    for helper_id in ["explore", "review", "check"] {
+        let profile = registry
+            .agent(helper_id)
+            .expect("built-in helper profile should resolve");
+        let child = capability_snapshot_for_delegated_profile(
+            &parent,
+            format!("op_{helper_id}"),
+            profile,
+            ActorId::ChildOperation("op_parent".into()),
+        );
+
+        for tool in ["read", "grep", "find", "ls"] {
+            assert!(
+                child.tools.allows(tool),
+                "built-in helper {helper_id} should receive {tool}"
+            );
+        }
+        for tool in ["write", "edit", "bash", "delegate_agent", "delegate_team"] {
+            assert!(
+                !child.tools.allows(tool),
+                "built-in helper {helper_id} must not receive {tool}"
+            );
+        }
+        assert_eq!(child.filesystem, parent.filesystem);
+        assert!(child.shell.is_none());
+        assert!(child.session_read.is_none());
+        assert!(child.session_write.is_none());
+        assert!(child.ui.is_none());
+    }
+}
 
 #[test]
 fn delegated_operation_receives_released_tool_capabilities_only() {

@@ -11,6 +11,7 @@ const AGENT_PROFILE_DIR: &str = "agents";
 const TEAM_PROFILE_DIR: &str = "teams";
 const PROFILE_FILE_EXTENSION: &str = "toml";
 const BUILT_IN_HELPER_AGENT_IDS: [&str; 3] = ["explore", "review", "check"];
+const BUILT_IN_READ_ONLY_TOOL_NAMES: [&str; 4] = ["read", "grep", "find", "ls"];
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ProfileId(String);
@@ -516,7 +517,10 @@ fn built_in_helper_agent_profile(
         description: Some(description.into()),
         model: None,
         system_prompt: Some(system_prompt.into()),
-        tools: Vec::new(),
+        tools: BUILT_IN_READ_ONLY_TOOL_NAMES
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect(),
         skills: Vec::new(),
         supervision: SupervisionPolicy::Session,
         delegation: DelegationPolicy::default(),
@@ -694,9 +698,15 @@ mod tests {
                 .agent(helper_id)
                 .expect("built-in helper profile should resolve");
             assert_eq!(helper.source, ProfileSource::BuiltIn);
+            assert_eq!(
+                helper.tools, BUILT_IN_READ_ONLY_TOOL_NAMES,
+                "built-in helper {helper_id} must expose the exact read-only filesystem surface"
+            );
             assert!(
-                helper.tools.is_empty(),
-                "built-in helper {helper_id} must not carry write tools by default"
+                !helper
+                    .tools
+                    .iter()
+                    .any(|tool| matches!(tool.as_str(), "write" | "edit" | "bash"))
             );
             assert!(
                 helper.skills.is_empty(),

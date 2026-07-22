@@ -5,7 +5,7 @@
 Baseline version: `0.3.1`, released as annotated tag `v0.3.1`.
 
 Source baseline: commit `870d4bb`; dated release record: `180f219`; post-baseline
-`0.4.0` through completed `0.5.6` convergence evidence is recorded below. Last
+`0.4.0` through completed `0.5.7` convergence evidence is recorded below. Last
 refreshed: 2026-07-22.
 
 This file records implementation facts, not desired behavior. Cargo manifests,
@@ -18,7 +18,7 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   `pi-coding-agent -> {pi-agent-core, pi-ai, pi-tui}`.
 - `pi-ai` and `pi-tui` have no workspace dependencies.
 - `pi-mom`, `pi-pods`, and `pi-web-ui` are placeholder crates.
-- All workspace packages inherit version `0.5.6` from the root manifest.
+- All workspace packages inherit version `0.5.7` from the root manifest.
 - The reduced 0.4.x train ends at `0.4.2`; reserved Extension release plans
   `0.4.3` through `0.4.5` are Skip records and did not produce package versions.
 - `pi-rust` is a placeholder binary; `pi-coding-agent` is user-facing.
@@ -228,6 +228,11 @@ disagree. Every task that changes a listed fact must refresh the stamp and item.
   child Prompt operation while the main row shows `waiting permission` only.
   UI snapshot protocol `2.2` includes bounded retained child ProductEvents for
   reconnect/fresh-snapshot hydration.
+- Built-in delegated `explore`, `review`, and `check` profiles declare exactly
+  `read`, `grep`, `find`, and `ls`. Effective child tools remain the intersection
+  of that allowlist with the parent's frozen capabilities; filesystem is
+  released only for the resulting read-only tools, while shell, mutation,
+  delegation, session, and UI capabilities remain absent.
 - Under overflow the active child page is pinned and the oldest inactive child
   is evicted, so returning to the main page cannot reinsert an untracked 33rd
   conversation. Child rendering remains width-bounded at zero/narrow viewports

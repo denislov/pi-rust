@@ -1,5 +1,16 @@
 # Changes
 
+## 0.5.7 - 2026-07-22
+
+### Fixed
+
+- Give the built-in delegated `explore`, `review`, and `check` profiles the
+  exact read-only filesystem tool surface (`read`, `grep`, `find`, and `ls`).
+- Keep mutation, shell, delegation, session, and UI authority absent, and retain
+  parent/profile capability intersection plus operation-scoped authorization.
+- Add a real delegated workspace-read regression test and frozen capability
+  assertions for all three helpers.
+
 ## 0.5.6 - 2026-07-22
 
 ### Changed
